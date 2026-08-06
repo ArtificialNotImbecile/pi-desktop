@@ -2,13 +2,11 @@
 
 Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, and SQLite.
 
-## Context Taxonomy demo
+## See Jasmine in action
 
-Context Taxonomy makes the context sent to a model inspectable. It separates system instructions, project context, skills, conversation messages, tool definitions, provider options, cache evidence, payload shape, and the raw provider request so you can see how a turn was assembled.
+[▶ Play the Jasmine product walkthrough](https://github.com/ArtificialNotImbecile/jasmine/releases/download/v0.1.0/jasmine-product-demo.mp4)
 
-[![Jasmine Context Taxonomy demo](docs/assets/jasmine-context-taxonomy-demo.gif)](docs/assets/jasmine-context-taxonomy-demo.mp4)
-
-Click the preview for the full MP4 recording. The demo is recorded from the real Electron UI with Playwright and an isolated mock provider profile; it contains no personal data or API keys.
+The walkthrough covers projects, chats, models, tools, skills, context inspection, artifacts, terminal access, search, TODOs, memory, activity, providers, appearance, and integrations. It is recorded from the real Electron UI with Playwright and an isolated mock-provider profile, so it contains no personal data or API keys.
 
 ## Features
 

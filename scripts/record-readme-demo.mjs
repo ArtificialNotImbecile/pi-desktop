@@ -1,21 +1,26 @@
 import { spawn } from "node:child_process";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { _electron as electron } from "playwright";
 
 const rootDir = process.cwd();
-const rawDir = path.join(rootDir, "test-results", "readme-demo", "raw");
+const outputDir = path.join(rootDir, "test-results", "readme-demo");
+const rawDir = path.join(outputDir, "raw");
+const rawWebmPath = path.join(outputDir, "jasmine-product-demo.webm");
 const userDataDir = path.join(rootDir, ".tmp", "readme-demo");
+const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
 const assetDir = path.join(rootDir, "docs", "assets");
-const webmPath = path.join(assetDir, "jasmine-context-taxonomy-demo.webm");
-const mp4Path = path.join(assetDir, "jasmine-context-taxonomy-demo.mp4");
-const gifPath = path.join(assetDir, "jasmine-context-taxonomy-demo.gif");
+const mp4Path = path.join(assetDir, "jasmine-product-demo.mp4");
 const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
 
-await rm(rawDir, { recursive: true, force: true });
+await rm(outputDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
 await mkdir(rawDir, { recursive: true });
+await mkdir(demoProjectDir, { recursive: true });
+await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await mkdir(assetDir, { recursive: true });
+await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nKeep answers concise and cite relevant project files.\n", "utf8");
+await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is a local-first AI workspace.\n", "utf8");
 
 const app = await electron.launch({
   executablePath: path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),
@@ -32,6 +37,7 @@ const app = await electron.launch({
     JASMINE_E2E_MOCK_AI: "1",
     JASMINE_E2E_MANY_MODELS: "1",
     JASMINE_E2E_USER_DATA_DIR: userDataDir,
+    JASMINE_DEFAULT_PROJECT_ROOT: demoProjectDir,
     DEEPSEEK_API_KEY: "readme-demo-placeholder",
     KIMI_API_KEY: "readme-demo-placeholder"
   }
@@ -44,134 +50,165 @@ try {
   video = page.video();
   if (!video) throw new Error("Playwright did not create a video stream.");
 
+  await page.locator(".app-shell").waitFor({ timeout: 20_000 });
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.setSize(1440, 900);
   });
-  await page.locator(".app-shell").waitFor({ timeout: 20_000 });
-  await caption("Jasmine — local-first AI workspace");
-  await pause(1_100);
+  await page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).waitFor();
+  await page.evaluate(async () => {
+    await Promise.all([
+      window.jasmine.addTodo({ text: "Review the Windows release checklist" }),
+      window.jasmine.createMemory({ content: "Prefer concise answers with concrete next steps." }),
+      window.jasmine.createManualActivityObservation({ note: "Prepared the Jasmine product walkthrough." })
+    ]);
+  });
 
-  await page.getByRole("button", { name: "New chat" }).first().click();
+  await caption("A local-first workspace for everyday AI work");
+  await pause(1_400);
+
+  const projectRow = page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).first();
+  await projectRow.locator(".project-item").click();
+  await caption("Organize conversations around local projects and files");
+  await pause(1_300);
+
+  await page.getByRole("button", { name: "TODO" }).click();
+  await page.locator(".todo-page").waitFor();
+  await caption("Capture durable tasks in local Markdown files");
+  await pause(1_200);
+  await projectRow.locator(".project-item").click();
   await page.locator(".empty-state").waitFor();
-  await caption("Start a private, local conversation");
-  await pause(700);
 
   await page.locator(".model-pill").click();
   await page.locator(".model-menu").waitFor();
-  await caption("Switch providers, models, and reasoning effort");
+  await caption("Choose a provider, model, and reasoning effort per chat");
   await pause(1_200);
   await page.keyboard.press("Escape");
 
-  await caption("Send a first message");
-  await typeComposer("What context is being sent with this request?");
-  await page.getByRole("button", { name: "Send" }).click();
-  await waitForReply();
-  await pause(700);
+  await page.locator(".composer").getByRole("button", { name: "Tools" }).click();
+  await page.locator(".tools-menu").waitFor();
+  await caption("Bring tools, web access, and plugins into the composer");
+  await pause(1_100);
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Skills" }).click();
+  await page.locator(".skill-menu").waitFor();
+  await caption("Apply reusable skills without leaving the conversation");
+  await pause(1_100);
+  await page.keyboard.press("Escape");
+
+  await caption("Work with the assistant in a persistent project thread");
+  await sendMessage("Summarize this workspace and suggest the next release task.");
+  await pause(900);
 
   await page.getByRole("button", { name: "Open Context taxonomy" }).click();
   await page.getByRole("complementary", { name: "Context taxonomy" }).waitFor();
   await page.locator(".taxonomy-warning-card").waitFor();
-  await caption("Context Taxonomy reconstructs every context layer");
-  await pause(1_100);
-
-  const currentPrompt = page.locator(".taxonomy-item", { hasText: "Current user prompt" }).last();
-  await currentPrompt.locator(".taxonomy-item-details > summary").click();
-  await pause(500);
-  await currentPrompt.locator(".taxonomy-item-details > summary").click();
-  await pause(900);
+  await caption("Inspect exactly what was assembled for the model");
+  await pause(1_500);
 
   const initialSystem = page.locator(".taxonomy-item", { hasText: "System prompt" }).first();
   await ensureOpen(initialSystem.locator(".taxonomy-item-details").first());
   await pause(900);
+  const projectContext = initialSystem.locator(".taxonomy-segment", { hasText: "Project context" });
+  if (await projectContext.count()) await ensureOpen(projectContext.first());
+  await caption("Trace system, project, skill, conversation, and tool context");
+  await pause(1_500);
 
-  await caption("A second turn captures the exact provider payload");
-  await typeComposer("show structured taxonomy");
-  await page.getByRole("button", { name: "Send" }).click();
-  await waitForReply();
+  await sendMessage("show structured taxonomy");
+  await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
+  await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+  await page.getByRole("complementary", { name: "Context taxonomy" }).waitFor();
   await page.locator(".taxonomy-summary", { hasText: "provider-payload" }).waitFor();
-  await caption("Provider payload • schema v4 • cache evidence");
-  await pause(1_300);
+  await caption("Compare turns, cache evidence, options, and payload shape");
+  await pause(1_500);
 
   const rawPayload = page.locator(".taxonomy-raw-payload");
   await rawPayload.scrollIntoViewIfNeeded();
   await rawPayload.locator("summary").click();
-  await caption("Inspect the raw messages, tools, and options");
-  await pause(1_500);
+  await caption("Open the raw provider request when deeper debugging is needed");
+  await pause(1_600);
   await rawPayload.locator("summary").click();
 
-  const toolDefinition = page.locator(".taxonomy-item", { hasText: "Tool definition: read" });
-  await toolDefinition.scrollIntoViewIfNeeded();
-  await ensureOpen(toolDefinition.locator(".taxonomy-item-details").first());
-  await caption("Trace each tool definition back to its payload path");
-  await pause(1_300);
-
-  const structuredSystem = page.locator(".taxonomy-item", { hasText: "System prompt" }).first();
-  await structuredSystem.scrollIntoViewIfNeeded();
-  await ensureOpen(structuredSystem.locator(".taxonomy-item-details").first());
-  const projectContext = structuredSystem.locator(".taxonomy-segment", { hasText: "Project context" });
-  if (await projectContext.count()) {
-    await ensureOpen(projectContext.first());
-  }
-  await caption("Separate project and skill instructions from the system prompt");
-  await pause(1_400);
-
   await page.getByRole("button", { name: "Open Artifacts" }).click();
-  await caption("Artifacts and terminal tools stay one click away");
-  await pause(800);
+  await caption("Keep generated artifacts beside the active conversation");
+  await pause(1_100);
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await page.locator(".terminal-output").waitFor();
-  await pause(900);
-  await page.locator(".right-panel-tab", { hasText: "Context taxonomy" }).click();
-  await pause(600);
+  await caption("Use a real project-scoped terminal without changing apps");
+  await pause(1_300);
+
+  for (const tabCloseLabel of ["Close Terminal tab", "Close Artifacts tab", "Close Context taxonomy tab"]) {
+    const closeButton = page.getByRole("button", { name: tabCloseLabel, exact: true });
+    if (await closeButton.count()) await closeButton.click();
+  }
+
+  await page.locator(".message-scroll").click({ position: { x: 24, y: 24 } });
+  await page.keyboard.press("Control+K");
+  await page.locator(".command-panel").waitFor();
+  await caption("Jump anywhere with the command palette");
+  await pause(1_000);
+  await page.locator(".command-panel").getByRole("button", { name: "Memory" }).click();
+  await page.locator(".memory-panel").waitFor();
+  await page.getByRole("button", { name: "Refresh memories" }).click();
+  await page.locator(".memory-row").waitFor();
+  await caption("Keep explicit, inspectable memory under your control");
+  await pause(1_300);
+  await page.getByRole("button", { name: "Close memory panel" }).click();
+
+  await page.keyboard.press("Control+K");
+  await page.locator(".command-panel").getByRole("button", { name: "Activity" }).click();
+  await page.locator(".activity-panel").waitFor();
+  await page.getByRole("button", { name: "Refresh activity" }).click();
+  await page.locator(".activity-row").waitFor();
+  await caption("Review local activity with clear privacy controls");
+  await pause(1_300);
+  await page.getByRole("button", { name: "Close activity panel" }).click();
+
+  await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
+  await page.getByPlaceholder("Search chats").fill("Summarize");
+  await caption("Search persistent chats and return to prior work");
+  await pause(1_200);
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.locator(".side-menu").getByRole("button", { name: "Settings" }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "Providers" }).click();
-  await page.locator(".settings-subnav button").first().click();
-  await page.locator(".provider-card").waitFor();
-  await caption("Configure model providers without exposing saved secrets");
-  await pause(1_300);
+  await page.locator(".settings-nav").waitFor();
+  await caption("Configure the workspace from one settings surface");
+  await pause(1_000);
 
-  const providerButtons = page.locator(".settings-subnav button");
-  if (await providerButtons.count() > 1) {
-    await providerButtons.nth(1).click();
-    await pause(900);
-    await providerButtons.first().click();
-  }
+  await showSetting("Providers", "Connect providers and tune model-specific options", 1_250);
   const modelOptions = page.locator(".model-options-button").first();
   if (await modelOptions.count()) {
     await modelOptions.click();
     await page.locator(".model-dialog").waitFor();
-    await caption("Tune model-specific generation options");
-    await pause(1_300);
+    await pause(1_100);
     await page.getByRole("button", { name: "Cancel" }).click();
   }
-
-  await caption("Jasmine v0.1.0 • Windows");
-  await pause(1_500);
+  await showSetting("Appearance", "Choose the look, language, and workspace identity", 900);
+  await showSetting("Skills", "Manage local and shared skills", 750);
+  await showSetting("Plugins", "Install and control plugin packages", 750);
+  await showSetting("Chrome Control", "Enable browser control only when you need it", 750);
+  await showSetting("Prompt Templates", "Reuse prompt templates across conversations", 750);
+  await showSetting("Remote", "Work against remote coding targets", 750);
+  await showSetting("MCP Servers", "Connect additional tools through MCP", 850);
+  await showSetting("Web Search", "Select and constrain web search behavior", 750);
+  await showSetting("About", "Jasmine v0.1.0 for Windows", 1_300);
 } finally {
   await app.close().catch(() => undefined);
 }
 
 if (!video) throw new Error("The Playwright video stream was unavailable.");
-await video.saveAs(webmPath);
+await video.saveAs(rawWebmPath);
 await run(ffmpeg, [
-  "-y", "-i", webmPath,
+  "-y", "-i", rawWebmPath,
   "-vf", "scale=1280:-2:flags=lanczos",
-  "-c:v", "libx264", "-preset", "slow", "-crf", "25",
+  "-c:v", "libx264", "-preset", "slow", "-crf", "24",
   "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
   mp4Path
 ]);
-await run(ffmpeg, [
-  "-y", "-i", mp4Path,
-  "-vf", "fps=5,scale=720:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=80[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4",
-  "-loop", "0", gifPath
-]);
 
-for (const filePath of [webmPath, mp4Path, gifPath]) {
-  const info = await stat(filePath);
-  console.log(`${path.relative(rootDir, filePath)} ${(info.size / 1024 / 1024).toFixed(2)} MiB`);
-}
+const info = await stat(mp4Path);
+console.log(`${path.relative(rootDir, mp4Path)} ${(info.size / 1024 / 1024).toFixed(2)} MiB`);
 
 async function caption(text) {
   await page.evaluate((value) => {
@@ -185,6 +222,7 @@ async function caption(text) {
         bottom: "22px",
         transform: "translateX(-50%)",
         zIndex: "2147483647",
+        maxWidth: "80%",
         padding: "10px 16px",
         borderRadius: "10px",
         background: "rgba(12, 18, 28, 0.9)",
@@ -194,6 +232,7 @@ async function caption(text) {
         font: "600 15px/1.3 system-ui, sans-serif",
         letterSpacing: "0.01em",
         pointerEvents: "none",
+        textAlign: "center",
         whiteSpace: "nowrap"
       });
       document.body.appendChild(banner);
@@ -206,17 +245,23 @@ async function pause(milliseconds) {
   await page.waitForTimeout(milliseconds);
 }
 
-async function typeComposer(text) {
+async function sendMessage(text) {
+  const assistantBlocks = page.locator(".assistant-block");
+  const previousCount = await assistantBlocks.count();
   const composer = page.locator(".rich-composer-editor");
   await composer.click();
   await composer.fill("");
-  await composer.pressSequentially(text, { delay: 22 });
-  await pause(450);
+  await composer.pressSequentially(text, { delay: 18 });
+  await pause(350);
+  await page.getByRole("button", { name: "Send" }).click();
+  await assistantBlocks.nth(previousCount).waitFor({ timeout: 15_000 });
+  await page.waitForFunction(() => !document.querySelector(".assistant-block.live-message"), undefined, { timeout: 15_000 });
 }
 
-async function waitForReply() {
-  await page.locator(".assistant-block").last().waitFor({ timeout: 15_000 });
-  await page.waitForFunction(() => !document.querySelector(".assistant-block.live-message"), undefined, { timeout: 15_000 });
+async function showSetting(label, text, milliseconds) {
+  await page.locator(".settings-nav").getByRole("button", { name: label, exact: true }).click();
+  await caption(text);
+  await pause(milliseconds);
 }
 
 async function ensureOpen(details) {
