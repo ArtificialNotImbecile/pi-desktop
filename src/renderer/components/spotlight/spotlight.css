@@ -1,0 +1,61 @@
+.spotlight-card {
+  width: 100%;
+  max-height: 440px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(var(--ink-rgb), 0.22);
+  animation: spotlight-in 120ms ease-out;
+}
+
+.spotlight-command-menu {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.spotlight-input {
+  height: 56px;
+  padding: 0 18px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.spotlight-input input {
+  font-size: 16px;
+}
+
+.spotlight-list {
+  max-height: 360px;
+  padding: 8px;
+}
+
+.spotlight-list .command-menu-group [cmdk-group-heading] {
+  padding: 10px 10px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spotlight-list .command-menu-row[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+@keyframes spotlight-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-card {
+    animation: none;
+  }
+}

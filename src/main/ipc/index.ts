@@ -1,0 +1,46 @@
+import { registerAppSettingsIpc } from "./appSettings.js";
+import { registerActivityIpc } from "./activity.js";
+import { registerAskUserQuestionIpc } from "./askUserQuestion.js";
+import { registerChatIpc } from "./chat.js";
+import { registerChromeBridgeIpc } from "./chromeBridge.js";
+import type { IpcContext } from "./context.js";
+import { registerDialogIpc } from "./dialogs.js";
+import { registerMemoryIpc } from "./memories.js";
+import { registerMcpIpc } from "./mcp.js";
+import { registerPluginIpc } from "./plugins.js";
+import { registerProviderIpc } from "./providers.js";
+import { registerProjectIpc } from "./projects.js";
+import { registerPromptTemplateIpc } from "./promptTemplates.js";
+import { registerRemoteConnectionIpc } from "./remoteConnections.js";
+import { registerRightPanelIpc } from "./rightPanels.js";
+import { registerSkillIpc } from "./skills.js";
+import { registerTerminalIpc } from "./terminal.js";
+import { registerThreadIpc } from "./threads.js";
+import { registerTodoIpc } from "./todos.js";
+import { registerTraceIpc } from "./traces.js";
+import { registerWebSearchIpc } from "./webSearch.js";
+import { registerWindowIpc } from "./window.js";
+
+export function registerIpc(context: IpcContext): void {
+  registerAskUserQuestionIpc(context);
+  registerThreadIpc(context);
+  registerProjectIpc(context);
+  registerTodoIpc(context);
+  registerChatIpc(context);
+  registerTraceIpc(context);
+  registerMemoryIpc(context);
+  registerMcpIpc(context);
+  registerRemoteConnectionIpc(context);
+  registerPromptTemplateIpc(context);
+  registerSkillIpc(context);
+  registerPluginIpc(context);
+  registerChromeBridgeIpc(context);
+  registerAppSettingsIpc(context);
+  registerActivityIpc(context);
+  registerWebSearchIpc(context);
+  registerProviderIpc(context);
+  registerTerminalIpc(context);
+  registerRightPanelIpc(context);
+  registerDialogIpc(context);
+  registerWindowIpc();
+}

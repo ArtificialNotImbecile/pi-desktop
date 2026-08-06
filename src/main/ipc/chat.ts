@@ -1,0 +1,938 @@
+import { app, ipcMain, type WebContents } from "electron";
+import type {
+  AskUserQuestionPrompt,
+  ChatEditRequest,
+  ChatEditResponse,
+  ChatQueueDeleteRequest,
+  ChatMessage,
+  ChatQueueRequest,
+  ChatQueueResponse,
+  ChatQueueSteerRequest,
+  ChatQueueUpdateRequest,
+  ChatQueueState,
+  MemoryReference,
+  PickedPath,
+  PluginReference,
+  ChatRetryRequest,
+  ChatRetryResponse,
+  ChatSendRequest,
+  ChatSendResponse,
+  ChatStreamMessage,
+  ChatTimelineItem,
+  ContextTaxonomy,
+  SkillRecord,
+  SkillReference,
+  WebSearchResult
+} from "../../shared/ipc.js";
+import { chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSchema, chatQueueSteerRequestSchema, chatQueueUpdateRequestSchema, chatRetryRequestSchema, chatSendRequestSchema } from "../../shared/schemas.js";
+import { computeStreamDelta } from "../../shared/streamDelta.js";
+import { generateAssistantReply } from "../agent/runtime.js";
+import type { AssistantReply, RuntimeGeneratedMessage, RuntimeQueueControls } from "../agent/runtime.js";
+import { capContextTaxonomyForStorage } from "../agent/extensions/contextCapture/classifier.js";
+import type { JasmineDatabase } from "../db/database.js";
+import { askUserQuestionInRenderer } from "./askUserQuestion.js";
+import { getRuntimeProvider } from "../services/providers.js";
+import { getJasminePiAgentDir } from "../services/piAgent.js";
+import {
+  bootstrapPiWebAccessPluginFromWebSearch,
+  resolveEnabledPackageSkillPaths,
+  resolvePluginPackageReferences,
+  resolvePluginPackageRuntimeSources,
+  resolvePluginSkillsForPrompt
+} from "../services/plugins.js";
+import { getPromptTemplatePaths } from "../services/promptTemplates.js";
+import { prepareSkillManifests } from "../services/skillManifests.js";
+import { mergeRuntimeSkills, pluginReferenceIds, skillReferenceIds } from "../services/skillRuntimeContext.js";
+import { generateTitleWithProviderResult } from "../services/threadTitles.js";
+import { bridgeInfoFilePath, getChromeBridge } from "../services/chromeBridge.js";
+import {
+  buildRetryPlan,
+  modelContentForMessage,
+  nonSecretError,
+  runWebSearchForChat,
+  summarizeInput,
+  summarizeOutput,
+  titleFromAttachments,
+  titleFromMessage,
+  toModelHistoryMessage
+} from "./chatSupport.js";
+import type { IpcContext } from "./context.js";
+import { mergeWebSearchResults } from "../utils/webSearchResults.js";
+
+type ActiveRun = {
+  threadId: string;
+  abortController: AbortController;
+  queueControls?: RuntimeQueueControls;
+  queueReady: Promise<RuntimeQueueControls>;
+  resolveQueueReady(controls: RuntimeQueueControls): void;
+  rejectQueueReady(error: Error): void;
+};
+
+const activeRuns = new Map<string, ActiveRun>();
+
+export function registerChatIpc(context: IpcContext): void {
+  ipcMain.handle("chat:cancel", (_event, requestId: string): boolean => {
+    const run = activeRuns.get(requestId);
+    if (!run) return false;
+    run.abortController.abort();
+    return true;
+  });
+
+  ipcMain.handle("chat:queue", async (_event, request: ChatQueueRequest): Promise<ChatQueueResponse> => {
+    request = chatQueueRequestSchema.parse(request);
+    const run = activeQueueRun(request.requestId, request.threadId);
+    const content = request.content.trim();
+    const attachments = request.attachments ?? [];
+    if (!content && attachments.length === 0) throw new Error("Message content is empty.");
+    if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
+    const controls = run.queueControls ?? await run.queueReady;
+    return {
+      queue: await controls.queueMessage({
+        mode: request.mode,
+        content,
+        attachments
+      })
+    };
+  });
+
+  ipcMain.handle("chat:queue:update", async (_event, request: ChatQueueUpdateRequest): Promise<ChatQueueResponse> => {
+    request = chatQueueUpdateRequestSchema.parse(request);
+    const run = activeQueueRun(request.requestId, request.threadId);
+    const content = request.content.trim();
+    const attachments = request.attachments ?? [];
+    if (!content && attachments.length === 0) throw new Error("Message content is empty.");
+    if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
+    const controls = run.queueControls ?? await run.queueReady;
+    return {
+      queue: await controls.updateMessage({
+        id: request.messageId,
+        content,
+        attachments
+      })
+    };
+  });
+
+  ipcMain.handle("chat:queue:delete", async (_event, request: ChatQueueDeleteRequest): Promise<ChatQueueResponse> => {
+    request = chatQueueDeleteRequestSchema.parse(request);
+    const run = activeQueueRun(request.requestId, request.threadId);
+    if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
+    const controls = run.queueControls ?? await run.queueReady;
+    return {
+      queue: await controls.deleteMessage(request.messageId)
+    };
+  });
+
+  ipcMain.handle("chat:queue:steer", async (_event, request: ChatQueueSteerRequest): Promise<ChatQueueResponse> => {
+    request = chatQueueSteerRequestSchema.parse(request);
+    const run = activeQueueRun(request.requestId, request.threadId);
+    if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
+    const controls = run.queueControls ?? await run.queueReady;
+    return {
+      queue: await controls.steerMessage(request.messageId)
+    };
+  });
+
+  ipcMain.handle("chat:send", async (_event, request: ChatSendRequest): Promise<ChatSendResponse> => {
+    const db = context.getDatabase();
+    request = chatSendRequestSchema.parse(request);
+    const requestId = request.requestId ?? `main-${crypto.randomUUID()}`;
+    const abortController = new AbortController();
+    const content = request.content.trim();
+    const attachments = request.attachments ?? [];
+    if (!content && attachments.length === 0) throw new Error("Message content is empty.");
+    if (!db.hasThread(request.threadId)) throw new Error("Thread does not exist.");
+    const inlinePluginIds = request.inlinePluginIds ?? db.getThread(request.threadId)?.activePluginIds ?? [];
+    db.updateThreadActivePlugins({ threadId: request.threadId, pluginIds: inlinePluginIds });
+    const cwd = db.getThreadCwd(request.threadId);
+    const startedAt = Date.now();
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+
+    try {
+      const userDataDir = app.getPath("userData");
+      const inlineSkills = await db.getSkillsForPrompt(request.inlineSkillIds);
+      const inlinePluginSkills = await resolvePluginSkillsForPrompt({ userDataDir }, request.inlineSkillIds);
+      const inlinePluginsUsed = await resolvePluginPackageReferences({ userDataDir }, inlinePluginIds);
+      const inlinePluginSources = await resolvePluginPackageRuntimeSources({ userDataDir }, inlinePluginIds);
+      const inlineSkillsUsed = toExplicitSkillReferences(mergeRuntimeSkills(inlineSkills, inlinePluginSkills));
+      const previousCount = db.getThreadMessageCount(request.threadId);
+      const userMessage = db.addMessage({
+        threadId: request.threadId,
+        role: "user",
+        content,
+        attachments,
+        skillsUsed: inlineSkillsUsed,
+        pluginsUsed: inlinePluginsUsed
+      });
+
+      if (previousCount === 0) {
+        queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
+      }
+
+      const messages = db.listMessages(request.threadId).map(toModelHistoryMessage);
+      const modelContent = modelContentForMessage(userMessage);
+
+      const turn = await buildChatTurnContext(db, {
+        threadId: request.threadId,
+        providerId: request.providerId,
+        modelId: request.modelId,
+        memoryEnabled: request.memoryEnabled,
+        skillIds: request.skillIds,
+        queryText: content,
+        inlineSkills,
+        inlinePluginSkills,
+        signal: abortController.signal
+      });
+      const trace = db.createToolRun({
+        threadId: request.threadId,
+        title: `${turn.runtimeProvider.providerName} chat completion`,
+        providerId: turn.runtimeProvider.providerName,
+        modelId: turn.runtimeProvider.modelId,
+        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length, turn.webSearchUsed.length)
+      });
+
+      const reply = await runTracedGeneration(db, {
+        request: {
+          ...request,
+          content: modelContent,
+          cwd,
+          messages,
+          packageExtensionPaths: inlinePluginSources,
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+        },
+        runtimeProvider: turn.runtimeProvider,
+        traceId: trace.id,
+        startedAt,
+        requestId,
+        threadId: request.threadId,
+        signal: abortController.signal,
+        sender: _event.sender
+      });
+
+      const assistantMessage = persistRuntimeGeneratedMessages(db, {
+        threadId: request.threadId,
+        reply,
+        fallbackTimeline: reply.timeline,
+        memoryUsed: turn.memoryUsed,
+        skillsUsed: turn.skillsUsed,
+        pluginsUsed: inlinePluginsUsed,
+        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+      });
+      finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      return {
+        userMessage,
+        assistantMessage,
+        content: assistantMessage.content,
+        model: assistantMessage.modelId ?? reply.model,
+        elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
+      };
+    } finally {
+      finishActiveRun(requestId);
+    }
+  });
+
+  ipcMain.handle("chat:retry", async (_event, request: ChatRetryRequest): Promise<ChatRetryResponse> => {
+    const db = context.getDatabase();
+    request = chatRetryRequestSchema.parse(request);
+    const requestId = request.requestId ?? `main-${crypto.randomUUID()}`;
+    const abortController = new AbortController();
+    if (!db.hasThread(request.threadId)) throw new Error("Thread does not exist.");
+    const cwd = db.getThreadCwd(request.threadId);
+    const startedAt = Date.now();
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+
+    try {
+      const existingMessages = db.listMessages(request.threadId);
+      const retryPlan = buildRetryPlan(existingMessages, request.messageId);
+      const lastUserMessage = retryPlan.lastUserMessage;
+      if (!lastUserMessage) throw new Error("No user message is available to retry.");
+      const modelContent = modelContentForMessage(lastUserMessage);
+
+      const userDataDir = app.getPath("userData");
+      const inlineSkillIds = skillReferenceIds(lastUserMessage.skillsUsed);
+      const inlineSkills = await db.getSkillsForPrompt(inlineSkillIds);
+      const inlinePluginSkills = await resolvePluginSkillsForPrompt({ userDataDir }, inlineSkillIds);
+      const inlinePluginIds = pluginReferenceIds(lastUserMessage.pluginsUsed);
+      const inlinePluginSources = await resolvePluginPackageRuntimeSources({ userDataDir }, inlinePluginIds);
+
+      const turn = await buildChatTurnContext(db, {
+        threadId: request.threadId,
+        providerId: request.providerId,
+        modelId: request.modelId,
+        memoryEnabled: request.memoryEnabled,
+        skillIds: request.skillIds,
+        queryText: lastUserMessage.content,
+        inlineSkills,
+        inlinePluginSkills,
+        signal: abortController.signal
+      });
+      const trace = db.createToolRun({
+        threadId: request.threadId,
+        title: `${turn.runtimeProvider.providerName} chat retry`,
+        providerId: turn.runtimeProvider.providerName,
+        modelId: turn.runtimeProvider.modelId,
+        inputSummary: summarizeInput(retryPlan.contextMessages.length, lastUserMessage.attachments?.length ?? 0, turn.memoryUsed.length, turn.skillsUsed.length + (lastUserMessage.skillsUsed?.length ?? 0) + (lastUserMessage.pluginsUsed?.length ?? 0), turn.webSearchUsed.length)
+      });
+
+      const reply = await runTracedGeneration(db, {
+        request: {
+          threadId: request.threadId,
+          providerId: request.providerId,
+          modelId: request.modelId,
+          reasoningEffort: request.reasoningEffort,
+          content: modelContent,
+          cwd,
+          attachments: lastUserMessage.attachments ?? [],
+          toolsEnabled: request.toolsEnabled,
+          messages: retryPlan.contextMessages,
+          packageExtensionPaths: inlinePluginSources,
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+        },
+        runtimeProvider: turn.runtimeProvider,
+        traceId: trace.id,
+        startedAt,
+        requestId,
+        threadId: request.threadId,
+        signal: abortController.signal,
+        sender: _event.sender
+      });
+
+      // Delete the superseded turn and persist its replacement atomically so an
+      // interrupted retry cannot drop messages without writing the new ones.
+      const assistantMessage = db.runInTransaction(() => {
+        db.deleteMessagesByIds(request.threadId, retryPlan.deleteMessageIds);
+        return persistRuntimeGeneratedMessages(db, {
+          threadId: request.threadId,
+          reply,
+          fallbackTimeline: reply.timeline,
+          memoryUsed: turn.memoryUsed,
+          skillsUsed: turn.skillsUsed,
+          pluginsUsed: lastUserMessage.pluginsUsed ?? [],
+          webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+        });
+      });
+      finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      return {
+        assistantMessage,
+        content: assistantMessage.content,
+        model: assistantMessage.modelId ?? reply.model,
+        elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
+      };
+    } finally {
+      finishActiveRun(requestId);
+    }
+  });
+
+  ipcMain.handle("chat:edit", async (_event, request: ChatEditRequest): Promise<ChatEditResponse> => {
+    const db = context.getDatabase();
+    request = chatEditRequestSchema.parse(request);
+    const requestId = request.requestId ?? `main-${crypto.randomUUID()}`;
+    const abortController = new AbortController();
+    const content = request.content.trim();
+    const attachments = request.attachments ?? [];
+    if (!content && attachments.length === 0) throw new Error("Message content is empty.");
+    if (!db.hasThread(request.threadId)) throw new Error("Thread does not exist.");
+    const cwd = db.getThreadCwd(request.threadId);
+    const startedAt = Date.now();
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+
+    try {
+      const existingMessages = db.listMessages(request.threadId);
+      const targetIndex = existingMessages.findIndex((message) => message.id === request.messageId && message.role === "user");
+      if (targetIndex < 0) throw new Error("User message to edit does not exist.");
+
+      const userDataDir = app.getPath("userData");
+      const inlineSkillIds = request.inlineSkillIds ?? skillReferenceIds(existingMessages[targetIndex].skillsUsed);
+      const inlinePluginIds = request.inlinePluginIds ?? pluginReferenceIds(existingMessages[targetIndex].pluginsUsed);
+      db.updateThreadActivePlugins({ threadId: request.threadId, pluginIds: inlinePluginIds });
+      const inlineSkills = inlineSkillIds.length > 0 ? await db.getSkillsForPrompt(inlineSkillIds) : [];
+      const inlinePluginSkills = inlineSkillIds.length > 0 ? await resolvePluginSkillsForPrompt({ userDataDir }, inlineSkillIds) : [];
+      const inlinePluginsUsed = request.inlinePluginIds
+        ? await resolvePluginPackageReferences({ userDataDir }, inlinePluginIds)
+        : existingMessages[targetIndex].pluginsUsed ?? [];
+      const inlinePluginSources = await resolvePluginPackageRuntimeSources({ userDataDir }, inlinePluginIds);
+      const inlineSkillsUsed = request.inlineSkillIds
+        ? toExplicitSkillReferences(mergeRuntimeSkills(inlineSkills, inlinePluginSkills))
+        : existingMessages[targetIndex].skillsUsed ?? [];
+      // Truncating the tail and rewriting the edited message must land together,
+      // otherwise a crash between them corrupts the visible conversation.
+      const userMessage = db.runInTransaction(() => {
+        db.deleteMessagesByIds(request.threadId, existingMessages.slice(targetIndex + 1).map((message) => message.id));
+        return db.updateMessage({
+          threadId: request.threadId,
+          messageId: request.messageId,
+          content,
+          attachments,
+          skillsUsed: inlineSkillsUsed,
+          pluginsUsed: inlinePluginsUsed
+        });
+      });
+
+      if (targetIndex === 0) {
+        queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
+      }
+
+      const messages = db.listMessages(request.threadId).map(toModelHistoryMessage);
+      const modelContent = modelContentForMessage(userMessage);
+
+      const turn = await buildChatTurnContext(db, {
+        threadId: request.threadId,
+        providerId: request.providerId,
+        modelId: request.modelId,
+        memoryEnabled: request.memoryEnabled,
+        skillIds: request.skillIds,
+        queryText: content,
+        inlineSkills,
+        inlinePluginSkills,
+        signal: abortController.signal
+      });
+      const trace = db.createToolRun({
+        threadId: request.threadId,
+        title: `${turn.runtimeProvider.providerName} chat edit`,
+        providerId: turn.runtimeProvider.providerName,
+        modelId: turn.runtimeProvider.modelId,
+        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length, turn.webSearchUsed.length)
+      });
+
+      const reply = await runTracedGeneration(db, {
+        request: {
+          threadId: request.threadId,
+          providerId: request.providerId,
+          modelId: request.modelId,
+          reasoningEffort: request.reasoningEffort,
+          content: modelContent,
+          cwd,
+          attachments,
+          toolsEnabled: request.toolsEnabled,
+          messages,
+          packageExtensionPaths: inlinePluginSources,
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+        },
+        runtimeProvider: turn.runtimeProvider,
+        traceId: trace.id,
+        startedAt,
+        requestId,
+        threadId: request.threadId,
+        signal: abortController.signal,
+        sender: _event.sender
+      });
+
+      const assistantMessage = persistRuntimeGeneratedMessages(db, {
+        threadId: request.threadId,
+        reply,
+        fallbackTimeline: reply.timeline,
+        memoryUsed: turn.memoryUsed,
+        skillsUsed: turn.skillsUsed,
+        pluginsUsed: inlinePluginsUsed,
+        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+      });
+      finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      return {
+        userMessage,
+        assistantMessage,
+        content: assistantMessage.content,
+        model: assistantMessage.modelId ?? reply.model,
+        elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
+      };
+    } finally {
+      finishActiveRun(requestId);
+    }
+  });
+}
+
+function createActiveRun(threadId: string, abortController: AbortController): ActiveRun {
+  let resolveQueueReady: (controls: RuntimeQueueControls) => void = () => undefined;
+  let rejectQueueReady: (error: Error) => void = () => undefined;
+  const queueReady = new Promise<RuntimeQueueControls>((resolve, reject) => {
+    resolveQueueReady = resolve;
+    rejectQueueReady = reject;
+  });
+  queueReady.catch(() => undefined);
+  return {
+    threadId,
+    abortController,
+    queueReady,
+    resolveQueueReady,
+    rejectQueueReady
+  };
+}
+
+function activeQueueRun(requestId: string, threadId: string): ActiveRun {
+  const run = activeRuns.get(requestId);
+  if (!run || run.threadId !== threadId) {
+    throw new Error("No active response is available for this queue request.");
+  }
+  return run;
+}
+
+function setActiveRunQueueControls(requestId: string, controls: RuntimeQueueControls): void {
+  const run = activeRuns.get(requestId);
+  if (!run) return;
+  run.queueControls = controls;
+  run.resolveQueueReady(controls);
+}
+
+function finishActiveRun(requestId: string): void {
+  const run = activeRuns.get(requestId);
+  if (run && !run.queueControls) {
+    run.rejectQueueReady(new Error("Response finished before queue controls became available."));
+  }
+  activeRuns.delete(requestId);
+  streamSenders.get(requestId)?.finish();
+  streamSenders.delete(requestId);
+}
+
+// Chat stream events fire from async callbacks and trailing throttle timers,
+// which can outlive the renderer (e.g. quitting mid-stream). Sending to a
+// destroyed WebContents throws an uncaught "Object has been destroyed" in the
+// main process, so every late send must go through this guard.
+function sendChatStream(sender: WebContents, payload: unknown): void {
+  if (sender.isDestroyed()) return;
+  sender.send("chat:stream", payload);
+}
+
+function emitQueueUpdate(
+  sender: WebContents,
+  requestId: string,
+  threadId: string,
+  queue: ChatQueueState
+): void {
+  sendChatStream(sender, {
+    requestId,
+    threadId,
+    status: "running",
+    queue
+  });
+}
+
+type StreamUpdate = {
+  content: string;
+  timeline: ChatTimelineItem[];
+  liveMessages?: RuntimeGeneratedMessage[];
+};
+
+// Test hook: the destroyed-WebContents regression needs a wide throttle window
+// to deterministically leave a trailing timer pending when the window closes.
+const STREAM_THROTTLE_MS = Number(process.env.JASMINE_E2E_STREAM_THROTTLE_MS ?? "") || 45;
+// Force a full snapshot at least this often so any renderer/main divergence in the
+// delta stream self-heals within a bounded number of ticks.
+const STREAM_SNAPSHOT_INTERVAL = 40;
+type StreamSender = {
+  send(update: StreamUpdate): void;
+  finish(): void;
+};
+
+const streamSenders = new Map<string, StreamSender>();
+
+function streamMessagesFromUpdate(update: StreamUpdate): ChatStreamMessage[] {
+  if (update.liveMessages && update.liveMessages.length > 0) {
+    return update.liveMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      attachments: message.attachments,
+      timeline: message.timeline
+    }));
+  }
+  return [{ role: "assistant", content: update.content, timeline: update.timeline }];
+}
+
+// Coalesce high-frequency token updates so a fast stream does not flood the
+// renderer with one re-render per token (leading edge keeps the first frame of
+// each burst instant, the trailing timer always delivers the final state).
+// Each flush sends only the delta since the previous event for this request; the
+// first flush and every STREAM_SNAPSHOT_INTERVAL flushes send a full snapshot.
+function createThrottledStreamSender(
+  sender: WebContents,
+  requestId: string,
+  threadId: string,
+  intervalMs = STREAM_THROTTLE_MS
+): StreamSender {
+  let pending: StreamUpdate | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  let lastSentAt = 0;
+  let lastSnapshot: ChatStreamMessage[] | null = null;
+  let flushCount = 0;
+  const flush = () => {
+    if (!pending) return;
+    const update = pending;
+    pending = null;
+    lastSentAt = Date.now();
+    const current = streamMessagesFromUpdate(update);
+    const wantSnapshot = lastSnapshot === null || flushCount % STREAM_SNAPSHOT_INTERVAL === 0;
+    const delta = wantSnapshot ? null : computeStreamDelta(lastSnapshot as ChatStreamMessage[], current);
+    flushCount += 1;
+    lastSnapshot = current;
+    if (delta) {
+      // Nothing observable changed since the last flush; skip the IPC round trip.
+      if (delta.messages.length === 0) return;
+      sendChatStream(sender, {
+        requestId,
+        threadId,
+        status: "running",
+        delta
+      });
+    } else {
+      sendChatStream(sender, {
+        requestId,
+        threadId,
+        status: "running",
+        liveMessages: current
+      });
+    }
+  };
+  const clearTimer = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = null;
+  };
+  return {
+    send(update: StreamUpdate) {
+      pending = update;
+      const elapsed = Date.now() - lastSentAt;
+      if (elapsed >= intervalMs) {
+        clearTimer();
+        flush();
+      } else if (!timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          flush();
+        }, intervalMs - elapsed);
+      }
+    },
+    finish() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      flush();
+    }
+  };
+}
+
+function emitStreamUpdate(
+  sender: WebContents,
+  requestId: string,
+  threadId: string,
+  update: StreamUpdate
+): void {
+  let send = streamSenders.get(requestId);
+  if (!send) {
+    send = createThrottledStreamSender(sender, requestId, threadId);
+    streamSenders.set(requestId, send);
+  }
+  send.send(update);
+}
+
+function persistRuntimeGeneratedMessages(
+  db: JasmineDatabase,
+  input: {
+    threadId: string;
+    reply: AssistantReply;
+    fallbackTimeline: ChatTimelineItem[];
+    memoryUsed: MemoryReference[];
+    skillsUsed: SkillReference[];
+    pluginsUsed: PluginReference[];
+    webSearchUsed: WebSearchResult[];
+  }
+): ChatMessage {
+  const generated = input.reply.generatedMessages?.length
+    ? input.reply.generatedMessages
+    : [{
+        role: "assistant" as const,
+        content: input.reply.content,
+        timeline: input.fallbackTimeline
+      }];
+  // Multi-turn runs persist several rows (queued user turns + assistant turns);
+  // commit them atomically so a crash mid-write cannot leave a half-saved run.
+  return db.runInTransaction(() => {
+    let lastAssistantMessage: ChatMessage | null = null;
+    let taxonomyAttached = false;
+
+    for (const message of generated) {
+      if (message.role === "user") {
+        db.addMessage({
+          threadId: input.threadId,
+          role: "user",
+          content: message.content,
+          attachments: message.attachments ?? []
+        });
+        continue;
+      }
+
+      const timeline = taxonomyAttached
+        ? message.timeline ?? []
+        : withContextTaxonomy(message.timeline ?? [], input.reply.contextTaxonomy);
+      taxonomyAttached = true;
+      lastAssistantMessage = db.addMessage({
+        threadId: input.threadId,
+        role: "assistant",
+        content: message.content,
+        elapsedMs: input.reply.elapsedMs,
+        modelId: input.reply.model,
+        status: "sent",
+        memoryUsed: input.memoryUsed,
+        skillsUsed: input.skillsUsed,
+        pluginsUsed: input.pluginsUsed,
+        webSearchUsed: input.webSearchUsed,
+        timeline
+      });
+    }
+
+    if (!lastAssistantMessage) {
+      lastAssistantMessage = db.addMessage({
+        threadId: input.threadId,
+        role: "assistant",
+        content: input.reply.content,
+        elapsedMs: input.reply.elapsedMs,
+        modelId: input.reply.model,
+        status: "sent",
+        memoryUsed: input.memoryUsed,
+        skillsUsed: input.skillsUsed,
+        pluginsUsed: input.pluginsUsed,
+        webSearchUsed: input.webSearchUsed,
+        timeline: withContextTaxonomy(input.fallbackTimeline, input.reply.contextTaxonomy)
+      });
+    }
+    return lastAssistantMessage;
+  });
+}
+
+function toExplicitSkillReferences(skills: SkillRecord[]): SkillReference[] {
+  return skills.map((skill) => ({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    instructions: skill.instructions
+  }));
+}
+
+function withContextTaxonomy(timeline: ChatTimelineItem[], taxonomy?: ContextTaxonomy): ChatTimelineItem[] {
+  if (!taxonomy) return timeline;
+  const stored = capContextTaxonomyForStorage(taxonomy);
+  return [
+    {
+      id: `context-taxonomy-${crypto.randomUUID()}`,
+      kind: "system",
+      title: "Context taxonomy",
+      text: `${stored.items.length} context item${stored.items.length === 1 ? "" : "s"} captured from ${stored.source}.`,
+      customType: "context-taxonomy",
+      data: stored
+    },
+    ...timeline
+  ];
+}
+
+function shouldPrefetchWebSearch(): boolean {
+  return process.env.JASMINE_E2E_MOCK_AI === "1";
+}
+
+type ChatTurnContext = Awaited<ReturnType<typeof buildChatTurnContext>>;
+
+// Shared context assembly for send/retry/edit: provider, settings, memory,
+// skill manifests, web search bootstrap, prompt templates, and the optional
+// prefetched web search results.
+async function buildChatTurnContext(
+  db: JasmineDatabase,
+  input: {
+    threadId: string;
+    providerId?: string;
+    modelId?: string;
+    memoryEnabled?: boolean;
+    skillIds?: string[];
+    queryText: string;
+    inlineSkills: SkillRecord[];
+    inlinePluginSkills: SkillRecord[];
+    signal: AbortSignal;
+  }
+) {
+  const userDataDir = app.getPath("userData");
+  const runtimeProvider = getRuntimeProvider(db, input.providerId, input.modelId);
+  const appSettings = db.getAppSettings();
+  const memoryUsed = input.memoryEnabled ? db.findRelevantMemories(input.queryText) : [];
+  const selectedSkills = await db.getSkillsForPrompt(input.skillIds);
+  const skillManifests = await prepareSkillManifests(mergeRuntimeSkills(selectedSkills, input.inlineSkills, input.inlinePluginSkills), userDataDir);
+  const remoteConnection = db.getActiveRemoteConnection();
+  const webSearchSettings = db.getWebSearchSettings();
+  const effectiveWebSearchEnabled = Boolean(webSearchSettings.enabled);
+  await bootstrapPiWebAccessPluginFromWebSearch({ userDataDir }, webSearchSettings);
+  const packageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir });
+  const chromeTakeover = await resolveChromeTakeoverRuntime(appSettings.chromeTakeover, userDataDir);
+  const promptTemplatePaths = getPromptTemplatePaths(db, userDataDir);
+  const skillsUsed = selectedSkills.map((skill) => ({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description
+  }));
+  const prefetchWebSearch = shouldPrefetchWebSearch();
+  const webSearchUsed = prefetchWebSearch
+    ? await runWebSearchForChat(db, input.threadId, input.queryText, effectiveWebSearchEnabled, input.signal)
+    : [];
+  return {
+    userDataDir,
+    runtimeProvider,
+    appSettings,
+    memoryUsed,
+    skillManifests,
+    remoteConnection,
+    webSearchSettings,
+    effectiveWebSearchEnabled,
+    packageSkillPaths,
+    chromeTakeover,
+    promptTemplatePaths,
+    skillsUsed,
+    prefetchWebSearch,
+    webSearchUsed
+  };
+}
+
+// Runtime request fields shared by all three generation paths.
+function runtimeContextOptions(db: JasmineDatabase, turn: ChatTurnContext, threadId: string, sender: WebContents) {
+  return {
+    memoryContext: turn.memoryUsed.map((memory) => memory.content),
+    skillContext: turn.skillManifests,
+    packageSkillPaths: turn.packageSkillPaths,
+    chromeTakeover: turn.chromeTakeover,
+    piAgentDir: getJasminePiAgentDir(turn.userDataDir),
+    terminalShellPath: turn.appSettings.terminalShellPath,
+    webSearchContext: turn.webSearchUsed,
+    webSearchTool: {
+      enabled: turn.effectiveWebSearchEnabled && !turn.prefetchWebSearch,
+      provider: turn.webSearchSettings.provider,
+      search: (query: string, signal?: AbortSignal) => runWebSearchForChat(db, threadId, query, true, signal)
+    },
+    askUserQuestion: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => askUserQuestionInRenderer(sender, prompt, signal),
+    promptTemplatePaths: turn.promptTemplatePaths,
+    remoteConnection: turn.remoteConnection
+  };
+}
+
+async function resolveChromeTakeoverRuntime(
+  settings: { enabled: boolean; extensionId: string | null },
+  userDataDir: string
+): Promise<{ enabled: boolean; bridgeFilePath?: string; extensionId?: string } | undefined> {
+  if (!settings.enabled || !settings.extensionId) return undefined;
+  const bridge = await getChromeBridge(userDataDir);
+  const status = bridge.status();
+  if (!status.extensionConnected) return { enabled: false, extensionId: settings.extensionId };
+  return {
+    enabled: true,
+    bridgeFilePath: bridgeInfoFilePath(),
+    extensionId: settings.extensionId
+  };
+}
+
+async function runTracedGeneration(
+  db: JasmineDatabase,
+  input: {
+    request: Parameters<typeof generateAssistantReply>[0];
+    runtimeProvider: Parameters<typeof generateAssistantReply>[1];
+    traceId: string;
+    startedAt: number;
+    requestId: string;
+    threadId: string;
+    signal: AbortSignal;
+    sender: WebContents;
+  }
+): Promise<AssistantReply> {
+  return generateAssistantReply(input.request, input.runtimeProvider, {
+    signal: input.signal,
+    onUpdate: (update) => emitStreamUpdate(input.sender, input.requestId, input.threadId, update),
+    onQueueReady: (controls) => setActiveRunQueueControls(input.requestId, controls),
+    onQueueUpdate: (queue) => emitQueueUpdate(input.sender, input.requestId, input.threadId, queue)
+  }).catch((error: unknown) => {
+    db.finishToolRun({
+      id: input.traceId,
+      status: "error",
+      error: nonSecretError(error),
+      elapsedMs: Date.now() - input.startedAt
+    });
+    throw error;
+  });
+}
+
+function finishTraceSuccess(db: JasmineDatabase, traceId: string, assistantMessage: ChatMessage, reply: AssistantReply): void {
+  db.finishToolRun({
+    id: traceId,
+    status: "success",
+    messageId: assistantMessage.id,
+    outputSummary: summarizeOutput(assistantMessage.content),
+    elapsedMs: reply.elapsedMs
+  });
+}
+
+// First user message in a thread: set an immediate fallback title, then
+// asynchronously generate a better one and stream it to the renderer.
+function queueFirstMessageTitle(
+  db: JasmineDatabase,
+  sender: WebContents,
+  requestId: string,
+  threadId: string,
+  content: string,
+  attachments: PickedPath[]
+): void {
+  const fallbackTitle = titleFromMessage(content || titleFromAttachments(attachments));
+  db.updateThreadTitle(threadId, fallbackTitle);
+  queueTitleGeneration(db, threadId, content, fallbackTitle, (title) => {
+    sendChatStream(sender, {
+      requestId,
+      threadId,
+      status: "running",
+      threadTitle: title
+    });
+  });
+}
+
+async function updateGeneratedThreadTitle(db: JasmineDatabase, threadId: string, content: string, fallback: string, onTitle?: (title: string) => void): Promise<void> {
+  if (!content.trim()) {
+    db.updateThreadTitle(threadId, fallback);
+    onTitle?.(fallback);
+    return;
+  }
+  const startedAt = Date.now();
+  const settings = db.getAppSettings();
+  const trace = db.createToolRun({
+    threadId,
+    title: "Automatic title",
+    providerId: settings.toolModel.providerId,
+    modelId: settings.toolModel.modelId,
+    inputSummary: summarizeOutput(content)
+  });
+  try {
+    const result = process.env.JASMINE_E2E_MOCK_AI === "1"
+      ? { title: fallback, usedFallback: false }
+      : await generateTitleWithProviderResult(
+          getRuntimeProvider(db, settings.toolModel.providerId, settings.toolModel.modelId),
+          content,
+          fallback
+        );
+    const nextTitle = updateThreadTitleIfUnchanged(db, threadId, fallback, result.title || fallback);
+    db.finishToolRun({
+      id: trace.id,
+      status: result.usedFallback ? "error" : "success",
+      outputSummary: nextTitle,
+      error: result.usedFallback ? `Title fallback: ${result.fallbackReason ?? "empty title"}${result.debugSummary ? `; ${result.debugSummary}` : ""}` : undefined,
+      elapsedMs: Date.now() - startedAt
+    });
+    onTitle?.(nextTitle);
+  } catch (error) {
+    const nextTitle = updateThreadTitleIfUnchanged(db, threadId, fallback, fallback);
+    db.finishToolRun({
+      id: trace.id,
+      status: "error",
+      outputSummary: nextTitle,
+      error: nonSecretError(error),
+      elapsedMs: Date.now() - startedAt
+    });
+    onTitle?.(nextTitle);
+  }
+}
+
+function queueTitleGeneration(db: JasmineDatabase, threadId: string, content: string, fallback: string, onTitle?: (title: string) => void): void {
+  void Promise.resolve().then(() => updateGeneratedThreadTitle(db, threadId, content, fallback, onTitle));
+}
+
+function updateThreadTitleIfUnchanged(db: JasmineDatabase, threadId: string, expectedCurrentTitle: string, nextTitle: string): string {
+  const current = db.getThread(threadId);
+  if (!current) return nextTitle;
+  if (current.title !== expectedCurrentTitle) return current.title;
+  return db.updateThreadTitle(threadId, nextTitle).title;
+}

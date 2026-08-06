@@ -1,0 +1,444 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import path from "node:path";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite");
+
+const dir = await mkdtemp(path.join(tmpdir(), "jasmine-db-smoke-"));
+const dbPath = path.join(dir, "jasmine.sqlite");
+let db;
+
+try {
+  const threads = await import("../../dist/main/main/db/repositories/threads.js");
+  const projects = await import("../../dist/main/main/db/repositories/projects.js");
+  const messages = await import("../../dist/main/main/db/repositories/messages.js");
+  const migrations = await import("../../dist/main/main/db/migrations.js");
+  const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
+  const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
+  const remoteConnections = await import("../../dist/main/main/db/repositories/remoteConnections.js");
+  const skillFiles = await import("../../dist/main/main/services/skillFiles.js");
+  const skillManifests = await import("../../dist/main/main/services/skillManifests.js");
+  const skillRuntimeContext = await import("../../dist/main/main/services/skillRuntimeContext.js");
+  db = new DatabaseSync(dbPath);
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE workspace_projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      root_path TEXT NOT NULL,
+      root_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_opened_at TEXT NOT NULL
+    );
+    CREATE TABLE chat_threads (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      project_id TEXT REFERENCES workspace_projects(id) ON DELETE SET NULL,
+      active_plugin_ids_json TEXT NOT NULL DEFAULT '[]',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE chat_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      attachments_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      elapsed_ms INTEGER,
+      model_id TEXT,
+      status TEXT CHECK (status IN ('sent', 'error')),
+      memory_used_json TEXT NOT NULL DEFAULT '[]',
+      skills_used_json TEXT NOT NULL DEFAULT '[]',
+      plugins_used_json TEXT NOT NULL DEFAULT '[]',
+      web_search_used_json TEXT NOT NULL DEFAULT '[]',
+      timeline_json TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE thread_drafts (
+      thread_id TEXT PRIMARY KEY REFERENCES chat_threads(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+    CREATE TABLE app_settings (
+      id TEXT PRIMARY KEY,
+      tool_provider_id TEXT NOT NULL DEFAULT 'deepseek',
+      tool_model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+      tool_reasoning_effort TEXT NOT NULL DEFAULT 'off',
+      appearance_accent TEXT NOT NULL DEFAULT '#0169cc',
+      appearance_surface TEXT NOT NULL DEFAULT '#ffffff',
+      appearance_ink TEXT NOT NULL DEFAULT '#0d0d0d',
+      appearance_success TEXT NOT NULL DEFAULT '#00a240',
+      appearance_danger TEXT NOT NULL DEFAULT '#e02e2a',
+      brand_logo_data_url TEXT,
+      brand_main_title TEXT NOT NULL DEFAULT 'Talk to yourself.',
+      brand_subtitle TEXT NOT NULL DEFAULT 'Jasmine listens. Jasmine learns. Jasmine becomes yours.',
+      language TEXT NOT NULL DEFAULT 'en',
+      chrome_takeover_enabled INTEGER NOT NULL DEFAULT 0,
+      chrome_takeover_extension_id TEXT,
+      skill_editor_path TEXT,
+      terminal_shell_path TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      command TEXT NOT NULL,
+      args_json TEXT NOT NULL DEFAULT '[]',
+      env_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      transport TEXT NOT NULL DEFAULT 'stdio',
+      url TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      marketplace_id TEXT,
+      package_name TEXT,
+      homepage TEXT,
+      category TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE remote_connections (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      host TEXT NOT NULL,
+      user TEXT,
+      port INTEGER,
+      remote_path TEXT,
+      config_host TEXT,
+      config_path TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      active INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'unchecked',
+      last_connected_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  const timestamp = new Date().toISOString();
+  const projectRoot = path.join(dir, "workspace-folder");
+  const normalizedProject = projects.normalizeProjectRoot(path.join(projectRoot, "."));
+  assert.equal(normalizedProject.rootPath, path.resolve(projectRoot));
+  if (process.platform === "win32") {
+    assert.equal(projects.normalizeProjectRoot(projectRoot.toUpperCase()).rootKey, normalizedProject.rootKey);
+  }
+  const project = projects.openOrCreateProject(db, { rootPath: projectRoot }, timestamp);
+  assert.equal(project.name, "workspace-folder");
+  const duplicateProject = projects.openOrCreateProject(db, { rootPath: path.join(projectRoot, ".") }, timestamp);
+  assert.equal(duplicateProject.id, project.id);
+  const renamedProject = projects.renameProject(db, project.id, "Renamed workspace", timestamp);
+  assert.equal(renamedProject.name, "Renamed workspace");
+
+  const legacyDbPath = path.join(dir, "legacy-migration.sqlite");
+  const legacyDb = new DatabaseSync(legacyDbPath);
+  const previousDefaultRoot = process.env.JASMINE_DEFAULT_PROJECT_ROOT;
+  try {
+    process.env.JASMINE_DEFAULT_PROJECT_ROOT = projectRoot;
+    legacyDb.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE chat_threads (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO chat_threads (id, title, created_at, updated_at)
+      VALUES ('legacy-thread', 'Legacy thread', '${timestamp}', '${timestamp}');
+      CREATE TABLE chat_messages (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at) VALUES
+        ('legacy-msg-1', 'legacy-thread', 'user', 'hello', '${timestamp}'),
+        ('legacy-msg-2', 'legacy-thread', 'assistant', 'hi', '${timestamp}');
+      CREATE TABLE app_settings (
+        id TEXT PRIMARY KEY,
+        tool_provider_id TEXT NOT NULL DEFAULT 'deepseek',
+        tool_model_id TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
+        tool_reasoning_effort TEXT NOT NULL DEFAULT 'off',
+        appearance_accent TEXT NOT NULL DEFAULT '#0169cc',
+        appearance_surface TEXT NOT NULL DEFAULT '#ffffff',
+        appearance_ink TEXT NOT NULL DEFAULT '#0d0d0d',
+        appearance_success TEXT NOT NULL DEFAULT '#00a240',
+        appearance_danger TEXT NOT NULL DEFAULT '#e02e2a',
+        brand_logo_data_url TEXT,
+        brand_main_title TEXT NOT NULL DEFAULT '有什么需要帮忙的？',
+        brand_subtitle TEXT NOT NULL DEFAULT '一个想法、半句话、一段粘贴——剩下交给 Hiri One。',
+        language TEXT NOT NULL DEFAULT 'en',
+        skill_editor_path TEXT,
+        terminal_shell_path TEXT,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO app_settings (
+        id,
+        brand_main_title,
+        brand_subtitle,
+        updated_at
+      ) VALUES (
+        'default',
+        '有什么需要帮忙的？',
+        '一个想法、半句话、一段粘贴——剩下交给 Hiri One。',
+        '${timestamp}'
+      );
+    `);
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
+    assert.equal(typeof backfilled.project_id, "string");
+    assert.deepEqual(JSON.parse(legacyDb.prepare("SELECT active_plugin_ids_json FROM chat_threads WHERE id = 'legacy-thread'").get().active_plugin_ids_json), []);
+    assert.equal(legacyDb.prepare("SELECT COUNT(*) AS count FROM workspace_projects").get().count, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 21").get().exists_flag, 1);
+    // Migration 22 backfills the denormalized count from ground-truth COUNT(*).
+    assert.equal(legacyDb.prepare("SELECT message_count FROM chat_threads WHERE id = 'legacy-thread'").get().message_count, 2);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 22").get().exists_flag, 1);
+    const legacyAppSettingsColumns = legacyDb.prepare("PRAGMA table_info(app_settings)").all().map((row) => row.name);
+    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_enabled"), true);
+    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_extension_id"), true);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 23").get().exists_flag, 1);
+    const migratedBrand = legacyDb.prepare("SELECT brand_main_title, brand_subtitle FROM app_settings WHERE id = 'default'").get();
+    assert.equal(migratedBrand.brand_main_title, "Talk to yourself.");
+    assert.equal(migratedBrand.brand_subtitle, "Jasmine listens. Jasmine learns. Jasmine becomes yours.");
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 24").get().exists_flag, 1);
+  } finally {
+    if (previousDefaultRoot === undefined) delete process.env.JASMINE_DEFAULT_PROJECT_ROOT;
+    else process.env.JASMINE_DEFAULT_PROJECT_ROOT = previousDefaultRoot;
+    legacyDb.close();
+  }
+
+  appSettings.ensureAppSettings(db, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).toolModel, {
+    providerId: "deepseek",
+    modelId: "deepseek-v4-flash",
+    reasoningEffort: "off",
+    updatedAt: timestamp
+  });
+  assert.equal(appSettings.getAppSettings(db).language, "en");
+  assert.deepEqual(appSettings.getAppSettings(db).chromeTakeover, {
+    enabled: false,
+    extensionId: null
+  });
+  assert.deepEqual(appSettings.getAppSettings(db).brand, {
+    logoDataUrl: null,
+    mainTitle: "Talk to yourself.",
+    subtitle: "Jasmine listens. Jasmine learns. Jasmine becomes yours.",
+    updatedAt: timestamp
+  });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { toolModel: { providerId: "moonshot", modelId: "kimi-k2.6", reasoningEffort: "minimal" } }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).toolModel.modelId, "kimi-k2.6");
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { brand: { logoDataUrl: "data:image/png;base64,AAAA", mainTitle: "Custom title", subtitle: "Custom subtitle" } }, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).brand, {
+    logoDataUrl: "data:image/png;base64,AAAA",
+    mainTitle: "Custom title",
+    subtitle: "Custom subtitle",
+    updatedAt: timestamp
+  });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { brand: { logoDataUrl: null, mainTitle: "   ", subtitle: "" } }, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).brand, {
+    logoDataUrl: null,
+    mainTitle: "Talk to yourself.",
+    subtitle: "",
+    updatedAt: timestamp
+  });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { language: "zh" }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).language, "zh");
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { chromeTakeover: { enabled: true, extensionId: "a".repeat(32) } }, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).chromeTakeover, {
+    enabled: true,
+    extensionId: "a".repeat(32)
+  });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { skillEditorPath: process.execPath }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).skillEditorPath, process.execPath);
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { terminalShellPath: process.execPath }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).terminalShellPath, process.execPath);
+  if (process.platform === "win32") {
+    const windowsBashPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
+    appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { terminalShellPath: windowsBashPath }, timestamp);
+    assert.equal(appSettings.getAppSettings(db).terminalShellPath, undefined);
+  }
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { skillEditorPath: "", terminalShellPath: "" }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).skillEditorPath, undefined);
+  assert.equal(appSettings.getAppSettings(db).terminalShellPath, undefined);
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { appearance: { accent: "#0057d8", surface: "#fffdf8", ink: "#101820", success: "#008f4c", danger: "#d12a20" } }, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).appearance, {
+    accent: "#0057d8",
+    surface: "#fffdf8",
+    ink: "#101820",
+    success: "#008f4c",
+    danger: "#d12a20",
+    updatedAt: timestamp
+  });
+
+  const localSkillManifests = await skillManifests.prepareSkillManifests([{
+    id: "skill-technical-writer",
+    name: "Technical Writer",
+    description: "Tightens technical documentation.",
+    instructions: "Hidden full local skill instructions.",
+    enabled: true,
+    source: "local",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }], dir);
+  assert.equal(localSkillManifests.length, 1);
+  assert.equal(path.basename(localSkillManifests[0].skillFilePath), "SKILL.md");
+  const localSkillFile = await readFile(localSkillManifests[0].skillFilePath, "utf8");
+  assert.match(localSkillFile, /name: "technical-writer"/);
+  assert.match(localSkillFile, /Hidden full local skill instructions/);
+
+  await skillFiles.ensureLocalSkillFiles(dir, []);
+  const bundledSkills = await skillFiles.loadLocalSkills(dir, new Map());
+  assert.equal(bundledSkills.some((skill) => skill.name === "technical-writer"), true);
+  assert.equal(bundledSkills.some((skill) => skill.name === "code-reviewer"), true);
+  const fileBackedSkill = await skillFiles.createLocalSkill(dir, { name: "Release Notes", description: "Draft release notes." });
+  assert.equal(fileBackedSkill.name, "release-notes");
+  assert.match(fileBackedSkill.instructions, /Use this skill when the user asks for this workflow/);
+  assert.equal(path.basename(fileBackedSkill.skillFilePath), "SKILL.md");
+  const fileBackedManifests = await skillManifests.prepareSkillManifests([fileBackedSkill], dir);
+  assert.equal(fileBackedManifests[0].skillFilePath, fileBackedSkill.skillFilePath);
+  const inlineExternalSkill = {
+    id: "external:document-analysis",
+    name: "document-analysis",
+    description: "Reads stowage plans and exposes sibling scripts.",
+    instructions: "Use the document analysis workflow and verify the generated output.",
+    enabled: true,
+    source: "external",
+    sourcePath: path.join(dir, "external-skills", "document-analysis"),
+    skillFilePath: path.join(dir, "external-skills", "document-analysis", "SKILL.md"),
+    readonly: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  const mergedRuntimeSkills = skillRuntimeContext.mergeRuntimeSkills([fileBackedSkill], [inlineExternalSkill], [inlineExternalSkill]);
+  assert.deepEqual(mergedRuntimeSkills.map((skill) => skill.id), [fileBackedSkill.id, inlineExternalSkill.id]);
+  assert.deepEqual(skillRuntimeContext.skillReferenceIds([
+    { id: inlineExternalSkill.id, name: inlineExternalSkill.name, description: inlineExternalSkill.description },
+    { id: inlineExternalSkill.id, name: inlineExternalSkill.name, description: inlineExternalSkill.description }
+  ]), [inlineExternalSkill.id]);
+  const inlineExternalManifests = await skillManifests.prepareSkillManifests(mergedRuntimeSkills, dir);
+  assert.equal(inlineExternalManifests.at(-1).skillFilePath, inlineExternalSkill.skillFilePath);
+
+  const context7 = mcpServers.createMcpServer(db, {
+    name: "Context7",
+    description: "Versioned docs",
+    command: "npx",
+    args: ["-y", "@upstash/context7-mcp"],
+    envJson: "{}",
+    source: "marketplace",
+    marketplaceId: "jasmine:context7",
+    packageName: "@upstash/context7-mcp",
+    category: "documentation"
+  }, timestamp);
+  assert.equal(context7.enabled, true);
+  assert.equal(mcpServers.listMcpServers(db).length, 1);
+  assert.equal(mcpServers.createMcpServer(db, { ...context7, marketplaceId: "jasmine:context7" }, timestamp).id, context7.id);
+  mcpServers.updateMcpServer(db, context7, { id: context7.id, enabled: false, envJson: JSON.stringify({ CONTEXT7_TOKEN: "secret" }) }, timestamp);
+  const disabledContext7 = mcpServers.getMcpServer(db, context7.id);
+  assert.equal(disabledContext7.enabled, false);
+  assert.equal(disabledContext7.envJson, "{\"CONTEXT7_TOKEN\":\"secret\"}");
+  mcpServers.deleteMcpServer(db, context7.id);
+  assert.equal(mcpServers.listMcpServers(db).length, 0);
+
+  const manualRemote = remoteConnections.createRemoteConnection(db, {
+    name: "Local WSL",
+    host: "localhost",
+    user: "dev",
+    port: 2222,
+    remotePath: "/home/dev/project",
+    active: true
+  }, timestamp);
+  assert.equal(manualRemote.active, true);
+  assert.equal(remoteConnections.getActiveRemoteConnection(db).id, manualRemote.id);
+  const importedRemote = remoteConnections.upsertRemoteConnection(db, {
+    name: "VS Code host",
+    host: "example.internal",
+    user: "ubuntu",
+    configHost: "prod-box",
+    configPath: path.join(dir, "ssh-config"),
+    source: "vscode",
+    active: true
+  }, timestamp);
+  assert.equal(importedRemote.source, "vscode");
+  assert.equal(remoteConnections.getActiveRemoteConnection(db).id, importedRemote.id);
+  assert.equal(remoteConnections.getRemoteConnection(db, manualRemote.id).active, false);
+  remoteConnections.updateRemoteConnectionStatus(db, importedRemote.id, { status: "connected", lastConnectedAt: timestamp, remotePath: "/srv/app" }, timestamp);
+  assert.equal(remoteConnections.getRemoteConnection(db, importedRemote.id).remotePath, "/srv/app");
+  remoteConnections.updateRemoteConnection(db, importedRemote, { id: importedRemote.id, active: false }, timestamp);
+  assert.equal(remoteConnections.getActiveRemoteConnection(db), null);
+  remoteConnections.deleteRemoteConnection(db, importedRemote.id);
+  assert.equal(remoteConnections.listRemoteConnections(db).length, 1);
+
+  db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial schema', ?), (2, 'metadata', ?), (3, 'drafts', ?)")
+    .run(timestamp, timestamp, timestamp);
+
+  const thread = threads.createThread(db, "Unit thread", timestamp, project.id);
+  assert.equal(threads.hasThread(db, thread.id), true);
+  assert.equal(thread.projectId, project.id);
+  assert.equal(threads.getThreadMessageCount(db, thread.id), 0);
+  assert.deepEqual(threads.listThreads(db, { projectId: project.id }).map((item) => item.id), [thread.id]);
+  assert.deepEqual(threads.listThreads(db, { projectId: null }).map((item) => item.id), []);
+  const withPlugins = threads.updateThreadActivePluginIds(db, thread.id, ["plugin-a", "plugin-a", "plugin-b"], timestamp);
+  assert.deepEqual(withPlugins.activePluginIds, ["plugin-a", "plugin-b"]);
+  assert.deepEqual(threads.getThread(db, thread.id).activePluginIds, ["plugin-a", "plugin-b"]);
+
+  threads.updateThreadDraft(db, thread.id, "unit draft", timestamp);
+  assert.equal(threads.getThreadDraft(db, thread.id), "unit draft");
+
+  const renamed = threads.updateThreadTitle(db, thread.id, "Renamed unit thread", timestamp);
+  assert.equal(renamed.title, "Renamed unit thread");
+
+  // The denormalized chat_threads.message_count contract: repo callers adjust
+  // the count in the same transaction as the row change (database.ts does this).
+  const userMessage = messages.addMessage(db, { threadId: thread.id, role: "user", content: "hello" }, timestamp);
+  threads.adjustThreadMessageCount(db, thread.id, 1);
+  const assistantMessage = messages.addMessage(db, { threadId: thread.id, role: "assistant", content: "hi", modelId: "unit-model" }, timestamp);
+  threads.adjustThreadMessageCount(db, thread.id, 1);
+  assert.equal(threads.getThreadMessageCount(db, thread.id), 2);
+  assert.equal(threads.getThread(db, thread.id).messageCount, 2);
+  assert.deepEqual(messages.listMessages(db, thread.id).map((message) => message.id), [userMessage.id, assistantMessage.id]);
+  assert.deepEqual(messages.listMessages(db, thread.id, { limit: 1 }).map((message) => message.id), [assistantMessage.id]);
+  assert.deepEqual(
+    messages.listMessages(db, thread.id, {
+      limit: 1,
+      before: {
+        id: assistantMessage.id,
+        createdAt: assistantMessage.createdAt
+      }
+    }).map((message) => message.id),
+    [userMessage.id]
+  );
+
+  const deletedCount = messages.deleteMessagesByIds(db, thread.id, [assistantMessage.id]);
+  assert.equal(deletedCount, 1);
+  threads.adjustThreadMessageCount(db, thread.id, -deletedCount);
+  assert.equal(messages.listMessages(db, thread.id).length, 1);
+  assert.equal(threads.getThreadMessageCount(db, thread.id), 1);
+
+  threads.deleteThread(db, thread.id);
+  assert.equal(threads.hasThread(db, thread.id), false);
+
+  const migrationRows = db.prepare("SELECT version FROM schema_migrations ORDER BY version").all();
+  assert.deepEqual(migrationRows.map((row) => row.version), [1, 2, 3]);
+
+  const otherThread = threads.createThread(db, `Unit ${randomUUID()}`, timestamp);
+  assert.equal(threads.listThreads(db).some((item) => item.id === otherThread.id), true);
+  assert.equal(threads.listThreads(db, { projectId: null }).some((item) => item.id === otherThread.id), true);
+  const movedThread = threads.createThread(db, "Project thread to move", timestamp, project.id);
+  projects.removeProject(db, project.id);
+  assert.equal(threads.getThread(db, movedThread.id).projectId, null);
+} finally {
+  db?.close();
+  await rm(dir, { recursive: true, force: true });
+}

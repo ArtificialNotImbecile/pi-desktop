@@ -1,0 +1,237 @@
+import type { AppLanguage, AppSettings, AppSettingsUpdateRequest, ReasoningEffort } from "../../../shared/ipc.js";
+import { DEFAULT_BRAND_SETTINGS, isSupportedBrandLogoDataUrl } from "../../../shared/brand.js";
+import { DEFAULT_APPEARANCE } from "../../../shared/theme.js";
+import { isWindowsBashLauncherPath } from "../../utils/shellPaths.js";
+import type { SqlDatabase } from "./types.js";
+
+type AppSettingsRow = {
+  id: string;
+  tool_provider_id: string;
+  tool_model_id: string;
+  tool_reasoning_effort: ReasoningEffort;
+  appearance_accent: string;
+  appearance_surface: string;
+  appearance_ink: string;
+  appearance_success: string;
+  appearance_danger: string;
+  brand_logo_data_url?: string | null;
+  brand_main_title?: string | null;
+  brand_subtitle?: string | null;
+  language: AppLanguage;
+  chrome_takeover_enabled?: number | null;
+  chrome_takeover_extension_id?: string | null;
+  skill_editor_path?: string | null;
+  terminal_shell_path?: string | null;
+  updated_at: string;
+};
+
+export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
+  const existing = db.prepare("SELECT 1 AS exists_flag FROM app_settings WHERE id = 'default'").get() as { exists_flag?: number };
+  if (existing?.exists_flag === 1) return;
+  db.prepare(
+    `INSERT INTO app_settings (
+      id,
+      tool_provider_id,
+      tool_model_id,
+      tool_reasoning_effort,
+      appearance_accent,
+      appearance_surface,
+      appearance_ink,
+      appearance_success,
+      appearance_danger,
+      brand_logo_data_url,
+      brand_main_title,
+      brand_subtitle,
+      language,
+      chrome_takeover_enabled,
+      chrome_takeover_extension_id,
+      skill_editor_path,
+      terminal_shell_path,
+      updated_at
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, NULL, NULL, ?)`
+  ).run(
+    DEFAULT_APPEARANCE.accent,
+    DEFAULT_APPEARANCE.surface,
+    DEFAULT_APPEARANCE.ink,
+    DEFAULT_APPEARANCE.success,
+    DEFAULT_APPEARANCE.danger,
+    DEFAULT_BRAND_SETTINGS.mainTitle,
+    DEFAULT_BRAND_SETTINGS.subtitle,
+    timestamp
+  );
+}
+
+export function getAppSettings(db: SqlDatabase): AppSettings | null {
+  const row = db
+    .prepare(
+      `SELECT
+        id,
+        tool_provider_id,
+        tool_model_id,
+        tool_reasoning_effort,
+        appearance_accent,
+        appearance_surface,
+        appearance_ink,
+        appearance_success,
+        appearance_danger,
+        brand_logo_data_url,
+        brand_main_title,
+        brand_subtitle,
+        language,
+        chrome_takeover_enabled,
+        chrome_takeover_extension_id,
+        skill_editor_path,
+        terminal_shell_path,
+        updated_at
+      FROM app_settings
+      WHERE id = 'default'`
+    )
+    .get() as AppSettingsRow | undefined;
+  return row ? mapAppSettings(row) : null;
+}
+
+export function updateAppSettings(
+  db: SqlDatabase,
+  current: AppSettings,
+  input: AppSettingsUpdateRequest,
+  timestamp: string
+): void {
+  const toolModel = input.toolModel ?? {};
+  const next = {
+    providerId: toolModel.providerId?.trim() || current.toolModel.providerId,
+    modelId: toolModel.modelId?.trim() || current.toolModel.modelId,
+    reasoningEffort: toolModel.reasoningEffort ?? current.toolModel.reasoningEffort,
+    accent: normalizeColor(input.appearance?.accent, current.appearance.accent),
+    surface: normalizeColor(input.appearance?.surface, current.appearance.surface),
+    ink: normalizeColor(input.appearance?.ink, current.appearance.ink),
+    success: normalizeColor(input.appearance?.success, current.appearance.success),
+    danger: normalizeColor(input.appearance?.danger, current.appearance.danger),
+    logoDataUrl: normalizeLogoDataUrl(input.brand?.logoDataUrl, current.brand.logoDataUrl),
+    mainTitle: normalizeRequiredText(input.brand?.mainTitle, current.brand.mainTitle, DEFAULT_BRAND_SETTINGS.mainTitle),
+    subtitle: normalizeOptionalText(input.brand?.subtitle, current.brand.subtitle, DEFAULT_BRAND_SETTINGS.subtitle),
+    language: normalizeLanguage(input.language, current.language),
+    chromeTakeoverEnabled: input.chromeTakeover?.enabled ?? current.chromeTakeover.enabled,
+    chromeTakeoverExtensionId: normalizeChromeExtensionId(input.chromeTakeover?.extensionId, current.chromeTakeover.extensionId),
+    skillEditorPath: normalizeOptionalPath(input.skillEditorPath, current.skillEditorPath),
+    terminalShellPath: normalizeTerminalShellPath(input.terminalShellPath, current.terminalShellPath)
+  };
+
+  db.prepare(
+    `UPDATE app_settings
+      SET tool_provider_id = ?,
+        tool_model_id = ?,
+        tool_reasoning_effort = ?,
+        appearance_accent = ?,
+        appearance_surface = ?,
+        appearance_ink = ?,
+        appearance_success = ?,
+        appearance_danger = ?,
+        brand_logo_data_url = ?,
+        brand_main_title = ?,
+        brand_subtitle = ?,
+        language = ?,
+        chrome_takeover_enabled = ?,
+        chrome_takeover_extension_id = ?,
+        skill_editor_path = ?,
+        terminal_shell_path = ?,
+        updated_at = ?
+      WHERE id = 'default'`
+  ).run(
+    next.providerId,
+    next.modelId,
+    next.reasoningEffort,
+    next.accent,
+    next.surface,
+    next.ink,
+    next.success,
+    next.danger,
+    next.logoDataUrl,
+    next.mainTitle,
+    next.subtitle,
+    next.language,
+    next.chromeTakeoverEnabled ? 1 : 0,
+    next.chromeTakeoverExtensionId,
+    next.skillEditorPath ?? null,
+    next.terminalShellPath ?? null,
+    timestamp
+  );
+}
+
+function mapAppSettings(row: AppSettingsRow): AppSettings {
+  return {
+    toolModel: {
+      providerId: row.tool_provider_id || "deepseek",
+      modelId: row.tool_model_id || "deepseek-v4-flash",
+      reasoningEffort: row.tool_reasoning_effort || "off",
+      updatedAt: row.updated_at
+    },
+    appearance: {
+      accent: normalizeColor(row.appearance_accent, DEFAULT_APPEARANCE.accent),
+      surface: normalizeColor(row.appearance_surface, DEFAULT_APPEARANCE.surface),
+      ink: normalizeColor(row.appearance_ink, DEFAULT_APPEARANCE.ink),
+      success: normalizeColor(row.appearance_success, DEFAULT_APPEARANCE.success),
+      danger: normalizeColor(row.appearance_danger, DEFAULT_APPEARANCE.danger),
+      updatedAt: row.updated_at
+    },
+    brand: {
+      logoDataUrl: normalizeLogoDataUrl(row.brand_logo_data_url, DEFAULT_BRAND_SETTINGS.logoDataUrl),
+      mainTitle: normalizeRequiredText(row.brand_main_title, DEFAULT_BRAND_SETTINGS.mainTitle, DEFAULT_BRAND_SETTINGS.mainTitle),
+      subtitle: normalizeOptionalText(row.brand_subtitle, DEFAULT_BRAND_SETTINGS.subtitle, DEFAULT_BRAND_SETTINGS.subtitle),
+      updatedAt: row.updated_at
+    },
+    language: normalizeLanguage(row.language, "en"),
+    chromeTakeover: {
+      enabled: Boolean(row.chrome_takeover_enabled),
+      extensionId: normalizeChromeExtensionId(row.chrome_takeover_extension_id, null)
+    },
+    skillEditorPath: normalizeOptionalPath(row.skill_editor_path, undefined),
+    terminalShellPath: normalizeTerminalShellPath(row.terminal_shell_path, undefined)
+  };
+}
+
+function normalizeColor(value: string | undefined, fallback: string): string {
+  const candidate = value?.trim();
+  return candidate && /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toLowerCase() : fallback;
+}
+
+function normalizeLanguage(value: string | undefined, fallback: AppLanguage): AppLanguage {
+  return value === "zh" || value === "en" ? value : fallback;
+}
+
+function normalizeLogoDataUrl(value: string | null | undefined, fallback: string | null): string | null {
+  if (value === undefined) return fallback;
+  if (value === null) return null;
+  const candidate = value.trim();
+  return candidate && isSupportedBrandLogoDataUrl(candidate) ? candidate : fallback;
+}
+
+function normalizeRequiredText(value: string | null | undefined, fallback: string, defaultValue: string): string {
+  if (value === undefined) return fallback;
+  const candidate = value?.trim() ?? "";
+  return candidate || defaultValue;
+}
+
+function normalizeOptionalText(value: string | null | undefined, fallback: string, defaultValue: string): string {
+  if (value === undefined) return fallback;
+  const candidate = value?.trim();
+  return candidate ?? defaultValue;
+}
+
+function normalizeOptionalPath(value: string | null | undefined, fallback: string | undefined): string | undefined {
+  if (value === undefined) return fallback;
+  const candidate = value?.trim();
+  return candidate || undefined;
+}
+
+function normalizeChromeExtensionId(value: string | null | undefined, fallback: string | null): string | null {
+  if (value === undefined) return fallback;
+  if (value === null) return null;
+  const candidate = value.trim().toLowerCase();
+  return /^[a-p]{32}$/.test(candidate) ? candidate : fallback;
+}
+
+function normalizeTerminalShellPath(value: string | null | undefined, fallback: string | undefined): string | undefined {
+  const candidate = normalizeOptionalPath(value, fallback);
+  if (!candidate || isWindowsBashLauncherPath(candidate)) return undefined;
+  return candidate;
+}

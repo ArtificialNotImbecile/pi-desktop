@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jasmine</title>
+    <script>
+      try {
+        const cached = JSON.parse(localStorage.getItem("jasmine.appSettings.startup") || "null");
+        const colors = cached && cached.appearance;
+        const validHex = (value) => /^#[0-9a-fA-F]{6}$/.test(value);
+        if (cached && (cached.language === "en" || cached.language === "zh")) {
+          document.documentElement.lang = cached.language === "zh" ? "zh-CN" : "en";
+        }
+        if (colors && ["accent", "surface", "ink", "success", "danger"].every((key) => validHex(colors[key]))) {
+          for (const key of ["accent", "surface", "ink", "success", "danger"]) {
+            document.documentElement.style.setProperty(`--${key}`, colors[key]);
+          }
+          document.documentElement.style.background = colors.surface;
+        }
+      } catch {}
+    </script>
+    <style>
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      body { background: #ffffff; }
+      .renderer-startup {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        place-items: center;
+        background: var(--surface, #ffffff);
+      }
+      .renderer-startup-mark {
+        width: 42px;
+        height: 42px;
+        border: 1px solid color-mix(in srgb, var(--ink, #0d0d0d) 13%, var(--surface, #ffffff));
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: var(--surface, #ffffff);
+        box-shadow: 0 6px 18px color-mix(in srgb, var(--ink, #0d0d0d) 6%, transparent);
+      }
+      .renderer-startup-mark::after {
+        width: 14px;
+        height: 14px;
+        border: 2px solid color-mix(in srgb, var(--ink, #0d0d0d) 13%, var(--surface, #ffffff));
+        border-top-color: var(--accent, #0169cc);
+        border-radius: 50%;
+        animation: renderer-startup-spin .8s linear infinite;
+        content: "";
+      }
+      @keyframes renderer-startup-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .renderer-startup-mark::after { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <main class="renderer-startup" data-jasmine-renderer-startup role="status" aria-label="Jasmine">
+        <div class="renderer-startup-mark" aria-hidden="true"></div>
+      </main>
+    </div>
+    <script type="module" src="/src/renderer/main.tsx"></script>
+  </body>
+</html>

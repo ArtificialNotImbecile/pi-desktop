@@ -1,0 +1,700 @@
+import { expect } from "@playwright/test";
+import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+export const rootDir = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite") as {
+  DatabaseSync: new (filename: string) => {
+    prepare(sql: string): { run(...params: unknown[]): unknown };
+    close(): void;
+  };
+};
+
+export type HarnessApp = {
+  app: ElectronApplication;
+  page: Page;
+  userDataDir: string;
+};
+
+export async function expectComposerDraft(page: Page, expected: string): Promise<void> {
+  await expectComposerEditorText(page.locator(".rich-composer-editor"), expected);
+}
+
+export async function expectComposerEditorText(editor: Locator, expected: string): Promise<void> {
+  await expect.poll(() => editor.evaluate((node) => (((node as HTMLElement).innerText || node.textContent || "").replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").replace(/\n$/, "")))).toBe(expected);
+}
+
+export async function expectExecutablePathMetadata(output: Locator): Promise<void> {
+  // Pixel polish (no top border, compact single-line height) is covered by the visual harness;
+  // here we only assert the metadata output is present and renders non-empty text.
+  await expect(output).toBeVisible();
+  await expect(output).not.toBeEmpty();
+}
+
+export async function startEmptyThread(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New chat" }).first().click();
+  await expect(page.locator(".empty-state")).toBeVisible();
+  await expect(page.locator(".user-bubble")).toHaveCount(0);
+}
+
+export async function waitForStableAssistant(page: Page, text: string, timeout = 10_000): Promise<Locator> {
+  const assistant = page.locator(".assistant-block:not(.live-message)").last();
+  await expect(assistant).toContainText(text, { timeout });
+  await expect(page.locator(".assistant-block.live-message")).toHaveCount(0, { timeout });
+  return assistant;
+}
+
+export async function enableWebSearchFallback(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await window.jasmine.updateWebSearchSettings({ enabled: true, provider: "duckduckgo" });
+  });
+}
+
+export async function openMemoryFromCommandPalette(page: Page): Promise<void> {
+  await page.keyboard.press("Control+K");
+  await expect(page.locator(".command-panel")).toBeVisible();
+  await page.locator(".command-panel").getByRole("button", { name: "Memory" }).click();
+  await expect(page.locator(".memory-panel")).toBeVisible();
+}
+
+export async function openSettings(page: Page, section?: string): Promise<void> {
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.locator(".side-menu").getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator(".settings-panel")).toBeVisible();
+  if (section) {
+    await page.locator(".settings-nav").getByRole("button", { name: section }).click();
+  }
+}
+
+export async function expectSettingsSaved(page: Page): Promise<void> {
+  const state = page.locator(".settings-detail .save-state");
+  await expect(state).toHaveClass(/saved/);
+  await expect(state).toHaveText(/^(Saved|已保存)$/);
+}
+
+export async function saveSettings(page: Page): Promise<void> {
+  await page.locator(".settings-detail").getByRole("button", { name: "Save" }).click();
+  await expectSettingsSaved(page);
+}
+
+export async function openProviderSettings(page: Page): Promise<void> {
+  await openSettings(page, "Providers");
+}
+
+export async function saveProvider(page: Page): Promise<void> {
+  await page.locator(".settings-actions button.primary").click();
+  await expect(page.locator(".save-state")).toHaveText("Saved");
+}
+
+export async function testProvider(page: Page): Promise<void> {
+  await page.locator(".settings-actions").getByRole("button", { name: "Test" }).click();
+  await expect(page.locator(".provider-status")).toHaveText("Connected");
+}
+
+export async function expectNoPurpleThemeColors(locator: Locator, label: string): Promise<void> {
+  const offenders = await locator.evaluate((root) => {
+    const colorProperties = [
+      "color",
+      "backgroundColor",
+      "borderTopColor",
+      "borderRightColor",
+      "borderBottomColor",
+      "borderLeftColor",
+      "outlineColor",
+      "textDecorationColor",
+      "caretColor"
+    ] as const;
+    const elements = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
+
+    function parseRgb(value: string): { r: number; g: number; b: number; a: number } | null {
+      const match = value.match(/^rgba?\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)(?:,\s*(\d+(?:\.\d+)?))?\)$/);
+      if (!match) return null;
+      return {
+        r: Number(match[1]),
+        g: Number(match[2]),
+        b: Number(match[3]),
+        a: match[4] === undefined ? 1 : Number(match[4])
+      };
+    }
+
+    function isPurpleLike(color: { r: number; g: number; b: number; a: number }): boolean {
+      if (color.a < 0.05) return false;
+      const r = color.r / 255;
+      const g = color.g / 255;
+      const b = color.b / 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      if (delta < 0.14) return false;
+      let hue = 0;
+      if (max === r) hue = ((g - b) / delta) % 6;
+      if (max === g) hue = (b - r) / delta + 2;
+      if (max === b) hue = (r - g) / delta + 4;
+      hue *= 60;
+      if (hue < 0) hue += 360;
+      const lightness = (max + min) / 2;
+      const saturation = delta / (1 - Math.abs(2 * lightness - 1));
+      return hue >= 250 && hue <= 310 && saturation > 0.24;
+    }
+
+    return elements.flatMap((element) => {
+      const styles = getComputedStyle(element);
+      return colorProperties.flatMap((property) => {
+        const parsed = parseRgb(styles[property]);
+        if (!parsed || !isPurpleLike(parsed)) return [];
+        const name = element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 48) || element.className || element.tagName;
+        return [`${name}: ${property}=${styles[property]}`];
+      });
+    });
+  });
+  expect(offenders, `${label} should use codex-theme blue/neutral colors, not purple/violet`).toEqual([]);
+}
+
+export async function clickCenter(locator: Locator): Promise<void> {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  await locator.page().mouse.click((box?.x ?? 0) + (box?.width ?? 0) / 2, (box?.y ?? 0) + (box?.height ?? 0) / 2);
+}
+
+export async function modelMenuGeometry(page: Page) {
+  return page.evaluate(() => {
+    const trigger = document.querySelector(".model-pill")?.getBoundingClientRect();
+    const menu = document.querySelector(".model-menu")?.getBoundingClientRect();
+    if (!trigger || !menu) throw new Error("Model menu or trigger is missing.");
+    return {
+      triggerLeft: trigger.left,
+      triggerRight: trigger.right,
+      triggerTop: trigger.top,
+      triggerBottom: trigger.bottom,
+      menuLeft: menu.left,
+      menuTop: menu.top,
+      menuRight: menu.right,
+      menuBottom: menu.bottom,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    };
+  });
+}
+
+export function expectModelMenuAnchored(geometry: Awaited<ReturnType<typeof modelMenuGeometry>>): void {
+  const overlapsTrigger = geometry.menuRight > geometry.triggerLeft && geometry.menuLeft < geometry.triggerRight;
+  expect(overlapsTrigger).toBe(true);
+  if (geometry.menuTop < geometry.triggerTop) {
+    expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.triggerTop + 10);
+  } else {
+    expect(geometry.menuTop).toBeGreaterThanOrEqual(geometry.triggerBottom - 10);
+  }
+}
+
+export async function expectToolbarHasNoOverlap(page: Page): Promise<void> {
+  const result = await page.locator(".composer").evaluate((composer) => {
+    const composerBox = composer.getBoundingClientRect();
+    const items = Array.from(composer.querySelectorAll<HTMLElement>(".composer-bar > *"))
+      .filter((item) => {
+        const box = item.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && getComputedStyle(item).visibility !== "hidden";
+      })
+      .map((item) => {
+        const box = item.getBoundingClientRect();
+        return {
+          label: item.getAttribute("aria-label") || item.textContent?.trim() || item.className,
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom
+        };
+      });
+    const overlaps: string[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      for (let next = index + 1; next < items.length; next += 1) {
+        const a = items[index];
+        const b = items[next];
+        const overlapWidth = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const overlapHeight = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (overlapWidth > 1 && overlapHeight > 1) overlaps.push(`${a.label} overlaps ${b.label}`);
+      }
+    }
+    return {
+      overlaps,
+      itemsInsideComposer: items.every((item) =>
+        item.left >= composerBox.left - 1 &&
+        item.right <= composerBox.right + 1 &&
+        item.top >= composerBox.top - 1 &&
+        item.bottom <= composerBox.bottom + 1
+      )
+    };
+  });
+  expect(result.overlaps).toEqual([]);
+  expect(result.itemsInsideComposer).toBe(true);
+}
+
+export async function stableChatLayoutSnapshot(page: Page): Promise<{ composerTop: number; messageScrollBottom: number; scrollTop: number }> {
+  return page.evaluate(() => {
+    const composer = document.querySelector(".composer");
+    const scroll = document.querySelector(".message-scroll");
+    if (!(composer instanceof HTMLElement) || !(scroll instanceof HTMLElement)) {
+      throw new Error("Chat layout elements are missing.");
+    }
+    return {
+      composerTop: Math.round(composer.getBoundingClientRect().top),
+      messageScrollBottom: Math.round(scroll.getBoundingClientRect().bottom),
+      scrollTop: Math.round(scroll.scrollTop)
+    };
+  });
+}
+
+export async function expectFloatingMenuInViewport(page: Page, menuSelector: string, triggerSelector: string): Promise<void> {
+  const result = await page.evaluate(({ menuSelector, triggerSelector }) => {
+    const menu = document.querySelector(menuSelector)?.getBoundingClientRect();
+    const trigger = document.querySelector(triggerSelector)?.getBoundingClientRect();
+    if (!menu || !trigger) throw new Error("Floating menu or trigger is missing.");
+    return {
+      menuLeft: menu.left,
+      menuTop: menu.top,
+      menuRight: menu.right,
+      menuBottom: menu.bottom,
+      triggerLeft: trigger.left,
+      triggerRight: trigger.right,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    };
+  }, { menuSelector, triggerSelector });
+
+  expect(result.menuLeft).toBeGreaterThanOrEqual(6);
+  expect(result.menuTop).toBeGreaterThanOrEqual(6);
+  expect(result.menuRight).toBeLessThanOrEqual(result.viewportWidth - 6);
+  expect(result.menuBottom).toBeLessThanOrEqual(result.viewportHeight - 6);
+  expect(result.menuRight).toBeGreaterThan(result.triggerLeft);
+  expect(result.menuLeft).toBeLessThan(result.triggerRight);
+}
+
+export async function expectSurfaceInViewport(page: Page, selector: string): Promise<void> {
+  const result = await page.evaluate((selector) => {
+    const surface = document.querySelector(selector)?.getBoundingClientRect();
+    if (!surface) throw new Error("Floating surface is missing.");
+    return {
+      left: surface.left,
+      top: surface.top,
+      right: surface.right,
+      bottom: surface.bottom,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    };
+  }, selector);
+
+  expect(result.left).toBeGreaterThanOrEqual(4);
+  expect(result.top).toBeGreaterThanOrEqual(4);
+  expect(result.right).toBeLessThanOrEqual(result.viewportWidth - 4);
+  expect(result.bottom).toBeLessThanOrEqual(result.viewportHeight - 4);
+}
+
+export async function expectEmptyChatClearOfRightPanel(page: Page): Promise<void> {
+  const result = await page.evaluate(() => {
+    const panel = document.querySelector(".chat-right-panel")?.getBoundingClientRect();
+    const chatPage = document.querySelector(".chat-page")?.getBoundingClientRect();
+    const title = document.querySelector(".empty-state h1")?.getBoundingClientRect();
+    const emptyState = document.querySelector(".empty-state")?.getBoundingClientRect();
+    const composer = document.querySelector(".composer")?.getBoundingClientRect();
+    if (!panel || !chatPage || !title || !emptyState || !composer) throw new Error("Empty chat layout or right panel is missing.");
+    return {
+      panelLeft: panel.left,
+      titleRight: title.right,
+      emptyStateCenter: emptyState.left + emptyState.width / 2,
+      composerRight: composer.right,
+      composerCenter: composer.left + composer.width / 2,
+      contentCenter: chatPage.left + (panel.left - chatPage.left) / 2
+    };
+  });
+
+  expect(result.titleRight).toBeLessThanOrEqual(result.panelLeft - 20);
+  expect(result.composerRight).toBeLessThanOrEqual(result.panelLeft - 20);
+  expect(Math.abs(result.emptyStateCenter - result.contentCenter)).toBeLessThanOrEqual(16);
+  expect(Math.abs(result.composerCenter - result.contentCenter)).toBeLessThanOrEqual(16);
+}
+
+export async function messageJumpMarkAlignment(page: Page): Promise<{ maxDelta: number; monotonic: boolean }> {
+  return page.locator(".message-jump-marks").evaluate((rail) => {
+    const scroll = document.querySelector(".message-scroll");
+    if (!(scroll instanceof HTMLElement)) throw new Error("Message scroll missing.");
+    const railRect = rail.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    const entries = Array.from(document.querySelectorAll<HTMLElement>(".user-message-wrap"))
+      .slice(0, 6)
+      .map((message) => {
+        const id = message.dataset.messageId ?? "";
+        const mark = rail.querySelector<HTMLElement>(`[data-message-jump-id="${CSS.escape(id)}"]`);
+        const rect = message.getBoundingClientRect();
+        const topInContent = rect.top - scrollRect.top + scroll.scrollTop;
+        const expected = Math.min(Math.max((topInContent / Math.max(scroll.scrollHeight, 1)) * railRect.height, 4), Math.max(4, railRect.height - 4));
+        return {
+          actual: Number.parseFloat(mark?.style.top ?? "NaN"),
+          expected
+        };
+      });
+    return {
+      maxDelta: Math.max(...entries.map((entry) => Math.abs(entry.actual - entry.expected))),
+      monotonic: entries.every((entry, index) => index === 0 || entry.actual >= entries[index - 1].actual)
+    };
+  });
+}
+
+export function seedLargeThreadMessages(userDataDir: string, threadId: string, count: number): void {
+  const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
+  const db = new DatabaseSync(dbPath);
+  const insert = db.prepare(`
+    INSERT INTO chat_messages (
+      id,
+      thread_id,
+      role,
+      content,
+      attachments_json,
+      created_at,
+      elapsed_ms,
+      model_id,
+      status,
+      memory_used_json,
+      skills_used_json,
+      web_search_used_json,
+      timeline_json
+    )
+    VALUES (?, ?, ?, ?, '[]', ?, ?, ?, 'sent', '[]', '[]', '[]', ?)
+  `);
+  // Seeding bypasses the repository layer, so the denormalized
+  // chat_threads.message_count must be maintained here as well.
+  const updateThread = db.prepare("UPDATE chat_threads SET updated_at = ?, message_count = message_count + ? WHERE id = ?");
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString();
+      const content = `large import message ${index + 1} ${"x".repeat(180)}`;
+      const timeline = role === "assistant"
+        ? JSON.stringify([
+            { id: `large-model-${index}`, kind: "system", title: "Model", text: "mock/deepseek-v4-flash" },
+            { id: `large-output-${index}`, kind: "assistant_text", text: content }
+          ])
+        : "[]";
+      insert.run(
+        `large-${index.toString().padStart(4, "0")}`,
+        threadId,
+        role,
+        content,
+        createdAt,
+        role === "assistant" ? 10 : null,
+        role === "assistant" ? "deepseek-v4-flash" : null,
+        timeline
+      );
+    }
+    updateThread.run(new Date(Date.UTC(2026, 0, 1, 0, 0, count)).toISOString(), count, threadId);
+  } finally {
+    db.close();
+  }
+}
+
+export function seedMarkdownThreadMessages(userDataDir: string, threadId: string, count: number): void {
+  const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
+  const db = new DatabaseSync(dbPath);
+  const insert = db.prepare(`
+    INSERT INTO chat_messages (
+      id,
+      thread_id,
+      role,
+      content,
+      attachments_json,
+      created_at,
+      elapsed_ms,
+      model_id,
+      status,
+      memory_used_json,
+      skills_used_json,
+      web_search_used_json,
+      timeline_json
+    )
+    VALUES (?, ?, ?, ?, '[]', ?, ?, ?, 'sent', '[]', '[]', '[]', ?)
+  `);
+  // Seeding bypasses the repository layer, so the denormalized
+  // chat_threads.message_count must be maintained here as well.
+  const updateThread = db.prepare("UPDATE chat_threads SET updated_at = ?, message_count = message_count + ? WHERE id = ?");
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = new Date(Date.UTC(2026, 0, 1, 1, 0, index)).toISOString();
+      const content = role === "assistant"
+        ? [
+            `### Markdown answer ${index + 1}`,
+            "",
+            "- First point with **bold** text",
+            "- Second point with `inline code`",
+            "",
+            "```ts",
+            `const stableMarkdown${index} = \"no draft repaint\";`,
+            "```"
+          ].join("\n")
+        : `markdown user prompt ${index + 1}`;
+      const timeline = role === "assistant"
+        ? JSON.stringify([
+            { id: `markdown-model-${index}`, kind: "system", title: "Model", text: "mock/deepseek-v4-flash" },
+            { id: `markdown-output-${index}`, kind: "assistant_text", text: content }
+          ])
+        : "[]";
+      insert.run(
+        `markdown-${index.toString().padStart(4, "0")}`,
+        threadId,
+        role,
+        content,
+        createdAt,
+        role === "assistant" ? 10 : null,
+        role === "assistant" ? "deepseek-v4-flash" : null,
+        timeline
+      );
+    }
+    updateThread.run(new Date(Date.UTC(2026, 0, 1, 1, 0, count)).toISOString(), count, threadId);
+  } finally {
+    db.close();
+  }
+}
+
+export function resolveElectronExecutable(): string {
+  return path.join(
+    rootDir,
+    "node_modules",
+    "electron",
+    "dist",
+    process.platform === "win32" ? "electron.exe" : "electron"
+  );
+}
+
+export async function quitElectron(electronApp: ElectronApplication): Promise<void> {
+  await electronApp.evaluate(({ app }) => {
+    app.quit();
+  }).catch(() => undefined);
+  await electronApp.close().catch(() => undefined);
+}
+
+export function baseLaunchEnv(userDataDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    JASMINE_E2E_USER_DATA_DIR: userDataDir,
+    JASMINE_E2E_MOCK_AI: "1",
+    DEEPSEEK_API_KEY: "e2e-mock-key",
+    KIMI_API_KEY: "e2e-mock-key",
+    ...extra
+  };
+}
+
+export async function launchJasmine(label: string, existingUserDataDir?: string, extraEnv: Record<string, string> = {}): Promise<HarnessApp> {
+  const userDataDir = existingUserDataDir ?? path.join(rootDir, ".tmp", "e2e", `${label}-${randomUUID()}`);
+  if (!existingUserDataDir) await rm(userDataDir, { recursive: true, force: true });
+  await mkdir(userDataDir, { recursive: true });
+  const redSquarePath = await createRedSquarePng(userDataDir);
+  const sshConfigPath = await createSshConfigFixture(userDataDir);
+  const projectFolderPath = await createProjectFolderFixture(userDataDir);
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershellPath = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const cmdPath = process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe");
+  const notepadPath = path.join(systemRoot, "System32", "notepad.exe");
+  const editorCandidates = JSON.stringify([
+    { label: "VS Code", command: process.execPath },
+    { label: "Notepad", command: notepadPath }
+  ]);
+  const terminalCandidates = JSON.stringify([
+    { label: "PowerShell", command: powershellPath },
+    { label: "Command Prompt", command: cmdPath }
+  ]);
+
+  const executablePath = resolveElectronExecutable();
+
+  const app = await electron.launch({
+    executablePath,
+    args: [".", "--disable-gpu"],
+    cwd: rootDir,
+    env: baseLaunchEnv(userDataDir, {
+      JASMINE_E2E_HARNESS: "1",
+      JASMINE_E2E_MANY_MODELS: "1",
+      JASMINE_E2E_PICK_FILE: redSquarePath,
+      JASMINE_E2E_PICK_PROJECT_FOLDER: projectFolderPath,
+      JASMINE_E2E_PICK_FOLDER: path.join(userDataDir, "plugin-fixtures", "jasmine-e2e-plugin"),
+      JASMINE_E2E_PICK_SKILL_FOLDERS: path.join(userDataDir, "custom-skills"),
+      JASMINE_E2E_PICK_PROMPT_TEMPLATE_PATHS: path.join(userDataDir, "prompt-templates"),
+      JASMINE_E2E_OPEN_EXPLORER_LOG: path.join(userDataDir, "explorer-open.log"),
+      JASMINE_E2E_PICK_EDITOR: process.execPath,
+      JASMINE_E2E_PICK_TERMINAL_SHELL: process.execPath,
+      JASMINE_E2E_EDITOR_CANDIDATES: editorCandidates,
+      JASMINE_E2E_TERMINAL_CANDIDATES: terminalCandidates,
+      JASMINE_E2E_EDITOR_PATH: process.execPath,
+      JASMINE_E2E_OPEN_EDITOR_LOG: path.join(userDataDir, "editor-open.log"),
+      JASMINE_E2E_SSH_CONFIG_FILE: sshConfigPath,
+      ...extraEnv
+    })
+  });
+
+  const page = await app.firstWindow();
+  await page.waitForSelector(".app-shell");
+  return { app, page, userDataDir };
+}
+
+export function waitForChildExit(child: ReturnType<typeof spawn>): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Repeated Jasmine launch did not exit after handing off to the first instance."));
+    }, 8_000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
+
+export async function waitForAppShellPage(app: ElectronApplication, timeoutMs: number): Promise<Page> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const candidate of app.windows()) {
+      if (await candidate.locator(".app-shell").count()) return candidate;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Jasmine did not navigate from the startup screen to the app shell.");
+}
+
+export async function createSshConfigFixture(userDataDir: string): Promise<string> {
+  const sshDir = path.join(userDataDir, "ssh");
+  await mkdir(sshDir, { recursive: true });
+  const configPath = path.join(sshDir, "config");
+  await writeFile(configPath, [
+    "Host vscode-dev",
+    "  HostName 127.0.0.1",
+    "  User dev",
+    "  Port 2222",
+    "",
+    "Host *",
+    "  ForwardAgent yes"
+  ].join("\n"));
+  return configPath;
+}
+
+export async function createProjectFolderFixture(userDataDir: string): Promise<string> {
+  const root = path.join(userDataDir, "local-project");
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(path.join(root, "src", "project-note.txt"), "Project scoped file mention fixture.");
+  return root;
+}
+
+export async function createRedSquarePng(dir: string): Promise<string> {
+  const imagePath = path.join(dir, "red-square.png");
+  await writeFile(imagePath, Buffer.from(RED_SQUARE_BASE64, "base64"));
+  return imagePath;
+}
+
+export async function createExternalSkillFixture(userDataDir: string): Promise<string> {
+  const root = path.join(userDataDir, "custom-skills");
+  const valid = path.join(root, "ui-ux-product-harness");
+  const systemIgnored = path.join(root, ".system", "ignored-system-skill");
+  const mismatched = path.join(root, "mismatched-skill-name");
+  await mkdir(valid, { recursive: true });
+  await mkdir(systemIgnored, { recursive: true });
+  await mkdir(mismatched, { recursive: true });
+  await writeFile(path.join(valid, "SKILL.md"), [
+    "---",
+    "name: ui-ux-product-harness",
+    "description: Build or run a productized UI/UX self-testing harness.",
+    "---",
+    "",
+    "# UI/UX Product Harness",
+    "",
+    "Use this external skill from a custom path."
+  ].join("\n"));
+  await writeFile(path.join(systemIgnored, "SKILL.md"), [
+    "---",
+    "name: ignored-system-skill",
+    "description: This skill should be skipped because it is under .system.",
+    "---",
+    "",
+    "Do not load."
+  ].join("\n"));
+  await writeFile(path.join(mismatched, "SKILL.md"), [
+    "---",
+    "name: another-name",
+    "description: This skill should be skipped because the name does not match the folder.",
+    "---",
+    "",
+    "Do not load."
+  ].join("\n"));
+  return root;
+}
+
+export async function createPromptTemplateFixture(userDataDir: string): Promise<string> {
+  const root = path.join(userDataDir, "prompt-templates");
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, "triage.md"), [
+    "---",
+    "description: Triage an issue with concise next actions",
+    "argument-hint: <issue>",
+    "---",
+    "Triage $ARGUMENTS and list the next action."
+  ].join("\n"));
+  return root;
+}
+
+export async function createPiPluginFixture(userDataDir: string): Promise<string> {
+  const packageDir = path.join(userDataDir, "plugin-fixtures", "jasmine-e2e-plugin");
+  await mkdir(path.join(packageDir, "skills", "jasmine-e2e"), { recursive: true });
+  await writeFile(path.join(packageDir, "package.json"), JSON.stringify({
+    name: "jasmine-e2e-plugin",
+    version: "1.0.0",
+    type: "module",
+    pi: {
+      extensions: ["./extension.js"],
+      skills: ["./skills"]
+    }
+  }, null, 2));
+  await writeFile(path.join(packageDir, "extension.js"), [
+    "import { Type } from '@earendil-works/pi-ai';",
+    "export default function jasmineE2ePlugin(pi) {",
+    "  pi.registerTool({",
+    "    name: 'jasmine_e2e_tool',",
+    "    label: 'Jasmine E2E tool',",
+    "    description: 'E2E fixture tool from a Pi package.',",
+    "    parameters: Type.Object({}),",
+    "    async execute() { return { content: [{ type: 'text', text: 'ok' }] }; }",
+    "  });",
+    "}"
+  ].join("\n"));
+  await writeFile(path.join(packageDir, "skills", "jasmine-e2e", "SKILL.md"), [
+    "---",
+    "name: jasmine-e2e",
+    "description: E2E fixture skill from a Pi package.",
+    "---",
+    "",
+    "# Jasmine E2E",
+    "",
+    "Use this only for plugin settings tests."
+  ].join("\n"));
+  return packageDir;
+}
+
+export async function seedPiAgentPackageSettings(userDataDir: string, packages: unknown[]): Promise<void> {
+  const agentDir = path.join(userDataDir, "pi-agent");
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ packages }, null, 2));
+}
+
+export async function navigationPath(page: Page): Promise<string> {
+  return page.evaluate(() => (window as Window & {
+    __jasmineHarness?: { snapshot(): { app: { navigation: { path: string } } } };
+  }).__jasmineHarness?.snapshot().app.navigation.path ?? "");
+}
+
+export const RED_SQUARE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGElEQVR4nGP8z8Dwn4ECwESJ5lEDRgAAUOQCH2mP8toAAAAASUVORK5CYII=";

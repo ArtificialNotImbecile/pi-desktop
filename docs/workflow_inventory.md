@@ -1,0 +1,14 @@
+# Workflow Inventory
+
+| Status | ID | Workflow | Success criteria | Evidence |
+| --- | --- | --- | --- | --- |
+| [x] | WF-001 | Configure a provider and send the first chat | Provider state persists, a selected model responds, and the thread is stored. | `tests/e2e/providers.spec.ts`, `tests/e2e/chat-runtime.spec.ts` |
+| [x] | WF-002 | Continue and manage a conversation | Drafts, paging, rename, search, edit, regenerate, queue, stop, and deletion affect the intended thread only. | `tests/e2e/threads.spec.ts`, `tests/e2e/chat-runtime.spec.ts` |
+| [x] | WF-003 | Add files and rich content | Attachments, pasted images, markdown, code, previews, and follow-up turns remain usable. | `tests/e2e/composer.spec.ts`, `tests/e2e/rendering.spec.ts` |
+| [x] | WF-004 | Configure application settings | Appearance, language, brand, providers, and window state save visibly and restore after reopen. | `tests/e2e/settings.spec.ts` |
+| [x] | WF-005 | Use memory and activity | Explicit memory and activity actions persist, remain inspectable, and expose privacy state. | `tests/e2e/panels.spec.ts` |
+| [x] | WF-006 | Manage integrations | MCP servers, remotes, skills, prompt templates, and plugins install, toggle, and remove safely. | `tests/e2e/integrations.spec.ts` |
+| [x] | WF-007 | Work in a local project | Project selection scopes file search, runtime cwd, terminal, and background completion correctly. | `tests/e2e/threads.spec.ts`, `tests/e2e/panels.spec.ts` |
+| [x] | WF-008 | Use Spotlight | The global launcher finds threads and commands, restores the app, routes correctly, and returns focus. | `tests/e2e/spotlight.spec.ts` |
+| [x] | WF-009 | Inspect agent execution | Thinking, tool runs, traces, context taxonomy, and source evidence render without leaking secrets. | `tests/e2e/rendering.spec.ts`, `tests/e2e/chat-runtime.spec.ts` |
+| [x] | WF-010 | Validate a release | Build, unit, UI audit, visual capture, full E2E, and headed acceptance complete with ignored artifacts. | `npm run harness:release` |
