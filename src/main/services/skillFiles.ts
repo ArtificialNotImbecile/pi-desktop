@@ -273,8 +273,10 @@ async function loadBundledDefaultLocalSkills(): Promise<Array<{ name: string; de
 }
 
 async function resolveBundledSkillRoot(): Promise<string | null> {
+  const packagedResourcesRoot = typeof process.resourcesPath === "string" ? process.resourcesPath : null;
   const candidates = [
     process.env.JASMINE_BUILTIN_SKILLS_ROOT,
+    packagedResourcesRoot ? path.resolve(packagedResourcesRoot, "jasmine-resources", "builtin-skills") : null,
     path.resolve(process.cwd(), "resources", "builtin-skills"),
     path.resolve(moduleDir, "..", "..", "..", "..", "resources", "builtin-skills"),
     path.resolve(moduleDir, "..", "..", "..", "resources", "builtin-skills")

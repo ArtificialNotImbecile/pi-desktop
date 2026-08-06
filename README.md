@@ -2,6 +2,14 @@
 
 Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, and SQLite.
 
+## Context Taxonomy demo
+
+Context Taxonomy makes the context sent to a model inspectable. It separates system instructions, project context, skills, conversation messages, tool definitions, provider options, cache evidence, payload shape, and the raw provider request so you can see how a turn was assembled.
+
+[![Jasmine Context Taxonomy demo](docs/assets/jasmine-context-taxonomy-demo.gif)](docs/assets/jasmine-context-taxonomy-demo.mp4)
+
+Click the preview for the full MP4 recording. The demo is recorded from the real Electron UI with Playwright and an isolated mock provider profile; it contains no personal data or API keys.
+
 ## Features
 
 - Persistent local threads, messages, drafts, projects, TODOs, memories, and activity records.
@@ -17,6 +25,10 @@ Jasmine stores application data locally, but configured AI providers, web search
 - Windows 10 or later
 - Node.js 22
 - npm
+
+## Install on Windows
+
+Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/jasmine/releases/latest). The `v0.1.0` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
 
 ## Run locally
 
@@ -58,6 +70,8 @@ npm.cmd run test:e2e:smoke
 ```
 
 Run `npm.cmd run test:e2e` for the full Electron suite and `npm.cmd run harness:release` for the complete local release gate. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
+
+Regenerate the README demo with `npm.cmd run demo:record`. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
 
 See [docs/harness.md](docs/harness.md) for the test map and verification policy.
 

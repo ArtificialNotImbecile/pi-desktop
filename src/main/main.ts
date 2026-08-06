@@ -499,7 +499,10 @@ function loadAppIcon() {
 }
 
 function getAppIconCandidates() {
+  const packagedResourcesRoot = typeof process.resourcesPath === "string" ? process.resourcesPath : null;
   return [
+    packagedResourcesRoot ? path.join(packagedResourcesRoot, "jasmine-resources", "jasmine-logo.ico") : "",
+    packagedResourcesRoot ? path.join(packagedResourcesRoot, "jasmine-resources", "jasmine-logo.png") : "",
     path.join(process.cwd(), "resources", "jasmine-logo.ico"),
     path.join(process.cwd(), "resources", "jasmine-logo.png"),
     path.join(__dirname, "../../../resources/jasmine-logo.ico"),

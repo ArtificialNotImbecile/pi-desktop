@@ -2,6 +2,7 @@
   "name": "jasmine",
   "version": "0.1.0",
   "description": "Jasmine desktop app - Just Another Self Mine.",
+  "author": "ArtificialNotImbecile",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,6 +40,10 @@
     "test:unit": "node scripts/run-unit-tests.mjs",
     "lint:ui": "node scripts/check-ui-primitives.mjs && node scripts/check-theme-colors.mjs",
     "verify": "npm run build && npm run test:unit && npm run harness:inspect && npm run harness:check && npm run test:e2e",
+    "demo:record": "npm run build && node scripts/record-readme-demo.mjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:win:dir": "npm run build && electron-builder --win dir --x64",
+    "test:packaged": "node scripts/smoke-packaged-app.mjs",
     "start": "electron ."
   },
   "dependencies": {
@@ -46,7 +51,6 @@
     "@earendil-works/pi-ai": "^0.78.0",
     "@earendil-works/pi-coding-agent": "^0.79.6",
     "@floating-ui/react": "^0.27.19",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@lexical/react": "^0.45.0",
     "@mariozechner/pi-ai": "^0.73.1",
     "@mariozechner/pi-tui": "^0.73.1",
@@ -64,6 +68,7 @@
     "docx": "^9.7.1",
     "lexical": "^0.45.0",
     "motion": "^12.40.0",
+    "node-pty": "^1.1.0",
     "pi-web-access": "^0.10.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -80,8 +85,50 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^42.3.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "ai.jasmine.desktop",
+    "productName": "Jasmine",
+    "copyright": "Copyright © 2026 ArtificialNotImbecile",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release/v0.1.0"
+    },
+    "files": [
+      "dist/**/*",
+      "main.cjs",
+      "src/main/preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "jasmine-resources"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/jasmine-logo-desktop.ico",
+      "artifactName": "Jasmine-Setup-${version}-${arch}.${ext}",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "runAfterFinish": false,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { spawn as spawnPty, type IPty } from "@homebridge/node-pty-prebuilt-multiarch";
+import { spawn as spawnPty, type IPty } from "node-pty";
 import type { TerminalShellInfo } from "../../shared/ipc.js";
 import { listExecutableDiscovery, resolveConfiguredExecutable } from "./executables.js";
 
@@ -49,8 +49,7 @@ export function startTerminalProcess(input: { shell: TerminalShellInfo; cwd?: st
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       FORCE_COLOR: "1"
-    },
-    encoding: "utf8"
+    }
   });
   return {
     id: crypto.randomUUID(),

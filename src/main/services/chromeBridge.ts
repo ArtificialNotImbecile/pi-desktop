@@ -44,8 +44,10 @@ export function bridgeInfoFilePath(): string {
 
 export function resolveChromeExtensionRoot(): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const packagedResourcesRoot = typeof process.resourcesPath === "string" ? process.resourcesPath : null;
   const candidates = [
     process.env.JASMINE_CHROME_EXTENSION_ROOT,
+    packagedResourcesRoot ? path.resolve(packagedResourcesRoot, "jasmine-resources", "chrome-extension") : null,
     path.resolve(process.cwd(), "resources", "chrome-extension"),
     path.resolve(moduleDir, "..", "..", "..", "..", "resources", "chrome-extension"),
     path.resolve(moduleDir, "..", "..", "..", "resources", "chrome-extension")

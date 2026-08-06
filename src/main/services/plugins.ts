@@ -64,8 +64,10 @@ function resolveBuiltinResourceRoot(input: {
   exists(candidate: string): boolean;
 }): string | null {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const packagedResourcesRoot = typeof process.resourcesPath === "string" ? process.resourcesPath : null;
   const candidates = [
     input.envOverride,
+    packagedResourcesRoot ? path.resolve(packagedResourcesRoot, "jasmine-resources", ...input.subPath) : null,
     path.resolve(process.cwd(), "resources", ...input.subPath),
     path.resolve(moduleDir, "..", "..", "..", "..", "resources", ...input.subPath),
     path.resolve(moduleDir, "..", "..", "..", "resources", ...input.subPath)
