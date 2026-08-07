@@ -3,6 +3,7 @@ import { _electron as electron } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, rm, mkdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
   baseLaunchEnv,
@@ -12,6 +13,14 @@ import {
   waitForAppShellPage,
   waitForChildExit
 } from "./helpers";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite") as {
+  DatabaseSync: new (filename: string) => {
+    exec(sql: string): void;
+    close(): void;
+  };
+};
 
 test.describe("Jasmine cold start", () => {
   test("shows startup feedback before initialization and coalesces repeated launches", async () => {
@@ -145,6 +154,74 @@ test.describe("Jasmine cold start", () => {
       await quitElectron(secondApp);
       await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
     }
+  });
+
+  test("upgrades the original MCP table before app settings hydrate and survives restart", async () => {
+    const userDataDir = path.join(rootDir, ".tmp", "e2e", `legacy-mcp-startup-${randomUUID()}`);
+    const dataDir = path.join(userDataDir, "data");
+    await rm(userDataDir, { recursive: true, force: true });
+    await mkdir(dataDir, { recursive: true });
+    const legacyDb = new DatabaseSync(path.join(dataDir, "jasmine.sqlite"));
+    try {
+      legacyDb.exec(`
+        CREATE TABLE mcp_servers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          command TEXT NOT NULL,
+          args_json TEXT NOT NULL,
+          env_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO mcp_servers (id, name, command, args_json, env_json, enabled, created_at, updated_at)
+        VALUES ('legacy-mcp', 'Legacy MCP', 'legacy-command', '["--stdio"]', '{}', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const launch = async () => electron.launch({
+      executablePath: resolveElectronExecutable(),
+      args: [".", "--disable-gpu"],
+      cwd: rootDir,
+      env: baseLaunchEnv(userDataDir, { JASMINE_E2E_HARNESS: "1" })
+    });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const app = await launch();
+      try {
+        const page = await waitForAppShellPage(app, 20_000);
+        const hydrated = await page.evaluate(async () => {
+          const [settings, servers] = await Promise.all([
+            window.jasmine.getAppSettings(),
+            window.jasmine.listMcpServers()
+          ]);
+          return {
+            language: settings.language,
+            servers: servers.map((server) => ({
+              id: server.id,
+              description: server.description,
+              transport: server.transport,
+              source: server.source,
+              marketplaceId: server.marketplaceId ?? null
+            }))
+          };
+        });
+        expect(hydrated.language).toBe("en");
+        expect(hydrated.servers).toContainEqual({
+          id: "legacy-mcp",
+          description: "",
+          transport: "stdio",
+          source: "manual",
+          marketplaceId: null
+        });
+      } finally {
+        await quitElectron(app);
+      }
+    }
+
+    await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 });
 

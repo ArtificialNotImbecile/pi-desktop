@@ -1,0 +1,154 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { _electron as electron } from "playwright";
+
+const rootDir = process.cwd();
+const outputDir = path.join(rootDir, "docs", "assets", "screenshots");
+const userDataDir = path.join(rootDir, ".tmp", "readme-gallery");
+const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
+
+await rm(outputDir, { recursive: true, force: true });
+await rm(userDataDir, { recursive: true, force: true });
+await mkdir(outputDir, { recursive: true });
+await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
+await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nKeep answers concise and cite relevant project files.\n", "utf8");
+await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is a local-first AI workspace.\n", "utf8");
+
+const app = await electron.launch({
+  executablePath: path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),
+  args: [".", "--disable-gpu"],
+  cwd: rootDir,
+  env: {
+    ...process.env,
+    JASMINE_E2E_HARNESS: "1",
+    JASMINE_E2E_OFFSCREEN: "1",
+    JASMINE_E2E_MOCK_AI: "1",
+    JASMINE_E2E_MANY_MODELS: "1",
+    JASMINE_E2E_USER_DATA_DIR: userDataDir,
+    JASMINE_DEFAULT_PROJECT_ROOT: demoProjectDir,
+    DEEPSEEK_API_KEY: "readme-gallery-placeholder",
+    KIMI_API_KEY: "readme-gallery-placeholder"
+  }
+});
+
+let page;
+const captured = [];
+try {
+  page = await app.firstWindow();
+  await page.locator(".app-shell").waitFor({ timeout: 20_000 });
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(1440, 900);
+  });
+  await page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).waitFor();
+  await page.addStyleTag({ content: "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important;caret-color:transparent!important}" });
+  await page.evaluate(async () => {
+    await Promise.all([
+      window.jasmine.addTodo({ text: "Review the Windows release checklist" }),
+      window.jasmine.addTodo({ text: "Document the provider configuration flow" }),
+      window.jasmine.createMemory({ content: "Prefer concise answers with concrete next steps." }),
+      window.jasmine.createManualActivityObservation({ note: "Prepared the Jasmine open-source walkthrough." })
+    ]);
+  });
+
+  const projectRow = page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).first();
+  await projectRow.locator(".project-item").click();
+  await page.locator(".empty-state").waitFor();
+  await sendMessage("Give me a concise release-readiness checklist for this workspace.");
+  await capture("main");
+
+  await page.getByRole("button", { name: "Open Artifacts" }).click();
+  await capture("artifacts");
+  await page.getByRole("button", { name: "Open Terminal" }).click();
+  await page.locator(".terminal-output").waitFor();
+  await capture("terminal");
+  for (const label of ["Close Terminal tab", "Close Artifacts tab"]) {
+    const close = page.getByRole("button", { name: label, exact: true });
+    if (await close.count()) await close.click();
+  }
+
+  await page.getByRole("button", { name: "TODO" }).click();
+  await page.locator(".todo-page").waitFor();
+  await capture("todo");
+  await projectRow.locator(".project-item").click();
+
+  await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
+  await page.getByPlaceholder("Search chats").fill("release");
+  await page.waitForTimeout(250);
+  await capture("search");
+  await page.keyboard.press("Escape");
+
+  await openCommandPage("Memory", ".memory-panel");
+  await page.getByRole("button", { name: "Refresh memories" }).click();
+  await page.locator(".memory-row").waitFor();
+  await capture("memory");
+  await page.getByRole("button", { name: "Close memory panel" }).click();
+
+  await openCommandPage("Activity", ".activity-panel");
+  await page.getByRole("button", { name: "Refresh activity" }).click();
+  await page.locator(".activity-row").waitFor();
+  await capture("activity");
+  await page.getByRole("button", { name: "Close activity panel" }).click();
+
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.locator(".side-menu").getByRole("button", { name: "Settings" }).click();
+  await page.locator(".settings-nav").waitFor();
+  for (const [label, filename] of [
+    ["General", "settings-general"],
+    ["Providers", "settings-providers"],
+    ["Appearance", "settings-appearance"],
+    ["Memory", "settings-memory"],
+    ["Skills", "settings-skills"],
+    ["Plugins", "settings-plugins"],
+    ["Chrome Control", "settings-chrome"],
+    ["Prompt Templates", "settings-prompt-templates"],
+    ["Remote", "settings-remote"],
+    ["MCP Servers", "settings-mcp"],
+    ["Activity", "settings-activity"],
+    ["Web Search", "settings-web-search"],
+    ["About", "settings-about"]
+  ]) {
+    await page.locator(".settings-nav").getByRole("button", { name: label, exact: true }).click();
+    await capture(filename);
+  }
+} finally {
+  await app.close().catch(() => undefined);
+}
+
+console.log(`Captured ${captured.length} README screenshots:\n${captured.join("\n")}`);
+
+async function capture(name) {
+  await page.waitForTimeout(180);
+  await sanitizeVisiblePaths();
+  const filePath = path.join(outputDir, `${name}.png`);
+  await page.screenshot({ path: filePath });
+  captured.push(path.relative(rootDir, filePath));
+}
+
+async function sanitizeVisiblePaths() {
+  await page.evaluate(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent || !/[A-Za-z]:\\/.test(node.textContent)) continue;
+      node.textContent = node.textContent
+        .replace(/[A-Za-z]:\\Users\\Administrator\\[^\n]*/g, "C:\\Workspace\\Jasmine Demo Workspace")
+        .replace(/[A-Za-z]:\\[^\n]*/g, "C:\\Workspace\\Jasmine Demo Workspace");
+    }
+  });
+}
+
+async function sendMessage(text) {
+  const assistantBlocks = page.locator(".assistant-block");
+  const previousCount = await assistantBlocks.count();
+  const composer = page.locator(".rich-composer-editor");
+  await composer.fill(text);
+  await page.getByRole("button", { name: "Send" }).click();
+  await assistantBlocks.nth(previousCount).waitFor({ timeout: 20_000 });
+  await page.waitForFunction(() => !document.querySelector(".assistant-block.live-message"), undefined, { timeout: 20_000 });
+}
+
+async function openCommandPage(label, selector) {
+  await page.keyboard.press("Control+K");
+  await page.locator(".command-panel").waitFor();
+  await page.locator(".command-panel").getByRole("button", { name: label }).click();
+  await page.locator(selector).waitFor();
+}

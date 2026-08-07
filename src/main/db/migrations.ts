@@ -227,8 +227,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE INDEX IF NOT EXISTS idx_skill_sources_path ON skill_sources(path);
     CREATE INDEX IF NOT EXISTS idx_prompt_template_sources_path ON prompt_template_sources(path);
     CREATE INDEX IF NOT EXISTS idx_external_skill_states_enabled ON external_skill_states(enabled);
-    CREATE INDEX IF NOT EXISTS idx_mcp_servers_marketplace_id ON mcp_servers(marketplace_id);
-    CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled_name ON mcp_servers(enabled, name);
     CREATE INDEX IF NOT EXISTS idx_remote_connections_active ON remote_connections(active, name);
     CREATE INDEX IF NOT EXISTS idx_remote_connections_config ON remote_connections(config_path, config_host);
     CREATE INDEX IF NOT EXISTS idx_activity_observations_created_at ON activity_observations(created_at);
@@ -261,6 +259,21 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "app_settings", "skill_editor_path", "TEXT");
   markMigration(db, 10, "appearance theme settings", now);
   markMigration(db, 11, "app language setting", now);
+  // Jasmine's first desktop schema already had a smaller mcp_servers table.
+  // CREATE TABLE IF NOT EXISTS does not add later marketplace columns, so repair
+  // the table shape before creating indexes or running repository queries.
+  addColumnIfMissing(db, "mcp_servers", "description", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "mcp_servers", "transport", "TEXT NOT NULL DEFAULT 'stdio'");
+  addColumnIfMissing(db, "mcp_servers", "url", "TEXT");
+  addColumnIfMissing(db, "mcp_servers", "source", "TEXT NOT NULL DEFAULT 'manual'");
+  addColumnIfMissing(db, "mcp_servers", "marketplace_id", "TEXT");
+  addColumnIfMissing(db, "mcp_servers", "package_name", "TEXT");
+  addColumnIfMissing(db, "mcp_servers", "homepage", "TEXT");
+  addColumnIfMissing(db, "mcp_servers", "category", "TEXT");
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_mcp_servers_marketplace_id ON mcp_servers(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled_name ON mcp_servers(enabled, name);
+  `);
   markMigration(db, 12, "mcp server settings", now);
   markMigration(db, 13, "skill editor path setting", now);
   markMigration(db, 14, "remote ssh connections", now);
@@ -309,6 +322,7 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     );
   }
   markMigration(db, 24, "restore Jasmine entry brand defaults", now);
+  markMigration(db, 25, "upgrade legacy mcp server marketplace columns", now);
 }
 
 function markMigration(db: SqlDatabase, version: number, name: string, now: Clock): void {

@@ -1,6 +1,10 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { _electron as electron } from "playwright";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite");
 
 const rootDir = process.cwd();
 const executablePath = path.resolve(process.argv[2] || path.join(rootDir, "release", "v0.1.0", "win-unpacked", "Jasmine.exe"));
@@ -21,6 +25,27 @@ for (const requiredPath of [
 const outputDir = path.join(rootDir, "test-results", "ui-harness", "release");
 const userDataDir = path.join(rootDir, ".tmp", "packaged-smoke");
 await mkdir(outputDir, { recursive: true });
+await rm(userDataDir, { recursive: true, force: true });
+await mkdir(path.join(userDataDir, "data"), { recursive: true });
+const legacyDb = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"));
+try {
+  legacyDb.exec(`
+    CREATE TABLE mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      command TEXT NOT NULL,
+      args_json TEXT NOT NULL,
+      env_json TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO mcp_servers (id, name, command, args_json, env_json, enabled, created_at, updated_at)
+    VALUES ('legacy-packaged-mcp', 'Legacy packaged MCP', 'legacy-command', '[]', '{}', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+  `);
+} finally {
+  legacyDb.close();
+}
 
 const app = await electron.launch({
   executablePath,
@@ -56,10 +81,12 @@ try {
     throw error;
   }
   const result = await page.evaluate(async () => {
-    const [providers, plugins, skills] = await Promise.all([
+    const [providers, plugins, skills, appSettings, mcpServers] = await Promise.all([
       window.jasmine.listProviders(),
       window.jasmine.listPlugins(),
-      window.jasmine.listSkills()
+      window.jasmine.listSkills(),
+      window.jasmine.getAppSettings(),
+      window.jasmine.listMcpServers()
     ]);
     return {
       title: document.title,
@@ -67,7 +94,9 @@ try {
       providerCount: providers.length,
       pluginNames: plugins.map((item) => item.displayName),
       pluginSources: plugins.map((item) => item.source),
-      skillNames: skills.map((item) => item.name)
+      skillNames: skills.map((item) => item.name),
+      language: appSettings.language,
+      legacyMcp: mcpServers.find((item) => item.id === "legacy-packaged-mcp") ?? null
     };
   });
   if (result.title !== "Jasmine" || result.bodyTextLength < 100) {
@@ -75,6 +104,9 @@ try {
   }
   if (!result.pluginNames.some((name) => /chrome/i.test(name))) throw new Error(`Packaged Chrome plugin was not discovered: ${JSON.stringify(result)}`);
   if (!result.skillNames.includes("code-reviewer")) throw new Error(`Packaged built-in skills were not discovered: ${JSON.stringify(result)}`);
+  if (result.language !== "en" || result.legacyMcp?.transport !== "stdio" || result.legacyMcp?.source !== "manual") {
+    throw new Error(`Packaged legacy database migration failed: ${JSON.stringify(result)}`);
+  }
 
   const terminalOutput = await page.evaluate(async () => {
     const marker = "JASMINE_PACKAGED_TERMINAL_OK";

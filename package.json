@@ -40,7 +40,7 @@
     "test:unit": "node scripts/run-unit-tests.mjs",
     "lint:ui": "node scripts/check-ui-primitives.mjs && node scripts/check-theme-colors.mjs",
     "verify": "npm run build && npm run test:unit && npm run harness:inspect && npm run harness:check && npm run test:e2e",
-    "demo:record": "npm run build && node scripts/record-readme-demo.mjs",
+    "readme:capture": "npm run build && node scripts/capture-readme-gallery.mjs && node scripts/record-context-taxonomy-gif.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --x64",
     "dist:win:dir": "npm run build && electron-builder --win dir --x64",
     "test:packaged": "node scripts/smoke-packaged-app.mjs",

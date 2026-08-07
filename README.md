@@ -2,11 +2,7 @@
 
 Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, and SQLite.
 
-## See Jasmine in action
-
-[▶ Play the Jasmine product walkthrough](https://github.com/ArtificialNotImbecile/jasmine/releases/download/v0.1.0/jasmine-product-demo.mp4)
-
-The walkthrough covers projects, chats, models, tools, skills, context inspection, artifacts, terminal access, search, TODOs, memory, activity, providers, appearance, and integrations. It is recorded from the real Electron UI with Playwright and an isolated mock-provider profile, so it contains no personal data or API keys.
+![Jasmine main workspace](docs/assets/screenshots/main.png)
 
 ## Features
 
@@ -17,6 +13,50 @@ The walkthrough covers projects, chats, models, tools, skills, context inspectio
 - English and Chinese interface copy, appearance settings, Spotlight launcher, and a structured UI test harness.
 
 Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, remote hosts, and browser automation can send data outside the computer. Review each integration before enabling it.
+
+## Context inspection
+
+Jasmine exposes the model request as a readable context taxonomy: system and project context, conversation history, the current prompt, tools, provider options, payload shape, and cache evidence remain inspectable turn by turn.
+
+![Inspecting a real DeepSeek request in Context Taxonomy](docs/assets/context-taxonomy.gif)
+
+The example above uses two real model turns and opens the captured conversation context and provider request.
+
+## Product tour
+
+<details>
+<summary>Workspace, local context, and project tools</summary>
+
+| TODOs | Search |
+| --- | --- |
+| ![Project TODOs](docs/assets/screenshots/todo.png) | ![Search chats](docs/assets/screenshots/search.png) |
+| Memory | Activity |
+| ![Local memory](docs/assets/screenshots/memory.png) | ![Local activity](docs/assets/screenshots/activity.png) |
+| Artifacts | Terminal |
+| ![Conversation artifacts](docs/assets/screenshots/artifacts.png) | ![Project terminal](docs/assets/screenshots/terminal.png) |
+
+</details>
+
+<details>
+<summary>Settings and integrations</summary>
+
+| General | Providers |
+| --- | --- |
+| ![General settings](docs/assets/screenshots/settings-general.png) | ![Provider settings](docs/assets/screenshots/settings-providers.png) |
+| Appearance | Memory |
+| ![Appearance settings](docs/assets/screenshots/settings-appearance.png) | ![Memory settings](docs/assets/screenshots/settings-memory.png) |
+| Skills | Plugins |
+| ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Plugin settings](docs/assets/screenshots/settings-plugins.png) |
+| Chrome Control | Prompt Templates |
+| ![Chrome Control settings](docs/assets/screenshots/settings-chrome.png) | ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) |
+| Remote | MCP Servers |
+| ![Remote settings](docs/assets/screenshots/settings-remote.png) | ![MCP server settings](docs/assets/screenshots/settings-mcp.png) |
+| Activity | Web Search |
+| ![Activity settings](docs/assets/screenshots/settings-activity.png) | ![Web Search settings](docs/assets/screenshots/settings-web-search.png) |
+| About | |
+| ![About Jasmine](docs/assets/screenshots/settings-about.png) | |
+
+</details>
 
 ## Requirements
 
@@ -69,7 +109,7 @@ npm.cmd run test:e2e:smoke
 
 Run `npm.cmd run test:e2e` for the full Electron suite and `npm.cmd run harness:release` for the complete local release gate. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
 
-Regenerate the README demo with `npm.cmd run demo:record`. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
+Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
 
 See [docs/harness.md](docs/harness.md) for the test map and verification policy.
 

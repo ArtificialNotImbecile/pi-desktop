@@ -195,6 +195,18 @@ try {
         '一个想法、半句话、一段粘贴——剩下交给 Hiri One。',
         '${timestamp}'
       );
+      CREATE TABLE mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        command TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        env_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO mcp_servers (id, name, command, args_json, env_json, enabled, created_at, updated_at)
+      VALUES ('legacy-mcp', 'Legacy MCP', 'legacy-command', '["--stdio"]', '{}', 1, '${timestamp}', '${timestamp}');
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
@@ -213,6 +225,31 @@ try {
     assert.equal(migratedBrand.brand_main_title, "Talk to yourself.");
     assert.equal(migratedBrand.brand_subtitle, "Jasmine listens. Jasmine learns. Jasmine becomes yours.");
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 24").get().exists_flag, 1);
+    const legacyMcpColumns = legacyDb.prepare("PRAGMA table_info(mcp_servers)").all().map((row) => row.name);
+    for (const column of ["description", "transport", "url", "source", "marketplace_id", "package_name", "homepage", "category"]) {
+      assert.equal(legacyMcpColumns.includes(column), true, `legacy MCP table should gain ${column}`);
+    }
+    assert.deepEqual(mcpServers.listMcpServers(legacyDb), [{
+      id: "legacy-mcp",
+      name: "Legacy MCP",
+      description: "",
+      command: "legacy-command",
+      args: ["--stdio"],
+      envJson: "{}",
+      enabled: true,
+      transport: "stdio",
+      url: undefined,
+      source: "manual",
+      marketplaceId: undefined,
+      packageName: undefined,
+      homepage: undefined,
+      category: undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }]);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 25").get().exists_flag, 1);
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    assert.equal(mcpServers.listMcpServers(legacyDb).length, 1);
   } finally {
     if (previousDefaultRoot === undefined) delete process.env.JASMINE_DEFAULT_PROJECT_ROOT;
     else process.env.JASMINE_DEFAULT_PROJECT_ROOT = previousDefaultRoot;
