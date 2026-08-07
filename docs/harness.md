@@ -14,8 +14,8 @@ Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generate
 - `npm run test:e2e`: full Electron suite.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
 - `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.
-- `npm run dist:win`: builds the Windows x64 NSIS installer under ignored `release/v0.1.0/`.
-- `npm run test:packaged`: launches `release/v0.1.0/win-unpacked/Jasmine.exe` and verifies the packaged renderer and bundled resources.
+- `npm run dist:win`: builds the Windows x64 NSIS installer under ignored `release/v0.1.1/`.
+- `npm run test:packaged`: launches `release/v0.1.1/win-unpacked/Jasmine.exe` and verifies the packaged renderer and bundled resources.
 
 Use `npm.cmd` and `npx.cmd` on Windows.
 

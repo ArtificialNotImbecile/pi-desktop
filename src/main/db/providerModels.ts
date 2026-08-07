@@ -102,24 +102,28 @@ export function mergeModelConfigs(existing: ProviderModelConfig[], modelIds: str
 export function defaultModelConfig(modelId: string): ProviderModelConfig {
   const isDeepSeekV4 = modelId.startsWith("deepseek-v4");
   const isKimiK2 = modelId.startsWith("kimi-k2");
+  const isKimiK3 = modelId.startsWith("kimi-k3");
   return {
     id: modelId,
     enabled: true,
     capabilities: defaultCapabilities(modelId),
-    contextWindow: isDeepSeekV4 ? 1_000_000 : isKimiK2 ? 262_000 : 128_000,
-    maxOutputTokens: isDeepSeekV4 ? 32_768 : isKimiK2 ? 262_000 : 8_192,
-    providerOptionsJson: isKimiK2 ? JSON.stringify({ temperature: 1 }, null, 2) : "{}"
+    contextWindow: isDeepSeekV4 ? 1_000_000 : isKimiK3 ? 1_048_576 : isKimiK2 ? 262_144 : 128_000,
+    maxOutputTokens: isDeepSeekV4 ? 384_000 : isKimiK3 ? 131_072 : isKimiK2 ? 262_144 : 8_192,
+    // DeepSeek thinking models and current Kimi reasoning models reject or
+    // ignore sampling controls. Pi owns their model-specific request shape.
+    providerOptionsJson: "{}"
   };
 }
 
 function defaultCapabilities(modelId: string): ModelCapabilities {
   const isDeepSeekV4 = modelId.startsWith("deepseek-v4");
   const isKimiK2 = modelId.startsWith("kimi-k2");
+  const isKimiK3 = modelId.startsWith("kimi-k3");
   return {
-    vision: isKimiK2,
+    vision: isKimiK2 || isKimiK3,
     imageOutput: false,
-    toolCalling: isDeepSeekV4 || isKimiK2,
-    reasoning: isDeepSeekV4 || isKimiK2,
+    toolCalling: isDeepSeekV4 || isKimiK2 || isKimiK3,
+    reasoning: isDeepSeekV4 || isKimiK2 || isKimiK3,
     embedding: false
   };
 }

@@ -8,7 +8,7 @@ export function seedDefaultProviders(db: SqlDatabase, timestamp: string): void {
       name: "DeepSeek",
       baseUrl: "https://api.deepseek.com",
       apiKeyRef: "env:DEEPSEEK_API_KEY",
-      models: ["deepseek-v4-flash"],
+      models: ["deepseek-v4-flash", "deepseek-v4-pro"],
       defaultModel: "deepseek-v4-flash"
     },
     {
@@ -16,7 +16,7 @@ export function seedDefaultProviders(db: SqlDatabase, timestamp: string): void {
       name: "Moonshot Kimi",
       baseUrl: "https://api.moonshot.cn/v1",
       apiKeyRef: "env:KIMI_API_KEY",
-      models: ["kimi-k2.6"],
+      models: ["kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3"],
       defaultModel: "kimi-k2.6"
     }
   ];

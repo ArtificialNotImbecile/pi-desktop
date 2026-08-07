@@ -19,11 +19,13 @@ export function buildRetryPlan(messages: ChatMessage[], messageId?: string) {
     }
     if (lastUserIndex < 0) throw new Error("No user message is available to retry.");
 
-    const contextMessages = messages.slice(0, lastUserIndex + 1).map(toModelHistoryMessage);
+    const contextRows = messages.slice(0, lastUserIndex + 1);
+    const contextMessages = contextRows.map(toModelHistoryMessage);
     const deleteFromIndex = target.role === "user" ? targetIndex + 1 : targetIndex;
     return {
       lastUserMessage: messages[lastUserIndex],
       contextMessages,
+      contextMessageIds: contextRows.map((message) => message.id),
       deleteMessageIds: messages.slice(deleteFromIndex).map((message) => message.id)
     };
   }
@@ -35,6 +37,7 @@ export function buildRetryPlan(messages: ChatMessage[], messageId?: string) {
   return {
     lastUserMessage: [...withoutTrailingAssistant].reverse().find((message) => message.role === "user"),
     contextMessages: withoutTrailingAssistant.map(toModelHistoryMessage),
+    contextMessageIds: withoutTrailingAssistant.map((message) => message.id),
     deleteMessageIds: messages.slice(withoutTrailingAssistant.length).map((message) => message.id)
   };
 }

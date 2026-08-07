@@ -66,6 +66,8 @@ import {
 import {
   addMessage as addMessageRow,
   deleteMessagesByIds as deleteMessageRowsByIds,
+  getMessageSessionEntryId as getMessageSessionEntryIdRow,
+  linkMessageSessionEntry as linkMessageSessionEntryRow,
   listMessages as listMessageRows,
   updateMessage as updateMessageRow
 } from "./repositories/messages.js";
@@ -77,13 +79,16 @@ import {
   getThread as getThreadRow,
   getThreadDraft as getThreadDraftRow,
   getThreadMessageCount as getThreadMessageCountRow,
+  getThreadSessionBinding as getThreadSessionBindingRow,
   hasThread as hasThreadRow,
   listThreads as listThreadRows,
   touchThread as touchThreadRow,
   updateThreadActivePluginIds as updateThreadActivePluginIdsRow,
   updateThreadDraft as updateThreadDraftRow,
+  updateThreadSessionBinding as updateThreadSessionBindingRow,
   updateThreadTitle as updateThreadTitleRow
 } from "./repositories/threads.js";
+import type { ThreadSessionBinding } from "./repositories/threads.js";
 import {
   getProject as getProjectRow,
   listProjects as listProjectRows,
@@ -228,6 +233,15 @@ export class JasmineDatabase {
     return getThreadRow(this.db, threadId);
   }
 
+  getThreadSessionBinding(threadId: string): ThreadSessionBinding | null {
+    return getThreadSessionBindingRow(this.db, threadId);
+  }
+
+  updateThreadSessionBinding(threadId: string, binding: ThreadSessionBinding): void {
+    if (!this.hasThread(threadId)) throw new Error("Thread does not exist.");
+    updateThreadSessionBindingRow(this.db, threadId, binding);
+  }
+
   listProjects(): WorkspaceProject[] {
     return listProjectRows(this.db);
   }
@@ -343,6 +357,14 @@ export class JasmineDatabase {
     return message;
   }
 
+  getMessageSessionEntryId(threadId: string, messageId: string): string | null {
+    return getMessageSessionEntryIdRow(this.db, threadId, messageId);
+  }
+
+  linkMessageSessionEntry(threadId: string, messageId: string, sessionEntryId: string): void {
+    linkMessageSessionEntryRow(this.db, threadId, messageId, sessionEntryId);
+  }
+
   addMessage(input: {
     threadId: string;
     role: ChatRole;
@@ -356,6 +378,7 @@ export class JasmineDatabase {
     pluginsUsed?: PluginReference[];
     webSearchUsed?: WebSearchResult[];
     timeline?: ChatTimelineItem[];
+    sessionEntryId?: string;
   }): ChatMessage {
     return this.runInTransaction(() => {
       const message = addMessageRow(this.db, input, now());

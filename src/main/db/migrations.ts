@@ -3,6 +3,7 @@ import { DEFAULT_APPEARANCE } from "../../shared/theme.js";
 import { DEFAULT_BRAND_SETTINGS, LEGACY_HIRI_BRAND_COPY } from "../../shared/brand.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
+import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
 
 type Clock = () => string;
 
@@ -29,6 +30,9 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       title TEXT NOT NULL,
       project_id TEXT REFERENCES workspace_projects(id) ON DELETE SET NULL,
       active_plugin_ids_json TEXT NOT NULL DEFAULT '[]',
+      session_id TEXT,
+      session_file TEXT,
+      session_format_version INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -47,7 +51,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       skills_used_json TEXT NOT NULL DEFAULT '[]',
       plugins_used_json TEXT NOT NULL DEFAULT '[]',
       web_search_used_json TEXT NOT NULL DEFAULT '[]',
-      timeline_json TEXT NOT NULL DEFAULT '[]'
+      timeline_json TEXT NOT NULL DEFAULT '[]',
+      session_entry_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS thread_drafts (
@@ -240,7 +245,13 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "chat_messages", "timeline_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "chat_threads", "project_id", "TEXT REFERENCES workspace_projects(id) ON DELETE SET NULL");
   addColumnIfMissing(db, "chat_threads", "active_plugin_ids_json", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(db, "chat_threads", "session_id", "TEXT");
+  addColumnIfMissing(db, "chat_threads", "session_file", "TEXT");
+  addColumnIfMissing(db, "chat_threads", "session_format_version", "INTEGER");
+  addColumnIfMissing(db, "chat_messages", "session_entry_id", "TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chat_threads_project_updated_at ON chat_threads(project_id, updated_at);");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_session_id ON chat_threads(session_id) WHERE session_id IS NOT NULL;");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_entry_id ON chat_messages(session_entry_id) WHERE session_entry_id IS NOT NULL;");
   markMigration(db, 1, "initial schema", now);
   markMigration(db, 2, "chat message attachments and model metadata", now);
   markMigration(db, 3, "trace memory activity and thread drafts", now);
@@ -323,6 +334,12 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   }
   markMigration(db, 24, "restore Jasmine entry brand defaults", now);
   markMigration(db, 25, "upgrade legacy mcp server marketplace columns", now);
+  markMigration(db, 26, "pi jsonl session bindings and message projection links", now);
+  if (!hasMigration(db, 27)) {
+    mergeCurrentPiProviderModels(db, "deepseek", ["deepseek-v4-flash", "deepseek-v4-pro"], now());
+    mergeCurrentPiProviderModels(db, "moonshot", ["kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3"], now());
+  }
+  markMigration(db, 27, "refresh bundled DeepSeek and Kimi model catalogs", now);
 }
 
 function markMigration(db: SqlDatabase, version: number, name: string, now: Clock): void {
@@ -338,6 +355,18 @@ function addColumnIfMissing(db: SqlDatabase, table: string, column: string, defi
 function hasMigration(db: SqlDatabase, version: number): boolean {
   const row = db.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = ?").get(version) as { exists_flag?: number } | undefined;
   return row?.exists_flag === 1;
+}
+
+function mergeCurrentPiProviderModels(db: SqlDatabase, providerId: string, bundledModelIds: string[], timestamp: string): void {
+  const row = db.prepare("SELECT models_json FROM providers WHERE id = ?").get(providerId) as { models_json?: string } | undefined;
+  if (!row?.models_json) return;
+  const existing = parseModelConfigs(row.models_json);
+  const modelIds = Array.from(new Set([...existing.map((model) => model.id), ...bundledModelIds]));
+  db.prepare("UPDATE providers SET models_json = ?, updated_at = ? WHERE id = ?").run(
+    JSON.stringify(mergeModelConfigs(existing, modelIds)),
+    timestamp,
+    providerId
+  );
 }
 
 function sqlLiteral(value: string): string {

@@ -1,6 +1,6 @@
 # Jasmine
 
-Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, and SQLite.
+Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, Pi, JSONL session files, and SQLite.
 
 ![Jasmine main workspace](docs/assets/screenshots/main.png)
 
@@ -13,6 +13,8 @@ Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-a
 - English and Chinese interface copy, appearance settings, Spotlight launcher, and a structured UI test harness.
 
 Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, remote hosts, and browser automation can send data outside the computer. Review each integration before enabling it.
+
+Pi-compatible JSONL is the canonical model conversation record. SQLite remains the transactional projection for thread lists, search, UI paging, settings, traces, and links back to JSONL entry IDs. See [session storage](docs/session_storage.md) and [Pi session import](docs/pi_session_import.md).
 
 ## Context inspection
 
@@ -66,7 +68,7 @@ The example above uses two real model turns and opens the captured conversation 
 
 ## Install on Windows
 
-Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/jasmine/releases/latest). The `v0.1.0` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
+Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/jasmine/releases/latest). The `v0.1.1` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
 
 ## Run locally
 

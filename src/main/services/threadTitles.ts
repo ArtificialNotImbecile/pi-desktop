@@ -1,4 +1,5 @@
 import type { RuntimeProviderConfig } from "../agent/runtime.js";
+import type { ReasoningEffort } from "../../shared/ipc.js";
 
 export type TitleGenerationResult = {
   title: string;
@@ -15,17 +16,19 @@ export function fallbackTitle(content: string): string {
 export async function generateTitleWithProvider(
   provider: RuntimeProviderConfig,
   content: string,
-  fallback: string
+  fallback: string,
+  reasoningEffort: ReasoningEffort = "off"
 ): Promise<string> {
-  return (await generateTitleWithProviderResult(provider, content, fallback)).title;
+  return (await generateTitleWithProviderResult(provider, content, fallback, reasoningEffort)).title;
 }
 
 export async function generateTitleWithProviderResult(
   provider: RuntimeProviderConfig,
   content: string,
-  fallback: string
+  fallback: string,
+  reasoningEffort: ReasoningEffort = "off"
 ): Promise<TitleGenerationResult> {
-  const first = await requestTitle(provider, content, "primary");
+  const first = await requestTitle(provider, content, "primary", reasoningEffort);
   const title = sanitizeTitle(first.text);
   if (title) {
     return {
@@ -36,7 +39,7 @@ export async function generateTitleWithProviderResult(
     };
   }
 
-  const retry = await requestTitle(provider, content, "retry");
+  const retry = await requestTitle(provider, content, "retry", reasoningEffort);
   const retryTitle = sanitizeTitle(retry.text);
   if (retryTitle) {
     return {
@@ -55,15 +58,19 @@ export async function generateTitleWithProviderResult(
   };
 }
 
-async function requestTitle(provider: RuntimeProviderConfig, content: string, variant: "primary" | "retry"): Promise<{ text: string; summary: string }> {
+async function requestTitle(
+  provider: RuntimeProviderConfig,
+  content: string,
+  variant: "primary" | "retry",
+  reasoningEffort: ReasoningEffort
+): Promise<{ text: string; summary: string }> {
   const body: Record<string, unknown> = {
     model: provider.modelId,
     messages: titleMessages(content, variant),
     stream: false,
-    temperature: titleTemperature(provider.providerOptionsJson),
-    reasoning_effort: "low",
     max_tokens: 512
   };
+  applyTitleReasoningOptions(body, provider, reasoningEffort);
 
   const response = await fetch(`${provider.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
@@ -107,6 +114,37 @@ async function requestTitle(provider: RuntimeProviderConfig, content: string, va
       `body=${summarizeTitleResponse(text)}`
     ].join(" ")
   };
+}
+
+function applyTitleReasoningOptions(
+  body: Record<string, unknown>,
+  provider: RuntimeProviderConfig,
+  reasoningEffort: ReasoningEffort
+): void {
+  const providerName = provider.providerName.toLowerCase();
+  const baseUrl = provider.baseUrl.toLowerCase();
+  const modelId = provider.modelId.toLowerCase();
+  const isDeepSeek = providerName === "deepseek" || baseUrl.includes("deepseek.com");
+  const isKimi = providerName === "moonshot" || providerName.startsWith("moonshotai") || baseUrl.includes("api.moonshot.");
+
+  if (isDeepSeek) {
+    body.thinking = { type: reasoningEffort === "off" ? "disabled" : "enabled" };
+    if (reasoningEffort !== "off") body.reasoning_effort = reasoningEffort === "xhigh" ? "max" : "high";
+    return;
+  }
+
+  if (isKimi) {
+    if (modelId.includes("kimi-k3")) {
+      body.reasoning_effort = reasoningEffort === "xhigh" ? "max" : reasoningEffort === "high" ? "high" : "low";
+    } else if (modelId.includes("kimi-k2.5") || modelId.includes("kimi-k2.6")) {
+      body.thinking = { type: reasoningEffort === "off" ? "disabled" : "enabled" };
+    }
+    // K2.7 Code is always-thinking and does not accept thinking or sampling controls.
+    return;
+  }
+
+  body.temperature = titleTemperature(provider.providerOptionsJson);
+  body.reasoning_effort = reasoningEffort === "off" ? "low" : reasoningEffort;
 }
 
 function titleMessages(content: string, variant: "primary" | "retry"): Array<{ role: "system" | "user"; content: string }> {

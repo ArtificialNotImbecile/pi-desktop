@@ -13,13 +13,18 @@ export function getPromptTemplatePaths(db: JasmineDatabase, userData: string): s
 }
 
 export async function listPromptTemplates(db: JasmineDatabase, userData: string): Promise<PromptTemplateRecord[]> {
-  const { AuthStorage, createAgentSessionServices, ModelRegistry } = await import("@earendil-works/pi-coding-agent");
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const [{ createAgentSessionServices, ModelRuntime }, { InMemoryCredentialStore }] = await Promise.all([
+    import("@earendil-works/pi-coding-agent"),
+    import("@earendil-works/pi-ai")
+  ]);
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false
+  });
   const services = await createAgentSessionServices({
     cwd: process.cwd(),
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     resourceLoaderOptions: {
       additionalPromptTemplatePaths: getPromptTemplatePaths(db, userData),
       noExtensions: true,

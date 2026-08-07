@@ -385,6 +385,61 @@ const server = createServer(async (request, response) => {
   captures.push(body);
 
   const requestText = JSON.stringify(body.messages ?? body.input ?? []);
+  if (requestText.includes("reasoning replay regression")) {
+    const toolResultPresent = (body.messages ?? []).some((message) => message.role === "tool");
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    if (!toolResultPresent) {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-reasoning-replay",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "exact reasoning chain for tool replay" }, finish_reason: null }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-reasoning-replay",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{
+          index: 0,
+          delta: { tool_calls: [{ index: 0, id: "replay-tool-call", type: "function", function: { name: "read", arguments: JSON.stringify({ path: path.join(tempDir, "reasoning-replay.txt") }) } }] },
+          finish_reason: null
+        }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-reasoning-replay",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 }
+      })}\n\n`);
+    } else {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-reasoning-replay",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "reasoning replay passed" }, finish_reason: null }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-reasoning-replay",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 }
+      })}\n\n`);
+    }
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
   if (requestText.includes("quarterly planning title")) {
     response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({
@@ -792,6 +847,45 @@ try {
   assert.equal(reasoningOnlyReply.content, "");
   assert.equal(reasoningOnlyReply.timeline.some((item) => item.kind === "thinking" && item.text.includes("thinking without producing final text")), true);
 
+  await writeFile(path.join(tempDir, "reasoning-replay.txt"), "tool replay fixture");
+  for (const provider of [
+    { providerName: "deepseek", modelId: "deepseek-v4-flash" },
+    { providerName: "moonshot", modelId: "kimi-k2.6" }
+  ]) {
+    const captureStart = captures.length;
+    const replayReply = await runPiCodingAgentChat({
+      provider: {
+        providerName: provider.providerName,
+        apiKey: "test-key",
+        baseUrl,
+        modelId: provider.modelId,
+        capabilities: {
+          vision: provider.providerName === "moonshot",
+          imageOutput: false,
+          toolCalling: true,
+          reasoning: true,
+          embedding: false
+        }
+      },
+      messages: [{ role: "user", content: `reasoning replay regression ${provider.providerName}` }],
+      content: `reasoning replay regression ${provider.providerName}`,
+      attachments: [],
+      systemPrompt: "Use the read tool and then answer.",
+      cwd: tempDir,
+      agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    });
+    assert.equal(replayReply.content, "reasoning replay passed");
+    const replayPayloads = captures.slice(captureStart);
+    assert.equal(replayPayloads.length, 2, `${provider.providerName} should perform exactly one tool loop`);
+    const replayAssistant = replayPayloads[1].messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls));
+    assert.equal(replayAssistant.reasoning_content, "exact reasoning chain for tool replay");
+    assert.equal(replayAssistant.tool_calls[0].id, "replay-tool-call");
+    assert.equal(replayPayloads[1].messages.some((message) => message.role === "tool" && message.tool_call_id === "replay-tool-call"), true);
+    assert.equal(replayPayloads[1].temperature, undefined);
+  }
+
   const totallyEmptyReply = await generateAssistantReply({
     threadId: "totally-empty-thread",
     messages: [{ role: "user", content: "totally empty response" }],
@@ -848,6 +942,34 @@ try {
   assert.equal(titlePayload.messages[0].role, "system");
   assert.match(titlePayload.messages[0].content, /Do not answer/);
   assert.equal(titlePayload.messages[1].content, "quarterly planning title for the launch meeting");
+  const titleProvider = (providerName, modelId) => ({
+    providerName,
+    apiKey: "test-key",
+    baseUrl,
+    modelId,
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: true, embedding: false },
+    providerOptionsJson: "{}"
+  });
+  await generateTitleWithProvider(titleProvider("deepseek", "deepseek-v4-flash"), "quarterly planning title deepseek", "fallback", "off");
+  const deepSeekTitlePayload = captures.at(-1);
+  assert.deepEqual(deepSeekTitlePayload.thinking, { type: "disabled" });
+  assert.equal(deepSeekTitlePayload.temperature, undefined);
+  assert.equal(deepSeekTitlePayload.reasoning_effort, undefined);
+  await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.6"), "quarterly planning title kimi 2.6", "fallback", "off");
+  const kimi26TitlePayload = captures.at(-1);
+  assert.deepEqual(kimi26TitlePayload.thinking, { type: "disabled" });
+  assert.equal(kimi26TitlePayload.temperature, undefined);
+  assert.equal(kimi26TitlePayload.reasoning_effort, undefined);
+  await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.7-code"), "quarterly planning title kimi 2.7", "fallback", "off");
+  const kimi27TitlePayload = captures.at(-1);
+  assert.equal(kimi27TitlePayload.thinking, undefined);
+  assert.equal(kimi27TitlePayload.temperature, undefined);
+  assert.equal(kimi27TitlePayload.reasoning_effort, undefined);
+  await generateTitleWithProvider(titleProvider("moonshot", "kimi-k3"), "quarterly planning title kimi 3", "fallback", "off");
+  const kimi3TitlePayload = captures.at(-1);
+  assert.equal(kimi3TitlePayload.thinking, undefined);
+  assert.equal(kimi3TitlePayload.temperature, undefined);
+  assert.equal(kimi3TitlePayload.reasoning_effort, "low");
   const emptyTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
     apiKey: "test-key",
@@ -1563,6 +1685,7 @@ function runPiCli({ agentDir, systemPrompt, message }) {
         "--mode",
         "json",
         "--no-session",
+        "--no-skills",
         "--provider",
         "jasmine-mock",
         "--model",

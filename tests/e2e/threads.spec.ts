@@ -30,6 +30,7 @@ import {
   openProviderSettings,
   openSettings,
   quitElectron,
+  readThreadPiSession,
   resolveElectronExecutable,
   rootDir,
   saveProvider,
@@ -331,6 +332,34 @@ test.describe("Jasmine threads and projects", () => {
     await expect(page.locator(".thread-item")).toHaveCount(60);
     await page.getByRole("button", { name: "Show more chats" }).click();
     await expect.poll(() => page.locator(".thread-item").count()).toBeGreaterThan(60);
+  });
+
+  test("thread rename and delete keep the owned Pi JSONL session in sync", async () => {
+    const { page, userDataDir } = harness;
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("rename JSONL session");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const thread = await page.evaluate(async () => (await window.jasmine.listThreads()).find((item) => item.title.includes("rename JSONL session")));
+    expect(thread).toBeTruthy();
+    const row = page.locator(".thread-row", { hasText: "rename JSONL session" }).first();
+    await row.hover();
+    await row.getByRole("button", { name: /Rename rename JSONL session/i }).click();
+    await page.getByRole("textbox", { name: /Thread title for rename JSONL session/i }).fill("Renamed JSONL session");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".thread-row", { hasText: "Renamed JSONL session" })).toBeVisible();
+
+    const piSession = await readThreadPiSession(userDataDir, thread!.id);
+    expect(piSession.entries.some((entry) => entry.type === "session_info" && entry.name === "Renamed JSONL session")).toBe(true);
+    await access(piSession.sessionFile);
+
+    const renamedRow = page.locator(".thread-row", { hasText: "Renamed JSONL session" }).first();
+    await renamedRow.hover();
+    await renamedRow.getByRole("button", { name: "Delete Renamed JSONL session" }).click();
+    await page.locator(".confirm-dialog").getByRole("button", { name: "Delete Chat" }).click();
+    await expect(renamedRow).toHaveCount(0);
+    await expect(access(piSession.sessionFile)).rejects.toThrow();
   });
 
   test("seeded large threads render newest messages first and page older history on demand", async () => {

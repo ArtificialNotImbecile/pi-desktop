@@ -30,6 +30,7 @@ import {
   openProviderSettings,
   openSettings,
   quitElectron,
+  readThreadPiSession,
   resolveElectronExecutable,
   rootDir,
   saveProvider,
@@ -162,7 +163,7 @@ test.describe("Jasmine chat runtime", () => {
   });
 
   test("running composer queues editable follow-ups, deletes pending rows, steers after queueing, and ignores nearby non-control clicks", async () => {
-    const { page } = harness;
+    const { page, userDataDir } = harness;
     await startEmptyThread(page);
 
     await page.locator(".rich-composer-editor").fill("slow response slow timeline queue base");
@@ -215,12 +216,15 @@ test.describe("Jasmine chat runtime", () => {
     const persisted = await page.evaluate(async () => {
       const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("slow response slow timeline queue base"));
       if (!thread) throw new Error("Queued thread missing.");
-      return (await window.jasmine.listMessages(thread.id)).map((message) => ({
-        role: message.role,
-        content: message.content
-      }));
+      return {
+        threadId: thread.id,
+        messages: (await window.jasmine.listMessages(thread.id)).map((message) => ({
+          role: message.role,
+          content: message.content
+        }))
+      };
     });
-    expect(persisted).toEqual([
+    expect(persisted.messages).toEqual([
       { role: "user", content: "slow response slow timeline queue base" },
       { role: "assistant", content: "Slow response complete." },
       { role: "user", content: "steer correction request slow timeline" },
@@ -228,6 +232,15 @@ test.describe("Jasmine chat runtime", () => {
       { role: "user", content: "edited queued follow up request" },
       { role: "assistant", content: "Queued follow-up complete: edited queued follow up request" }
     ]);
+    const piSession = await readThreadPiSession(userDataDir, persisted.threadId);
+    expect(piSession.sessionId).toBe(persisted.threadId);
+    expect(piSession.formatVersion).toBeGreaterThan(0);
+    expect(piSession.messageEntryIds).toHaveLength(6);
+    expect(piSession.messageEntryIds.every(Boolean)).toBe(true);
+    const piSessionText = JSON.stringify(piSession.entries);
+    expect(piSessionText).toContain("steer correction request slow timeline");
+    expect(piSessionText).toContain("edited queued follow up request");
+    expect(piSessionText).not.toContain("queued delete request");
   });
 
   test("running response completion does not overwrite another active thread", async () => {
@@ -291,6 +304,12 @@ test.describe("Jasmine chat runtime", () => {
     await expect(reopenedPage.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
     await expect(reopenedPage.getByRole("button", { name: "Send" })).toBeDisabled();
     await expect(reopenedPage.locator(".error-strip")).toBeHidden();
+    const stoppedThreadId = await reopenedPage.evaluate(async () => (await window.jasmine.listThreads()).find((thread) => thread.title.includes("slow timeline stoppable"))?.id);
+    expect(stoppedThreadId).toBeTruthy();
+    const stoppedPiSession = await readThreadPiSession(userDataDir, stoppedThreadId!);
+    expect(stoppedPiSession.messageEntryIds).toHaveLength(4);
+    expect(stoppedPiSession.messageEntryIds.every(Boolean)).toBe(true);
+    expect(JSON.stringify(stoppedPiSession.entries)).toContain('"stopReason":"aborted"');
 
     const pageAfterReopen = harness.page;
     await pageAfterReopen.getByRole("button", { name: "New chat" }).first().click();
@@ -418,7 +437,7 @@ test.describe("Jasmine chat runtime", () => {
   });
 
   test("regenerate replaces the selected assistant turn and truncates later messages", async () => {
-    const { page } = harness;
+    const { page, userDataDir } = harness;
     await startEmptyThread(page);
 
     await page.locator(".rich-composer-editor").fill("first branch");
@@ -439,19 +458,25 @@ test.describe("Jasmine chat runtime", () => {
     await waitForStableAssistant(page, "First branch reply.");
     await expect(page.locator(".message-stack")).not.toContainText("second branch");
     await expect(page.locator(".message-stack")).not.toContainText("Second branch reply.");
+    const threadId = await page.evaluate(async () => (await window.jasmine.listThreads()).find((thread) => thread.title.includes("first branch"))?.id);
+    expect(threadId).toBeTruthy();
+    const piSession = await readThreadPiSession(userDataDir, threadId!);
+    expect(piSession.messageEntryIds).toHaveLength(2);
+    expect(piSession.messageEntryIds.every(Boolean)).toBe(true);
+    expect(JSON.stringify(piSession.entries)).toContain("second branch slow timeline");
   });
 
   test("editing a user message resends that branch and clears later turns", async () => {
-    const { page } = harness;
+    const { page, userDataDir } = harness;
     await startEmptyThread(page);
 
     await page.locator(".rich-composer-editor").fill("first branch");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("First branch reply.");
+    await waitForStableAssistant(page, "First branch reply.");
 
     await page.locator(".rich-composer-editor").fill("second branch");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Second branch reply.");
+    await waitForStableAssistant(page, "Second branch reply.");
 
     await page.locator(".user-message-wrap").first().hover();
     await page.locator(".user-message-wrap").first().getByRole("button", { name: "Edit message" }).click();
@@ -464,9 +489,17 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".user-bubble")).toHaveCount(1);
     await expect(page.locator(".assistant-block")).toHaveCount(1);
     await expect(page.locator(".user-bubble").first()).toContainText("first branch edited");
-    await expect(page.locator(".assistant-block").last()).toContainText("First branch reply.");
+    await waitForStableAssistant(page, "First branch reply.");
     await expect(page.locator(".message-stack")).not.toContainText("second branch");
     await expect(page.locator(".message-stack")).not.toContainText("Second branch reply.");
+    const threadId = await page.evaluate(async () => (await window.jasmine.listThreads()).find((thread) => thread.title.includes("first branch"))?.id);
+    expect(threadId).toBeTruthy();
+    const piSession = await readThreadPiSession(userDataDir, threadId!);
+    expect(piSession.messageEntryIds).toHaveLength(2);
+    expect(piSession.messageEntryIds.every(Boolean)).toBe(true);
+    const piSessionText = JSON.stringify(piSession.entries);
+    expect(piSessionText).toContain("first branch edited");
+    expect(piSessionText).toContain("second branch");
   });
 
   test("missing provider key offers settings recovery and retry avoids duplicate user turns", async () => {

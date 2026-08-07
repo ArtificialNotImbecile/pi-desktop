@@ -78,10 +78,13 @@ try {
     await page.getByRole("button", { name: "Attach file" }).click();
     await page.getByRole("button", { name: "Send" }).click();
     await assertVisible(".message-image-grid img");
+    await waitForText(".assistant-block", "Mock reply received 1 image attachment.");
+    await page.waitForFunction(() => document.querySelectorAll(".assistant-block.live-message").length === 0);
     await page.getByRole("button", { name: "Preview red-square.png" }).click();
     await assertVisible(".image-lightbox");
     await capture("05-image-lightbox");
     await page.getByRole("button", { name: "Close image preview" }).click();
+    await assertHidden(".image-lightbox");
   });
 
   await acceptanceStep("ACCEPT-005", "Edit earlier user message and truncate stale branch", async () => {

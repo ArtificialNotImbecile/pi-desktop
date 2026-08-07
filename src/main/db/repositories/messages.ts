@@ -97,6 +97,19 @@ export function updateMessage(
   return mapMessage(row);
 }
 
+export function getMessageSessionEntryId(db: SqlDatabase, threadId: string, messageId: string): string | null {
+  const row = db.prepare(
+    "SELECT session_entry_id FROM chat_messages WHERE thread_id = ? AND id = ?"
+  ).get(threadId, messageId) as { session_entry_id?: string | null } | undefined;
+  return row?.session_entry_id ?? null;
+}
+
+export function linkMessageSessionEntry(db: SqlDatabase, threadId: string, messageId: string, sessionEntryId: string): void {
+  db.prepare(
+    "UPDATE chat_messages SET session_entry_id = ? WHERE thread_id = ? AND id = ?"
+  ).run(sessionEntryId, threadId, messageId);
+}
+
 export function addMessage(
   db: SqlDatabase,
   input: {
@@ -112,6 +125,7 @@ export function addMessage(
     pluginsUsed?: PluginReference[];
     webSearchUsed?: WebSearchResult[];
     timeline?: ChatTimelineItem[];
+    sessionEntryId?: string;
   },
   timestamp: string
 ): ChatMessage {
@@ -133,7 +147,7 @@ export function addMessage(
   };
 
   db.prepare(
-    "INSERT INTO chat_messages (id, thread_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO chat_messages (id, thread_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json, session_entry_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     message.id,
     message.threadId,
@@ -148,7 +162,8 @@ export function addMessage(
     JSON.stringify(input.skillsUsed ?? []),
     JSON.stringify(input.pluginsUsed ?? []),
     JSON.stringify(input.webSearchUsed ?? []),
-    JSON.stringify(input.timeline ?? [])
+    JSON.stringify(input.timeline ?? []),
+    input.sessionEntryId ?? null
   );
 
   return message;

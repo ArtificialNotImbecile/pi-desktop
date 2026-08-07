@@ -293,7 +293,9 @@ function sanitizeValue(value: unknown, key: string, seen: WeakSet<object>): unkn
 }
 
 function isSecretKey(key: string): boolean {
-  return /api[_-]?key|authorization|bearer|token|secret|password|credential/i.test(key);
+  // Token *values* are sensitive; token-count fields such as max_tokens are
+  // model settings/usage and must remain inspectable in the payload taxonomy.
+  return /api[_-]?key|authorization|bearer|(^|[_-])token($|[_-])|secret|password|credential/i.test(key);
 }
 
 function redactSecrets(value: string): string {

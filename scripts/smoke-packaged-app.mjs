@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite");
 
 const rootDir = process.cwd();
-const executablePath = path.resolve(process.argv[2] || path.join(rootDir, "release", "v0.1.0", "win-unpacked", "Jasmine.exe"));
+const executablePath = path.resolve(process.argv[2] || path.join(rootDir, "release", "v0.1.1", "win-unpacked", "Jasmine.exe"));
 const executableInfo = await stat(executablePath).catch(() => null);
 if (!executableInfo?.isFile()) throw new Error(`Packaged Jasmine executable not found: ${executablePath}`);
 

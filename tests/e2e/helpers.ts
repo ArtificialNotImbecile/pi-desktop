@@ -2,7 +2,7 @@ import { expect } from "@playwright/test";
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +12,8 @@ const __dirname = path.dirname(__filename);
 export const rootDir = path.resolve(__dirname, "../..");
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as {
-  DatabaseSync: new (filename: string) => {
-    prepare(sql: string): { run(...params: unknown[]): unknown };
+  DatabaseSync: new (filename: string, options?: { readOnly?: boolean }) => {
+    prepare(sql: string): { run(...params: unknown[]): unknown; get(...params: unknown[]): Record<string, unknown> | undefined; all(...params: unknown[]): Array<Record<string, unknown>> };
     close(): void;
   };
 };
@@ -23,6 +23,41 @@ export type HarnessApp = {
   page: Page;
   userDataDir: string;
 };
+
+export async function readThreadPiSession(userDataDir: string, threadId: string): Promise<{
+  sessionId: string;
+  sessionFile: string;
+  formatVersion: number;
+  messageEntryIds: string[];
+  entries: Array<Record<string, unknown>>;
+}> {
+  const db = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"), { readOnly: true });
+  try {
+    const thread = db.prepare(`
+      SELECT session_id, session_file, session_format_version
+      FROM chat_threads WHERE id = ?
+    `).get(threadId);
+    if (!thread?.session_id || !thread.session_file) throw new Error(`Thread ${threadId} has no Pi session binding.`);
+    const messageEntryIds = db.prepare(`
+      SELECT session_entry_id FROM chat_messages
+      WHERE thread_id = ? ORDER BY created_at, id
+    `).all(threadId).map((row) => String(row.session_entry_id ?? ""));
+    const sessionFile = String(thread.session_file);
+    const entries = (await readFile(sessionFile, "utf8"))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    return {
+      sessionId: String(thread.session_id),
+      sessionFile,
+      formatVersion: Number(thread.session_format_version),
+      messageEntryIds,
+      entries
+    };
+  } finally {
+    db.close();
+  }
+}
 
 export async function expectComposerDraft(page: Page, expected: string): Promise<void> {
   await expectComposerEditorText(page.locator(".rich-composer-editor"), expected);

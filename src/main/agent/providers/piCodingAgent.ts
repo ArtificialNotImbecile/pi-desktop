@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { AuthStorage, createAgentSessionFromServices, createAgentSessionServices, defineTool, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, defineTool, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, ThinkingContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
 import type { RuntimeProviderConfig } from "../runtime.js";
@@ -40,6 +40,16 @@ type PiCodingAgentChatInput = {
   onQueueReady?(controls: RuntimeQueueControls): void;
   onQueueUpdate?(queue: ChatQueueState): void;
   onContextTaxonomy?(taxonomy: ContextTaxonomy): void;
+  sessionManager?: SessionManager;
+  sessionMessageIds?: string[];
+  currentMessageId?: string;
+  branchBeforePromptEntryId?: string | null;
+  onSessionEntriesLinked?(links: PiSessionEntryLink[]): void;
+};
+
+export type PiSessionEntryLink = {
+  messageId: string;
+  sessionEntryId: string;
 };
 
 export type PiCodingAgentChatResult = {
@@ -58,26 +68,42 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     throw new Error(`${input.provider.modelId} does not support image input in this conversation. Select a vision-capable model before sending images.`);
   }
 
-  const authStorage = AuthStorage.inMemory();
-  authStorage.setRuntimeApiKey(input.provider.providerName, input.provider.apiKey);
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  modelRegistry.registerProvider(input.provider.providerName, {
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false
+  });
+  const catalogModel = findPiCatalogModel(modelRuntime, input.provider);
+  modelRuntime.registerProvider(input.provider.providerName, {
     name: input.provider.providerName,
     baseUrl: input.provider.baseUrl,
     apiKey: input.provider.apiKey,
-    models: [toPiModel(input.provider)]
+    api: "openai-completions",
+    models: [toPiModel(input.provider, catalogModel)]
   });
+  await modelRuntime.setRuntimeApiKey(input.provider.providerName, input.provider.apiKey);
 
-  const model = modelRegistry.find(input.provider.providerName, input.provider.modelId);
+  const model = modelRuntime.getModel(input.provider.providerName, input.provider.modelId);
   if (!model) {
     throw new Error(`${input.provider.modelId} is not registered for ${input.provider.providerName}.`);
   }
 
   const cwd = input.cwd?.trim() || process.cwd();
-  const sessionManager = SessionManager.inMemory(cwd);
-  for (const message of historyMessages) {
-    await appendHistoricalMessage(sessionManager, message, input.provider);
-    restoreTimelineCustomEntries(sessionManager, message.timeline);
+  const sessionManager = input.sessionManager ?? SessionManager.inMemory(cwd);
+  const sessionAlreadyHadMessages = sessionManager.getEntries().some((entry) => entry.type === "message");
+  if (!sessionAlreadyHadMessages) {
+    const seededLinks: PiSessionEntryLink[] = [];
+    for (let index = 0; index < historyMessages.length; index += 1) {
+      const message = historyMessages[index];
+      const sessionEntryId = await appendHistoricalMessage(sessionManager, message, input.provider);
+      restoreTimelineCustomEntries(sessionManager, message.timeline);
+      const messageId = input.sessionMessageIds?.[index];
+      if (messageId && sessionEntryId) seededLinks.push({ messageId, sessionEntryId });
+    }
+    if (seededLinks.length > 0) input.onSessionEntriesLinked?.(seededLinks);
+  } else if (input.branchBeforePromptEntryId !== undefined) {
+    if (input.branchBeforePromptEntryId === null) sessionManager.resetLeaf();
+    else sessionManager.branch(input.branchBeforePromptEntryId);
   }
   const previousEntryCount = sessionManager.getEntries().length;
   const webSearchUsed: WebSearchResult[] = [];
@@ -122,8 +148,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const services = await createAgentSessionServices({
     cwd,
     ...(input.agentDir ? { agentDir: input.agentDir } : {}),
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     resourceLoaderOptions
   });
   if (input.shellPath) {
@@ -142,6 +167,14 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const trackedQueue = createTrackedQueue(input.onQueueUpdate);
   const steeringTasks = new Set<Promise<void>>();
   let latestUpdate: PiCodingAgentChatResult = { content: "", timeline: [], webSearchUsed };
+  let currentPromptLinked = false;
+  const linkCurrentPromptEntry = (entries: SessionEntry[]) => {
+    if (currentPromptLinked || !input.currentMessageId) return;
+    const entry = entries.find((candidate) => userTextFromSessionEntry(candidate)?.trim() === currentPromptText.trim());
+    if (!entry) return;
+    input.onSessionEntriesLinked?.([{ messageId: input.currentMessageId, sessionEntryId: entry.id }]);
+    currentPromptLinked = true;
+  };
   // The assistant message that is currently streaming (thinking / text / tool
   // starts) but has not yet been committed to the session timeline. It is folded
   // into the trailing assistant turn so its tokens render incrementally with
@@ -287,6 +320,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       await sendQueuedMessage(queued, "followUp");
     }
     const newEntries = sessionManager.getEntries().slice(previousEntryCount);
+    linkCurrentPromptEntry(newEntries);
     const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content);
     const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
     const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages());
@@ -294,24 +328,28 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       content,
       timeline,
       webSearchUsed: mergeDerivedWebSearchResults(webSearchUsed, newEntries),
-      generatedMessages: generatedMessages.length > 1 ? generatedMessages : undefined
+      generatedMessages
     };
   } catch (error) {
     if (input.signal?.aborted) {
       const content = (latestUpdate.content || assistantTextFromTimeline(latestUpdate.timeline) || "Response stopped.").trim();
+      const newEntries = sessionManager.getEntries().slice(previousEntryCount);
+      linkCurrentPromptEntry(newEntries);
       const timeline = liveTimelineFromSession(sessionManager, previousEntryCount, content, [], latestUpdate.timeline);
+      const stoppedTimeline: ChatTimelineItem[] = [
+        ...timeline,
+        {
+          id: "user-abort",
+          kind: "system",
+          title: "Stopped",
+          text: "The response was stopped by the user."
+        }
+      ];
       return {
         content,
-        timeline: [
-          ...timeline,
-          {
-            id: "user-abort",
-            kind: "system",
-            title: "Stopped",
-            text: "The response was stopped by the user."
-          }
-        ],
-        webSearchUsed: mergeDerivedWebSearchResults(webSearchUsed, sessionManager.getEntries().slice(previousEntryCount))
+        timeline: stoppedTimeline,
+        webSearchUsed: mergeDerivedWebSearchResults(webSearchUsed, newEntries),
+        generatedMessages: sessionEntriesToMessages(newEntries, content, currentPromptText, trackedQueue.deliveredMessages())
       };
     }
     throw error;
@@ -663,15 +701,17 @@ function historyBeforePrompt(messages: ChatSendRequest["messages"], content: str
 
 type PiAppendableMessage = Parameters<SessionManager["appendMessage"]>[0];
 
-async function appendHistoricalMessage(sessionManager: SessionManager, message: ChatSendRequest["messages"][number], provider: RuntimeProviderConfig): Promise<void> {
+async function appendHistoricalMessage(sessionManager: SessionManager, message: ChatSendRequest["messages"][number], provider: RuntimeProviderConfig): Promise<string | null> {
   const restored = await timelineToPiMessages(message, provider);
   if (restored.length === 0) {
-    sessionManager.appendMessage(await toPiMessage(message, provider));
-    return;
+    return sessionManager.appendMessage(await toPiMessage(message, provider));
   }
+  let firstEntryId: string | null = null;
   for (const item of restored) {
-    sessionManager.appendMessage(item);
+    const entryId = sessionManager.appendMessage(item);
+    firstEntryId ??= entryId;
   }
+  return firstEntryId;
 }
 
 async function timelineToPiMessages(message: ChatSendRequest["messages"][number], provider: RuntimeProviderConfig): Promise<PiAppendableMessage[]> {
@@ -694,7 +734,13 @@ async function timelineToPiMessages(message: ChatSendRequest["messages"][number]
 
   for (const item of message.timeline) {
     if (item.kind === "thinking") {
-      assistantBlocks.push({ type: "thinking", thinking: item.text } satisfies ThinkingContent);
+      assistantBlocks.push({
+        type: "thinking",
+        thinking: item.text,
+        // OpenAI-compatible reasoning providers (notably DeepSeek and Kimi)
+        // use this marker to replay the exact reasoning_content on later tool turns.
+        thinkingSignature: "reasoning_content"
+      } satisfies ThinkingContent);
       continue;
     }
     if (item.kind === "assistant_text") {
@@ -832,28 +878,40 @@ function sameAttachments(first: PickedPath[], second: PickedPath[]): boolean {
   });
 }
 
-function toPiModel(provider: RuntimeProviderConfig): Model<"openai-completions"> {
+function findPiCatalogModel(modelRuntime: ModelRuntime, provider: RuntimeProviderConfig): Model<"openai-completions"> | undefined {
+  const providerId = isMoonshotProvider(provider) ? "moonshotai-cn" : provider.providerName;
+  const model = modelRuntime.getModel(providerId, provider.modelId);
+  return model?.api === "openai-completions" ? model as Model<"openai-completions"> : undefined;
+}
+
+function toPiModel(provider: RuntimeProviderConfig, catalogModel?: Model<"openai-completions">): Model<"openai-completions"> {
   const supportsVision = Boolean(provider.capabilities?.vision);
   const supportsReasoning = Boolean(provider.capabilities?.reasoning);
   const providerSpecific = providerSpecificPiModelConfig(provider);
   return {
+    ...catalogModel,
     id: provider.modelId,
-    name: provider.modelId,
+    name: catalogModel?.name ?? provider.modelId,
     api: "openai-completions",
     provider: provider.providerName,
     baseUrl: provider.baseUrl,
-    reasoning: supportsReasoning,
-    ...(providerSpecific.thinkingLevelMap ? { thinkingLevelMap: providerSpecific.thinkingLevelMap } : {}),
-    input: supportsVision ? ["text", "image"] : ["text"],
-    cost: {
+    reasoning: catalogModel?.reasoning ?? supportsReasoning,
+    ...(providerSpecific.thinkingLevelMap
+      ? { thinkingLevelMap: providerSpecific.thinkingLevelMap }
+      : catalogModel?.thinkingLevelMap
+        ? { thinkingLevelMap: catalogModel.thinkingLevelMap }
+        : {}),
+    input: catalogModel?.input ?? (supportsVision ? ["text", "image"] : ["text"]),
+    cost: catalogModel?.cost ?? {
       input: 0,
       output: 0,
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: provider.contextWindow ?? 128_000,
-    maxTokens: provider.maxOutputTokens ?? maxOutputTokensFromOptions(provider.providerOptionsJson) ?? 1_200,
+    contextWindow: provider.contextWindow ?? catalogModel?.contextWindow ?? 128_000,
+    maxTokens: provider.maxOutputTokens ?? maxOutputTokensFromOptions(provider.providerOptionsJson) ?? catalogModel?.maxTokens ?? 1_200,
     compat: {
+      ...catalogModel?.compat,
       supportsStore: false,
       supportsUsageInStreaming: true,
       maxTokensField: "max_tokens",
@@ -895,7 +953,10 @@ function providerSpecificPiModelConfig(provider: RuntimeProviderConfig): {
         supportsReasoningEffort: false,
         supportsStrictMode: false,
         maxTokensField: "max_tokens",
-        thinkingFormat: "openai"
+        // K2.7 Code is always-thinking and rejects a `thinking` toggle. Pi's
+        // openai mode still parses/replays reasoning_content but emits no toggle.
+        thinkingFormat: "openai",
+        requiresReasoningContentOnAssistantMessages: true
       },
       thinkingLevelMap: {
         off: null
@@ -910,7 +971,8 @@ function providerSpecificPiModelConfig(provider: RuntimeProviderConfig): {
         supportsReasoningEffort: false,
         supportsStrictMode: false,
         maxTokensField: "max_tokens",
-        thinkingFormat: "deepseek"
+        thinkingFormat: "deepseek",
+        requiresReasoningContentOnAssistantMessages: true
       }
     };
   }
@@ -1075,19 +1137,23 @@ function sessionEntriesToMessages(
   const output: RuntimeGeneratedMessage[] = [];
   let skippedInitialPrompt = false;
   let pendingTimeline: ChatTimelineItem[] = [];
+  let pendingAssistantEntryId: string | undefined;
 
   const flushAssistant = (fallback = "") => {
     const content = (assistantTextFromTimeline(pendingTimeline) || fallback).trim();
     if (!content && !hasVisibleAssistantTimelineActivity(pendingTimeline)) {
       pendingTimeline = [];
+      pendingAssistantEntryId = undefined;
       return;
     }
     output.push({
       role: "assistant",
       content,
-      timeline: pendingTimeline
+      timeline: pendingTimeline,
+      ...(pendingAssistantEntryId ? { sessionEntryId: pendingAssistantEntryId } : {})
     });
     pendingTimeline = [];
+    pendingAssistantEntryId = undefined;
   };
 
   for (const entry of entries) {
@@ -1102,13 +1168,15 @@ function sessionEntriesToMessages(
       output.push({
         role: "user",
         content: queued?.content ?? userText.trim(),
-        attachments: queued?.attachments ?? []
+        attachments: queued?.attachments ?? [],
+        sessionEntryId: entry.id
       });
       continue;
     }
 
     const timeline = entryToTimeline(entry);
     if (timeline.length > 0) {
+      pendingAssistantEntryId ??= entry.id;
       pendingTimeline = mergeTimelineItems(pendingTimeline, timeline);
     }
   }

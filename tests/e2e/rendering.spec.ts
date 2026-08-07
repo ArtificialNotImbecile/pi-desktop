@@ -378,7 +378,11 @@ test.describe("Jasmine message rendering", () => {
 
     await page.locator(".rich-composer-editor").fill("return long answer");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Long answer paragraph 42");
+    await waitForStableAssistant(page, "Long answer paragraph 42");
+
+    await expect.poll(() => page.locator(".message-scroll").evaluate((node) => (
+      node.scrollHeight > node.clientHeight + 100
+    ))).toBe(true);
 
     const scrollMetrics = await page.locator(".message-scroll").evaluate((node) => ({
       clientHeight: node.clientHeight,

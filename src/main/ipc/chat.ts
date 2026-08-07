@@ -33,6 +33,7 @@ import type { JasmineDatabase } from "../db/database.js";
 import { askUserQuestionInRenderer } from "./askUserQuestion.js";
 import { getRuntimeProvider } from "../services/providers.js";
 import { getJasminePiAgentDir } from "../services/piAgent.js";
+import { appendThreadSessionName, branchParentForMessage, prepareThreadPiSession } from "../services/piSessions.js";
 import {
   bootstrapPiWebAccessPluginFromWebSearch,
   resolveEnabledPackageSkillPaths,
@@ -168,8 +169,10 @@ export function registerChatIpc(context: IpcContext): void {
         queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
       }
 
-      const messages = db.listMessages(request.threadId).map(toModelHistoryMessage);
+      const storedMessages = db.listMessages(request.threadId);
+      const messages = storedMessages.map(toModelHistoryMessage);
       const modelContent = modelContentForMessage(userMessage);
+      const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
 
       const turn = await buildChatTurnContext(db, {
         threadId: request.threadId,
@@ -196,6 +199,10 @@ export function registerChatIpc(context: IpcContext): void {
           content: modelContent,
           cwd,
           messages,
+          sessionManager: piSession.manager,
+          sessionMessageIds: storedMessages.map((message) => message.id),
+          currentMessageId: userMessage.id,
+          onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
           ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
         },
@@ -248,6 +255,14 @@ export function registerChatIpc(context: IpcContext): void {
       const modelContent = modelContentForMessage(lastUserMessage);
 
       const userDataDir = app.getPath("userData");
+      const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
+      const branchBeforePromptEntryId = branchParentForMessage(
+        db,
+        request.threadId,
+        piSession.manager,
+        existingMessages,
+        lastUserMessage.id
+      );
       const inlineSkillIds = skillReferenceIds(lastUserMessage.skillsUsed);
       const inlineSkills = await db.getSkillsForPrompt(inlineSkillIds);
       const inlinePluginSkills = await resolvePluginSkillsForPrompt({ userDataDir }, inlineSkillIds);
@@ -284,6 +299,11 @@ export function registerChatIpc(context: IpcContext): void {
           attachments: lastUserMessage.attachments ?? [],
           toolsEnabled: request.toolsEnabled,
           messages: retryPlan.contextMessages,
+          sessionManager: piSession.manager,
+          sessionMessageIds: retryPlan.contextMessageIds,
+          currentMessageId: lastUserMessage.id,
+          branchBeforePromptEntryId,
+          onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
           ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
         },
@@ -341,6 +361,14 @@ export function registerChatIpc(context: IpcContext): void {
       if (targetIndex < 0) throw new Error("User message to edit does not exist.");
 
       const userDataDir = app.getPath("userData");
+      const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
+      const branchBeforePromptEntryId = branchParentForMessage(
+        db,
+        request.threadId,
+        piSession.manager,
+        existingMessages,
+        request.messageId
+      );
       const inlineSkillIds = request.inlineSkillIds ?? skillReferenceIds(existingMessages[targetIndex].skillsUsed);
       const inlinePluginIds = request.inlinePluginIds ?? pluginReferenceIds(existingMessages[targetIndex].pluginsUsed);
       db.updateThreadActivePlugins({ threadId: request.threadId, pluginIds: inlinePluginIds });
@@ -371,7 +399,8 @@ export function registerChatIpc(context: IpcContext): void {
         queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
       }
 
-      const messages = db.listMessages(request.threadId).map(toModelHistoryMessage);
+      const storedMessages = db.listMessages(request.threadId);
+      const messages = storedMessages.map(toModelHistoryMessage);
       const modelContent = modelContentForMessage(userMessage);
 
       const turn = await buildChatTurnContext(db, {
@@ -404,6 +433,11 @@ export function registerChatIpc(context: IpcContext): void {
           attachments,
           toolsEnabled: request.toolsEnabled,
           messages,
+          sessionManager: piSession.manager,
+          sessionMessageIds: storedMessages.map((message) => message.id),
+          currentMessageId: userMessage.id,
+          branchBeforePromptEntryId,
+          onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
           ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
         },
@@ -653,7 +687,8 @@ function persistRuntimeGeneratedMessages(
           threadId: input.threadId,
           role: "user",
           content: message.content,
-          attachments: message.attachments ?? []
+          attachments: message.attachments ?? [],
+          sessionEntryId: message.sessionEntryId
         });
         continue;
       }
@@ -673,7 +708,8 @@ function persistRuntimeGeneratedMessages(
         skillsUsed: input.skillsUsed,
         pluginsUsed: input.pluginsUsed,
         webSearchUsed: input.webSearchUsed,
-        timeline
+        timeline,
+        sessionEntryId: message.sessionEntryId
       });
     }
 
@@ -694,6 +730,16 @@ function persistRuntimeGeneratedMessages(
     }
     return lastAssistantMessage;
   });
+}
+
+function sessionEntryLinker(db: JasmineDatabase, threadId: string) {
+  return (links: Array<{ messageId: string; sessionEntryId: string }>) => {
+    db.runInTransaction(() => {
+      for (const link of links) {
+        db.linkMessageSessionEntry(threadId, link.messageId, link.sessionEntryId);
+      }
+    });
+  };
 }
 
 function toExplicitSkillReferences(skills: SkillRecord[]): SkillReference[] {
@@ -902,7 +948,8 @@ async function updateGeneratedThreadTitle(db: JasmineDatabase, threadId: string,
       : await generateTitleWithProviderResult(
           getRuntimeProvider(db, settings.toolModel.providerId, settings.toolModel.modelId),
           content,
-          fallback
+          fallback,
+          settings.toolModel.reasoningEffort
         );
     const nextTitle = updateThreadTitleIfUnchanged(db, threadId, fallback, result.title || fallback);
     db.finishToolRun({
@@ -934,5 +981,7 @@ function updateThreadTitleIfUnchanged(db: JasmineDatabase, threadId: string, exp
   const current = db.getThread(threadId);
   if (!current) return nextTitle;
   if (current.title !== expectedCurrentTitle) return current.title;
-  return db.updateThreadTitle(threadId, nextTitle).title;
+  const title = db.updateThreadTitle(threadId, nextTitle).title;
+  appendThreadSessionName(db, threadId, title);
+  return title;
 }

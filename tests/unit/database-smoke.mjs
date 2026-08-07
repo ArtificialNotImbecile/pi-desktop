@@ -41,6 +41,9 @@ try {
       project_id TEXT REFERENCES workspace_projects(id) ON DELETE SET NULL,
       active_plugin_ids_json TEXT NOT NULL DEFAULT '[]',
       message_count INTEGER NOT NULL DEFAULT 0,
+      session_id TEXT,
+      session_file TEXT,
+      session_format_version INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -58,7 +61,8 @@ try {
       skills_used_json TEXT NOT NULL DEFAULT '[]',
       plugins_used_json TEXT NOT NULL DEFAULT '[]',
       web_search_used_json TEXT NOT NULL DEFAULT '[]',
-      timeline_json TEXT NOT NULL DEFAULT '[]'
+      timeline_json TEXT NOT NULL DEFAULT '[]',
+      session_entry_id TEXT
     );
     CREATE TABLE thread_drafts (
       thread_id TEXT PRIMARY KEY REFERENCES chat_threads(id) ON DELETE CASCADE,
@@ -248,6 +252,10 @@ try {
       updatedAt: timestamp
     }]);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 25").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 26").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 27").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("PRAGMA table_info(chat_threads)").all().some((row) => row.name === "session_file"), true);
+    assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "session_entry_id"), true);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     assert.equal(mcpServers.listMcpServers(legacyDb).length, 1);
   } finally {
@@ -435,16 +443,25 @@ try {
 
   const renamed = threads.updateThreadTitle(db, thread.id, "Renamed unit thread", timestamp);
   assert.equal(renamed.title, "Renamed unit thread");
+  threads.updateThreadSessionBinding(db, thread.id, { sessionId: "pi-session", sessionFile: "C:\\tmp\\pi-session.jsonl", sessionFormatVersion: 3 });
+  assert.deepEqual(threads.getThreadSessionBinding(db, thread.id), {
+    sessionId: "pi-session",
+    sessionFile: "C:\\tmp\\pi-session.jsonl",
+    sessionFormatVersion: 3
+  });
 
   // The denormalized chat_threads.message_count contract: repo callers adjust
   // the count in the same transaction as the row change (database.ts does this).
-  const userMessage = messages.addMessage(db, { threadId: thread.id, role: "user", content: "hello" }, timestamp);
+  const userMessage = messages.addMessage(db, { threadId: thread.id, role: "user", content: "hello", sessionEntryId: "pi-user" }, timestamp);
   threads.adjustThreadMessageCount(db, thread.id, 1);
   const assistantMessage = messages.addMessage(db, { threadId: thread.id, role: "assistant", content: "hi", modelId: "unit-model" }, timestamp);
   threads.adjustThreadMessageCount(db, thread.id, 1);
   assert.equal(threads.getThreadMessageCount(db, thread.id), 2);
   assert.equal(threads.getThread(db, thread.id).messageCount, 2);
   assert.deepEqual(messages.listMessages(db, thread.id).map((message) => message.id), [userMessage.id, assistantMessage.id]);
+  assert.equal(messages.getMessageSessionEntryId(db, thread.id, userMessage.id), "pi-user");
+  messages.linkMessageSessionEntry(db, thread.id, assistantMessage.id, "pi-assistant");
+  assert.equal(messages.getMessageSessionEntryId(db, thread.id, assistantMessage.id), "pi-assistant");
   assert.deepEqual(messages.listMessages(db, thread.id, { limit: 1 }).map((message) => message.id), [assistantMessage.id]);
   assert.deepEqual(
     messages.listMessages(db, thread.id, {

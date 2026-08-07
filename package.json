@@ -1,6 +1,6 @@
 {
   "name": "jasmine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Jasmine desktop app - Just Another Self Mine.",
   "author": "ArtificialNotImbecile",
   "license": "MIT",
@@ -44,16 +44,15 @@
     "dist:win": "npm run build && electron-builder --win nsis --x64",
     "dist:win:dir": "npm run build && electron-builder --win dir --x64",
     "test:packaged": "node scripts/smoke-packaged-app.mjs",
+    "import:pi-sessions": "node --no-warnings scripts/import-pi-sessions.mjs",
     "start": "electron ."
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
-    "@earendil-works/pi-ai": "^0.78.0",
-    "@earendil-works/pi-coding-agent": "^0.79.6",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@floating-ui/react": "^0.27.19",
     "@lexical/react": "^0.45.0",
-    "@mariozechner/pi-ai": "^0.73.1",
-    "@mariozechner/pi-tui": "^0.73.1",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
@@ -97,7 +96,7 @@
     "asar": true,
     "npmRebuild": false,
     "directories": {
-      "output": "release/v0.1.0"
+      "output": "release/v0.1.1"
     },
     "files": [
       "dist/**/*",

@@ -10,6 +10,9 @@ import type {
 import { providerModelUpdateSchema, providerUpdateSchema } from "../../shared/schemas.js";
 import type { RuntimeProviderConfig } from "../agent/runtime.js";
 import type { JasmineDatabase } from "../db/database.js";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export function listProviders(db: JasmineDatabase): AiProvider[] {
   return db.listProviders().map(toClientProvider);
@@ -146,8 +149,11 @@ export async function fetchProviderModels(db: JasmineDatabase, providerId: strin
     return { provider: toClientProvider(updated), models: updated.models };
   }
 
-  const gatewayConfigs = await getGatewayModelConfigs(provider.id, modelIds);
-  const enriched = db.updateProviderModels(provider.id, modelIds, undefined, gatewayConfigs);
+  const [gatewayConfigs, piConfigs] = await Promise.all([
+    getGatewayModelConfigs(provider.id, modelIds),
+    getPiModelConfigs(provider.id, modelIds)
+  ]);
+  const enriched = db.updateProviderModels(provider.id, modelIds, undefined, mergeDetectedModelConfigs(gatewayConfigs, piConfigs));
   const connected = db.updateProviderCheck(provider.id, { status: "connected", lastError: null });
   return { provider: toClientProvider({ ...connected, models: enriched.models, defaultModel: enriched.defaultModel }), models: enriched.models };
 }
@@ -205,6 +211,54 @@ async function getGatewayModelConfigs(providerId: string, modelIds: string[]): P
 function gatewayProviderAliases(providerId: string): string[] {
   if (providerId === "moonshot") return ["moonshot", "moonshotai"];
   return [providerId];
+}
+
+let piModelRuntimePromise: Promise<ModelRuntime> | null = null;
+
+async function getPiModelConfigs(providerId: string, modelIds: string[]): Promise<ProviderModelConfig[]> {
+  piModelRuntimePromise ??= ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false
+  });
+  const runtime = await piModelRuntimePromise;
+  const piProviderId = providerId === "moonshot" ? "moonshotai-cn" : providerId;
+  const metadataRefreshedAt = new Date().toISOString();
+  return modelIds.flatMap((modelId) => {
+    const model = runtime.getModel(piProviderId, modelId);
+    if (!model) return [];
+    return [piModelConfig(modelId, model, metadataRefreshedAt)];
+  });
+}
+
+function piModelConfig(modelId: string, model: Model<string>, metadataRefreshedAt: string): ProviderModelConfig {
+  return {
+    id: modelId,
+    enabled: true,
+    capabilities: {
+      vision: model.input.includes("image"),
+      imageOutput: false,
+      toolCalling: true,
+      reasoning: model.reasoning,
+      embedding: false
+    },
+    contextWindow: model.contextWindow,
+    maxOutputTokens: model.maxTokens,
+    providerOptionsJson: "{}",
+    customized: false,
+    metadataSource: "pi-bundled-catalog",
+    metadataRefreshedAt
+  };
+}
+
+function mergeDetectedModelConfigs(
+  fallback: ProviderModelConfig[] | undefined,
+  authoritative: ProviderModelConfig[]
+): ProviderModelConfig[] | undefined {
+  if ((!fallback || fallback.length === 0) && authoritative.length === 0) return undefined;
+  const merged = new Map((fallback ?? []).map((model) => [model.id, model]));
+  for (const model of authoritative) merged.set(model.id, model);
+  return Array.from(merged.values());
 }
 
 // The PowerShell fallback lookup costs ~200-500ms of synchronous main-process

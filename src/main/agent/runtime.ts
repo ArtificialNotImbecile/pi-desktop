@@ -6,6 +6,8 @@ import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
 import { findGitBashPath, isWindowsBashLauncherPath } from "../utils/shellPaths.js";
 import { abortError, isAbortError, throwIfAborted } from "../utils/abort.js";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 
 export type AssistantReply = {
   content: string;
@@ -50,6 +52,11 @@ type RuntimeChatRequest = ChatSendRequest & {
   askUserQuestion?: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => Promise<AskUserQuestionResponse>;
   promptTemplatePaths?: string[];
   remoteConnection?: RemoteConnectionRecord | null;
+  sessionManager?: SessionManager;
+  sessionMessageIds?: string[];
+  currentMessageId?: string;
+  branchBeforePromptEntryId?: string | null;
+  onSessionEntriesLinked?(links: Array<{ messageId: string; sessionEntryId: string }>): void;
 };
 
 export type RuntimeUpdate = Pick<AssistantReply, "content" | "timeline"> & {
@@ -80,6 +87,7 @@ export type RuntimeGeneratedMessage = {
   content: string;
   attachments?: PickedPath[];
   timeline?: ChatTimelineItem[];
+  sessionEntryId?: string;
 };
 
 export type RuntimeOptions = {
@@ -101,6 +109,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     piShell
   });
   if (process.env.JASMINE_E2E_MOCK_AI === "1") {
+    const mockSession = prepareMockSession(request, provider, parsed.content);
     const mockQueue = createMockQueueControls(options);
     const imageCount = countModelVisibleImages(parsed.messages, request.attachments ?? [], parsed.content);
     const lastUserText = parsed.content || parsed.messages.at(-1)?.content || "";
@@ -124,7 +133,17 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         ...options,
         onUpdate
       });
-      await drainMockQueue(mockQueue, request, provider, options, content, lastUserText);
+      const initialAssistantEntryId = appendMockAssistant(mockSession, provider, content);
+      mockQueue.generatedMessages.push({
+        role: "assistant",
+        content,
+        timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+          modelId: provider.modelId,
+          reasoningEffort: parsed.reasoningEffort
+        }),
+        ...(initialAssistantEntryId ? { sessionEntryId: initialAssistantEntryId } : {})
+      });
+      await drainMockQueue(mockQueue, request, provider, options, content, lastUserText, mockSession);
     } catch (error) {
       if (!isAbortError(error)) throw error;
       const stoppedContent = latestUpdate.current?.content || "Response stopped.";
@@ -133,6 +152,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         stoppedTimeline.push({ id: "mock-stopped-output", kind: "assistant_text", text: stoppedContent });
       }
       stoppedTimeline.push({ id: "mock-stopped", kind: "system", title: "Stopped", text: "The response was stopped by the user." });
+      const stoppedEntryId = appendMockAssistant(mockSession, provider, stoppedContent, "aborted");
       return {
         content: stoppedContent,
         model: provider.modelId,
@@ -146,7 +166,13 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
           content: parsed.content,
           attachments: request.attachments ?? [],
           reason: "mock"
-        })
+        }),
+        generatedMessages: [{
+          role: "assistant",
+          content: stoppedContent,
+          timeline: stoppedTimeline,
+          ...(stoppedEntryId ? { sessionEntryId: stoppedEntryId } : {})
+        }]
       };
     }
     return {
@@ -168,19 +194,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
             attachments: request.attachments ?? [],
             reason: "mock"
           }),
-      generatedMessages: mockQueue.generatedMessages.length > 0
-        ? [
-            {
-              role: "assistant",
-              content,
-              timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
-                modelId: provider.modelId,
-                reasoningEffort: parsed.reasoningEffort
-              })
-            },
-            ...mockQueue.generatedMessages
-          ]
-        : undefined
+      generatedMessages: mockQueue.generatedMessages
     };
   }
 
@@ -208,6 +222,11 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     onUpdate: options.onUpdate,
     onQueueReady: options.onQueueReady,
     onQueueUpdate: options.onQueueUpdate,
+    sessionManager: request.sessionManager,
+    sessionMessageIds: request.sessionMessageIds,
+    currentMessageId: request.currentMessageId,
+    branchBeforePromptEntryId: request.branchBeforePromptEntryId,
+    onSessionEntriesLinked: request.onSessionEntriesLinked,
     onContextTaxonomy: (taxonomy) => {
       capturedTaxonomies.push(taxonomy);
     }
@@ -245,6 +264,76 @@ function applyChromeTakeoverRuntimeEnv(chromeTakeover: RuntimeChatRequest["chrom
     return;
   }
   process.env.JASMINE_CHROME_TAKEOVER = "0";
+}
+
+function prepareMockSession(
+  request: RuntimeChatRequest,
+  provider: RuntimeProviderConfig,
+  currentContent: string
+): SessionManager | undefined {
+  const sessionManager = request.sessionManager;
+  if (!sessionManager) return undefined;
+
+  const alreadyHasMessages = sessionManager.getEntries().some((entry) => entry.type === "message");
+  if (!alreadyHasMessages) {
+    const last = request.messages.at(-1);
+    const history = last?.role === "user" && last.content.trim() === currentContent.trim()
+      ? request.messages.slice(0, -1)
+      : request.messages;
+    const links: Array<{ messageId: string; sessionEntryId: string }> = [];
+    history.forEach((message, index) => {
+      const sessionEntryId = message.role === "user"
+        ? appendMockUser(sessionManager, message.content)
+        : appendMockAssistant(sessionManager, provider, message.content);
+      const messageId = request.sessionMessageIds?.[index];
+      if (messageId && sessionEntryId) links.push({ messageId, sessionEntryId });
+    });
+    if (links.length > 0) request.onSessionEntriesLinked?.(links);
+  } else if (request.branchBeforePromptEntryId !== undefined) {
+    if (request.branchBeforePromptEntryId === null) sessionManager.resetLeaf();
+    else sessionManager.branch(request.branchBeforePromptEntryId);
+  }
+
+  const currentEntryId = appendMockUser(sessionManager, currentContent);
+  if (currentEntryId && request.currentMessageId) {
+    request.onSessionEntriesLinked?.([{ messageId: request.currentMessageId, sessionEntryId: currentEntryId }]);
+  }
+  return sessionManager;
+}
+
+function appendMockUser(sessionManager: SessionManager | undefined, content: string): string | undefined {
+  if (!sessionManager) return undefined;
+  return sessionManager.appendMessage({
+    role: "user",
+    content,
+    timestamp: Date.now()
+  } satisfies Message);
+}
+
+function appendMockAssistant(
+  sessionManager: SessionManager | undefined,
+  provider: RuntimeProviderConfig,
+  content: string,
+  stopReason: AssistantMessage["stopReason"] = "stop"
+): string | undefined {
+  if (!sessionManager) return undefined;
+  return sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: content }],
+    api: "openai-completions",
+    provider: provider.providerName,
+    model: provider.modelId,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason,
+    timestamp: Date.now()
+  } satisfies AssistantMessage);
 }
 
 function createMockQueueControls(options: RuntimeOptions): {
@@ -302,7 +391,8 @@ async function drainMockQueue(
   provider: RuntimeProviderConfig,
   options: RuntimeOptions,
   initialContent: string,
-  initialUserText: string
+  initialUserText: string,
+  sessionManager?: SessionManager
 ): Promise<void> {
   while (mockQueue.queue.steering.length > 0 || mockQueue.queue.followUp.length > 0) {
     const submitted = mockQueue.queue.steering.shift() ?? mockQueue.queue.followUp.shift();
@@ -340,18 +430,22 @@ async function drainMockQueue(
       ...options,
       liveMessagesPrefix
     });
+    const userEntryId = appendMockUser(sessionManager, submitted.content);
     mockQueue.generatedMessages.push({
       role: "user",
       content: submitted.content,
-      attachments: submitted.attachments
+      attachments: submitted.attachments,
+      ...(userEntryId ? { sessionEntryId: userEntryId } : {})
     });
+    const assistantEntryId = appendMockAssistant(sessionManager, provider, replyContent);
     mockQueue.generatedMessages.push({
       role: "assistant",
       content: replyContent,
       timeline: mockTimeline(replyContent, submitted.content, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
         modelId: provider.modelId,
         reasoningEffort: request.reasoningEffort
-      })
+      }),
+      ...(assistantEntryId ? { sessionEntryId: assistantEntryId } : {})
     });
   }
   options.onQueueUpdate?.(emptyQueueState());

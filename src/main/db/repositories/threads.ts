@@ -114,6 +114,30 @@ export function getThreadMessageCount(db: SqlDatabase, threadId: string): number
   return Number(row?.count ?? 0);
 }
 
+export type ThreadSessionBinding = {
+  sessionId: string;
+  sessionFile: string;
+  sessionFormatVersion: number;
+};
+
+export function getThreadSessionBinding(db: SqlDatabase, threadId: string): ThreadSessionBinding | null {
+  const row = db.prepare(
+    "SELECT session_id, session_file, session_format_version FROM chat_threads WHERE id = ?"
+  ).get(threadId) as { session_id?: string | null; session_file?: string | null; session_format_version?: number | null } | undefined;
+  if (!row?.session_id || !row.session_file || !row.session_format_version) return null;
+  return {
+    sessionId: row.session_id,
+    sessionFile: row.session_file,
+    sessionFormatVersion: Number(row.session_format_version)
+  };
+}
+
+export function updateThreadSessionBinding(db: SqlDatabase, threadId: string, binding: ThreadSessionBinding): void {
+  db.prepare(
+    "UPDATE chat_threads SET session_id = ?, session_file = ?, session_format_version = ? WHERE id = ?"
+  ).run(binding.sessionId, binding.sessionFile, binding.sessionFormatVersion, threadId);
+}
+
 // Keeps the denormalized chat_threads.message_count in step with message
 // inserts/deletes. Callers must run this inside the same transaction as the
 // row change itself.
