@@ -22,7 +22,7 @@ Jasmine exposes the model request as a readable context taxonomy: system and pro
 
 ![Inspecting a real DeepSeek request in Context Taxonomy](docs/assets/context-taxonomy.gif)
 
-The example above uses two real model turns and opens the captured conversation context and provider request.
+The example above uses two real model turns and opens the captured conversation context and provider request. See [reasoning context retention](docs/reasoning_context_retention.md) for the provider-specific DeepSeek and Kimi rules that determine which historical thinking blocks must be replayed.
 
 ## Product tour
 
