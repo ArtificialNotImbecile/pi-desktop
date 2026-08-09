@@ -20,6 +20,7 @@ import { registerTodoIpc } from "./todos.js";
 import { registerTraceIpc } from "./traces.js";
 import { registerWebSearchIpc } from "./webSearch.js";
 import { registerWindowIpc } from "./window.js";
+import { registerWorkingIpc } from "./working.js";
 
 export function registerIpc(context: IpcContext): void {
   registerAskUserQuestionIpc(context);
@@ -43,4 +44,5 @@ export function registerIpc(context: IpcContext): void {
   registerRightPanelIpc(context);
   registerDialogIpc(context);
   registerWindowIpc();
+  registerWorkingIpc(context);
 }

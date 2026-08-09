@@ -100,6 +100,10 @@ export function TodoIcon() {
   return <Svg><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m8 9 2 2 4-4" /><path d="M8 15h8" /></Svg>;
 }
 
+export function WorkingIcon() {
+  return <Svg><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2" /></Svg>;
+}
+
 export function EyeIcon() {
   return <Svg><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" /><circle cx="12" cy="12" r="3" /></Svg>;
 }

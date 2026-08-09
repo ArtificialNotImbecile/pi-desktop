@@ -117,6 +117,34 @@ const api: JasmineApi = {
     ipcRenderer.on("projects:opened", listener);
     return () => ipcRenderer.removeListener("projects:opened", listener);
   },
+  getWorkingSnapshot() {
+    return ipcRenderer.invoke("working:snapshot");
+  },
+  markWorkingRead(requestId: string) {
+    return ipcRenderer.invoke("working:markRead", requestId);
+  },
+  clearCompletedWorking() {
+    return ipcRenderer.invoke("working:clearCompleted");
+  },
+  stopWorkingTask(requestId: string) {
+    return ipcRenderer.invoke("working:stop", requestId);
+  },
+  updateWorkingView(request) {
+    return ipcRenderer.invoke("working:view", request);
+  },
+  consumePendingWorkingNavigation() {
+    return ipcRenderer.invoke("working:navigation:consume");
+  },
+  onWorkingChanged(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: import("../shared/ipc.js").WorkingSnapshot) => callback(payload);
+    ipcRenderer.on("working:changed", listener);
+    return () => ipcRenderer.removeListener("working:changed", listener);
+  },
+  onWorkingNavigate(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: import("../shared/ipc.js").WorkingNavigationTarget) => callback(payload);
+    ipcRenderer.on("working:navigate", listener);
+    return () => ipcRenderer.removeListener("working:navigate", listener);
+  },
   getTodoSnapshot() {
     return ipcRenderer.invoke("todos:snapshot");
   },

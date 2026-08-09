@@ -130,6 +130,23 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }
       : undefined;
     try {
+      if (lastUserText.toLowerCase().includes("working failure")) {
+        throw new Error("Mock Working failure.");
+      }
+      if (lastUserText.toLowerCase().includes("working wait for user") && request.askUserQuestion) {
+        await request.askUserQuestion({
+          questions: [{
+            id: "working-confirmation",
+            header: "Continue",
+            question: "Should this Working task continue?",
+            options: [
+              { label: "Continue", description: "Resume this task." },
+              { label: "Stop", description: "Do not continue this task." }
+            ]
+          }]
+        }, options.signal);
+      }
+      if (lastUserText.toLowerCase().includes("working long response")) await abortableDelay(6_000, options.signal);
       if (lastUserText.toLowerCase().includes("slow response")) await abortableDelay(750, options.signal);
       if (chromeTakeoverFlow) {
         onUpdate?.({

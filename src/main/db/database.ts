@@ -38,6 +38,8 @@ import type {
   WebSearchResult,
   WebSearchSettings,
   WebSearchSettingsUpdateRequest,
+  WorkingSnapshot,
+  WorkingTaskStatus,
   ThreadActivePluginsUpdateRequest,
   ToolRun,
   ToolRunStatus,
@@ -156,6 +158,17 @@ import {
   listLatestTaskContextCaptures as listLatestTaskContextCaptureRows
 } from "./repositories/contextCaptures.js";
 import type { StoredContextCapture } from "./repositories/contextCaptures.js";
+import {
+  clearCompletedWorking as clearCompletedWorkingRows,
+  deleteExpiredWorking as deleteExpiredWorkingRows,
+  listWorkingTasks as listWorkingTaskRows,
+  markWorkingNotificationSent as markWorkingNotificationSentRow,
+  markWorkingRead as markWorkingReadRow,
+  markWorkingThreadRead as markWorkingThreadReadRow,
+  recoverInterruptedWorking as recoverInterruptedWorkingRows,
+  startWorkingTask as startWorkingTaskRow,
+  updateWorkingTask as updateWorkingTaskRow
+} from "./repositories/workingTasks.js";
 import { loadExternalSkills } from "../services/externalSkills.js";
 import {
   createLocalSkill,
@@ -465,6 +478,48 @@ export class JasmineDatabase {
     }
     updateAppSettingsRow(this.db, current, input, now());
     return this.getAppSettings();
+  }
+
+  getWorkingSnapshot(): WorkingSnapshot {
+    const recentSince = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    deleteExpiredWorkingRows(this.db, recentSince);
+    return listWorkingTaskRows(this.db, recentSince);
+  }
+
+  startWorkingTask(input: { requestId: string; threadId: string; activity: string }): void {
+    if (!this.hasThread(input.threadId)) throw new Error("Thread does not exist.");
+    startWorkingTaskRow(this.db, input, now());
+  }
+
+  updateWorkingTask(input: {
+    requestId: string;
+    status?: WorkingTaskStatus;
+    activity?: string;
+    queueCount?: number;
+    unread?: boolean;
+    finishedAt?: string | null;
+  }): boolean {
+    return updateWorkingTaskRow(this.db, input, now());
+  }
+
+  markWorkingRead(requestId: string): boolean {
+    return markWorkingReadRow(this.db, requestId, now());
+  }
+
+  markWorkingThreadRead(threadId: string): boolean {
+    return markWorkingThreadReadRow(this.db, threadId, now());
+  }
+
+  clearCompletedWorking(): number {
+    return clearCompletedWorkingRows(this.db);
+  }
+
+  recoverInterruptedWorking(): number {
+    return recoverInterruptedWorkingRows(this.db, now());
+  }
+
+  markWorkingNotificationSent(requestId: string, status: WorkingTaskStatus): boolean {
+    return markWorkingNotificationSentRow(this.db, requestId, status);
   }
 
   finishToolRun(input: {

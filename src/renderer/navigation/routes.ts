@@ -30,6 +30,7 @@ export type JasmineRoute =
   | { name: "newChat"; projectId?: string | null }
   | { name: "thread"; threadId: string; projectId?: string | null }
   | { name: "todo" }
+  | { name: "working" }
   | { name: "settings"; section: SettingsSection; providerId?: string }
   | { name: "rightPanel"; threadId: string; panel: RightPanelMode; projectId?: string | null };
 
@@ -47,6 +48,8 @@ export function routeToPath(route: JasmineRoute): string {
         : `/chats/${encodeRouteSegment(route.threadId)}/right-panel/${route.panel}`;
     case "todo":
       return "/todo";
+    case "working":
+      return "/working";
     case "settings":
       if (route.section === "providers" && route.providerId) {
         return `/settings/providers/${encodeRouteSegment(route.providerId)}`;
@@ -58,6 +61,7 @@ export function routeToPath(route: JasmineRoute): string {
 export function parseJasminePath(path: string): JasmineRoute | null {
   const cleanPath = path.trim().replace(/\/+$/, "") || "/";
   if (cleanPath === "/todo") return { name: "todo" };
+  if (cleanPath === "/working") return { name: "working" };
   if (cleanPath === "/chats/new" || cleanPath === "/chat/new") return { name: "newChat", projectId: null };
 
   const projectNewMatch = cleanPath.match(/^\/projects\/([^/]+)\/chat\/new$/);
@@ -121,6 +125,7 @@ export function routeLabel(route: JasmineRoute): string {
   if (route.name === "newChat") return route.projectId ? `Project ${route.projectId} new chat` : "New chat";
   if (route.name === "thread") return route.projectId ? `Project ${route.projectId} thread ${route.threadId}` : `Thread ${route.threadId}`;
   if (route.name === "todo") return "TODO";
+  if (route.name === "working") return "Working";
   if (route.name === "rightPanel") return `${route.panel} panel`;
   return route.providerId ? `Settings ${route.section}/${route.providerId}` : `Settings ${route.section}`;
 }

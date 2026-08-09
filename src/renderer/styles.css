@@ -1336,6 +1336,7 @@ select:focus-visible {
 }
 
 .sidebar-feature-row {
+  position: relative;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
@@ -3828,6 +3829,37 @@ body:has(.settings-panel) .message-jump-rail {
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: 12px;
+}
+
+.sidebar-feature-row:has(.sidebar-feature-badge) {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.sidebar-feature-badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.sidebar-feature-attention {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.sidebar-feature-row.attention:not(.active) {
+  color: var(--danger);
 }
 
 .taxonomy-unclassified-card {
@@ -8918,6 +8950,248 @@ button.attachment-chip-main:hover span {
   background: var(--surface);
 }
 
+.working-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  height: 100vh;
+  background: var(--surface);
+}
+
+.working-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 48px 30px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.working-title-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.working-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.working-title-group h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.working-title-group p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.working-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 30px 32px;
+}
+
+.working-groups {
+  display: grid;
+  gap: 24px;
+  max-width: 920px;
+}
+
+.working-group {
+  display: grid;
+  gap: 10px;
+}
+
+.working-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.working-group-heading h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.working-group-heading > span {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 10px;
+  text-align: center;
+}
+
+.working-group.attention .working-group-heading h2,
+.working-group.attention .working-group-heading > span {
+  color: var(--danger);
+}
+
+.working-group-empty {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.working-task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.working-task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.working-task.unread {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.working-task.status-waiting_user,
+.working-task.status-failed {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+}
+
+.working-task-main {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.working-task-main:hover {
+  background: var(--soft);
+}
+
+.working-task-main > .ui-button-label {
+  display: contents;
+}
+
+.working-task-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.status-waiting_user .working-task-status-dot,
+.status-failed .working-task-status-dot {
+  background: var(--danger);
+}
+
+.status-completed .working-task-status-dot {
+  background: var(--success);
+}
+
+.status-cancelled .working-task-status-dot,
+.status-interrupted .working-task-status-dot,
+.status-stopping .working-task-status-dot {
+  background: var(--faint);
+}
+
+.working-task-copy,
+.working-task-aside {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.working-task-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-task-meta,
+.working-task-activity,
+.working-task-aside {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.working-task-aside {
+  justify-items: end;
+  min-width: 92px;
+}
+
+.working-unread {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.working-stop {
+  margin-right: 10px;
+}
+
+.working-loading {
+  display: grid;
+  gap: 10px;
+  max-width: 920px;
+}
+
+.working-loading div {
+  height: 72px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.working-notification-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) auto minmax(180px, 1fr);
+  align-items: end;
+  gap: 12px;
+  width: 100%;
+}
+
+.working-notification-controls > label {
+  display: grid;
+  gap: 6px;
+}
+
+.working-notification-controls > label > span,
+.working-notification-detail-copy {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.working-notification-controls .ui-switch-root {
+  margin-bottom: 6px;
+}
+
 .todo-header {
   display: flex;
   align-items: flex-start;
@@ -9129,6 +9403,20 @@ button.attachment-chip-main:hover span {
   .todo-title-group p {
     max-width: calc(100vw - 120px);
   }
+
+  .working-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .working-task-main {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .working-task-aside {
+    grid-column: 2;
+    justify-items: start;
+  }
 }
 
 .icon {
@@ -9198,6 +9486,12 @@ button.attachment-chip-main:hover span {
   .brand-logo-control {
     grid-template-columns: 1fr;
     justify-items: start;
+  }
+  .working-notification-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .working-notification-detail-copy {
+    grid-column: 1 / -1;
   }
   .path-picker-control { grid-template-columns: 1fr; }
   .path-picker-actions { justify-content: flex-start; }

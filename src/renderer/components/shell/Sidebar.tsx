@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef, useState } from "react";
 import type { ChatThread, WorkspaceProject } from "../../../shared/ipc";
-import { ChevronRightIcon, EditIcon, ExternalLinkIcon, FolderIcon, MoreIcon, PinIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TodoIcon, TrashIcon } from "../icons/Icons";
+import { ChevronRightIcon, EditIcon, ExternalLinkIcon, FolderIcon, MoreIcon, PinIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TodoIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { IconButton } from "../ui/IconButton";
 import { MenuItem, MenuSurface } from "../ui";
 import { useI18n } from "../../i18n";
@@ -25,6 +25,9 @@ export const Sidebar = memo(function Sidebar(props: {
   activeThreadId: string | null;
   activeProjectId: string | null;
   todoActive: boolean;
+  workingActive: boolean;
+  workingActiveCount: number;
+  workingAttention: boolean;
   moreOpen: boolean;
   onToggleCollapsed(): void;
   onSearch(): void;
@@ -35,6 +38,7 @@ export const Sidebar = memo(function Sidebar(props: {
   onSelectProject(projectId: string): void;
   onSelectThread(threadId: string): void;
   onOpenTodo(): void;
+  onOpenWorking(): void;
   onToggleMore(): void;
   onClearHistory(): void;
   onOpenSettings(): void;
@@ -138,6 +142,20 @@ export const Sidebar = memo(function Sidebar(props: {
         >
           <TodoIcon />
           <span>{t("sidebar.todo")}</span>
+        </button>
+        <button
+          className={`sidebar-feature-row ${props.workingActive ? "active" : ""} ${props.workingAttention ? "attention" : ""}`}
+          type="button"
+          aria-current={props.workingActive ? "page" : undefined}
+          onClick={() => {
+            props.onCloseFloatingSurfaces();
+            props.onOpenWorking();
+          }}
+        >
+          <WorkingIcon />
+          <span>{t("sidebar.working")}</span>
+          {props.workingActiveCount > 0 ? <span className="sidebar-feature-badge">{props.workingActiveCount}</span> : null}
+          {props.workingAttention ? <span className="sidebar-feature-attention" aria-label={t("working.needsAttention")} /> : null}
         </button>
       </div>
 

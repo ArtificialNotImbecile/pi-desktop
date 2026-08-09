@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord } from "../shared/ipc";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
 import { CommandPalette } from "./components/shell/CommandPalette";
 import { SearchOverlay } from "./components/shell/SearchOverlay";
 import { TodoPage } from "./components/todo/TodoPage";
+import { WorkingPage } from "./components/working/WorkingPage";
 import { useAppSurfaces } from "./hooks/useAppSurfaces";
 import { useAskUserQuestion } from "./hooks/useAskUserQuestion";
 import { useChatMessages } from "./hooks/useChatMessages";
@@ -31,6 +32,7 @@ import { useTodos } from "./hooks/useTodos";
 import { useToast } from "./hooks/useToast";
 import { useThemeAppearance } from "./hooks/useThemeAppearance";
 import { useWebSearch } from "./hooks/useWebSearch";
+import { useWorkingTasks } from "./hooks/useWorkingTasks";
 import { useHarnessBridge } from "./harness/useHarnessBridge";
 import { useJasmineNavigation } from "./navigation/navigationState";
 import { isSettingsSection, rightPanelModeLabel, type JasmineRoute, type RightPanelMode, type RightPanelTab, type SettingsSection } from "./navigation/routes";
@@ -144,6 +146,10 @@ function App(props: { initialAppSettings: AppSettings }) {
   const askUserQuestion = useAskUserQuestion({
     onError: setAppError
   });
+  const working = useWorkingTasks({
+    onError: setAppError,
+    onNavigate: openWorkingTarget
+  });
   useThemeAppearance(appSettings.settings.appearance);
   const t = translate(appSettings.settings.language);
   const activeModel = providers.activeProvider?.models.find((model) => model.id === providers.activeProvider?.defaultModel);
@@ -233,7 +239,7 @@ function App(props: { initialAppSettings: AppSettings }) {
   });
 
   useEffect(() => {
-    if (navigation.route.name === "todo") return;
+    if (navigation.route.name === "todo" || navigation.route.name === "working") return;
     if (surfaces.settingsOpen) return;
     if (threads.activeThreadId && activeRightPanelMode) {
       navigation.replace({ name: "rightPanel", threadId: threads.activeThreadId, projectId: threads.activeThread?.projectId ?? null, panel: activeRightPanelMode });
@@ -241,6 +247,13 @@ function App(props: { initialAppSettings: AppSettings }) {
     }
     navigation.replace(threads.activeThreadId ? { name: "thread", threadId: threads.activeThreadId, projectId: threads.activeThread?.projectId ?? null } : { name: "newChat", projectId: activeProjectId });
   }, [navigation.route.name, surfaces.settingsOpen, threads.activeThreadId, threads.activeThread?.projectId, activeProjectId, activeRightPanelMode, navigation.replace]);
+
+  useEffect(() => {
+    const threadId = navigation.route.name === "thread" || navigation.route.name === "rightPanel"
+      ? threads.activeThreadId
+      : null;
+    void getBridge().updateWorkingView({ threadId });
+  }, [navigation.route.name, threads.activeThreadId]);
 
   useEffect(() => {
     if (!threads.activeThread) return;
@@ -498,6 +511,7 @@ function App(props: { initialAppSettings: AppSettings }) {
     },
     onSelectThread: (threadId: string) => openThreadById(threadId),
     onOpenTodo: () => navigateToRoute({ name: "todo" }),
+    onOpenWorking: () => navigateToRoute({ name: "working" }),
     onRenameProject: (projectId: string, name: string) => void projects.renameProject(projectId, name),
     onRemoveProject: (projectId: string) => {
       void removeProject(projectId);
@@ -635,12 +649,15 @@ function App(props: { initialAppSettings: AppSettings }) {
       activeThreadId={threads.activeThreadId}
       activeProjectId={activeScopeProjectId}
       todoActive={navigation.route.name === "todo"}
-      messagesEmpty={navigation.route.name !== "todo" && chat.messages.length === 0}
+      workingActive={navigation.route.name === "working"}
+      workingActiveCount={working.snapshot.activeCount}
+      workingAttention={working.snapshot.attentionCount > 0}
+      messagesEmpty={navigation.route.name !== "todo" && navigation.route.name !== "working" && chat.messages.length === 0}
       sidebarCollapsed={sidebarCollapsed}
       moreOpen={surfaces.moreOpen}
       {...shellHandlers}
     >
-      {workspaceLoading && navigation.route.name !== "todo" ? (
+      {workspaceLoading && navigation.route.name !== "todo" && navigation.route.name !== "working" ? (
         <main className="workspace-startup" data-jasmine-workspace-startup role="status" aria-label="Jasmine">
           <div className="workspace-startup-line wide" />
           <div className="workspace-startup-line" />
@@ -660,6 +677,14 @@ function App(props: { initialAppSettings: AppSettings }) {
           onAdd={(text) => todos.addTodo({ text, projectId: activeScopeProjectId })}
           onOpenFile={(kind) => void todos.openFile(kind)}
           onCopyCode={(code) => void copyCode(code)}
+        />
+      ) : navigation.route.name === "working" ? (
+        <WorkingPage
+          snapshot={working.snapshot}
+          loading={working.loading}
+          onOpen={(task) => void openWorkingTask(task)}
+          onStop={(requestId) => void working.stop(requestId)}
+          onClearCompleted={() => void working.clearCompleted()}
         />
       ) : <ChatPage
         activeThread={threads.activeThread}
@@ -903,6 +928,10 @@ function App(props: { initialAppSettings: AppSettings }) {
       closeFloatingSurfaces();
       return;
     }
+    if (nextRoute.name === "working") {
+      closeFloatingSurfaces();
+      return;
+    }
     openSettingsRoute(nextRoute.section, nextRoute.providerId, options);
   }
 
@@ -931,6 +960,26 @@ function App(props: { initialAppSettings: AppSettings }) {
   function openThreadById(threadId: string) {
     const thread = threads.threads.find((item) => item.id === threadId);
     navigateToRoute({ name: "thread", threadId, projectId: thread?.projectId ?? null });
+  }
+
+  async function openWorkingTask(task: WorkingTask) {
+    await working.markRead(task.requestId);
+    await openWorkingTarget({ requestId: task.requestId, threadId: task.threadId, projectId: task.projectId });
+  }
+
+  async function openWorkingTarget(target: WorkingNavigationTarget) {
+    try {
+      const latestThreads = await getBridge().listThreads();
+      const thread = latestThreads.find((item) => item.id === target.threadId);
+      if (!thread) {
+        setAppError("This Working chat is no longer available. It may have been deleted.");
+        return;
+      }
+      await threads.refreshThreads(target.threadId);
+      navigateToRoute({ name: "thread", threadId: thread.id, projectId: thread.projectId });
+    } catch (caught) {
+      setAppError(caught instanceof Error ? caught.message : "Failed to open the Working chat.");
+    }
   }
 
   function openSettingsRoute(section: SettingsSection, providerId?: string, options: { keepSettingsOpen?: boolean } = {}) {

@@ -58,6 +58,7 @@ import {
 } from "./chatSupport.js";
 import type { IpcContext } from "./context.js";
 import { mergeWebSearchResults } from "../utils/webSearchResults.js";
+import type { WorkingRegistry } from "../services/workingRegistry.js";
 
 type ActiveRun = {
   threadId: string;
@@ -71,11 +72,16 @@ type ActiveRun = {
 const activeRuns = new Map<string, ActiveRun>();
 
 export function registerChatIpc(context: IpcContext): void {
-  ipcMain.handle("chat:cancel", (_event, requestId: string): boolean => {
+  const working = context.getWorkingRegistry();
+  working.setStopHandler((requestId) => {
     const run = activeRuns.get(requestId);
     if (!run) return false;
     run.abortController.abort();
     return true;
+  });
+
+  ipcMain.handle("chat:cancel", (_event, requestId: string): boolean => {
+    return working.stop(requestId);
   });
 
   ipcMain.handle("chat:queue", async (_event, request: ChatQueueRequest): Promise<ChatQueueResponse> => {
@@ -86,13 +92,13 @@ export function registerChatIpc(context: IpcContext): void {
     if (!content && attachments.length === 0) throw new Error("Message content is empty.");
     if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
     const controls = run.queueControls ?? await run.queueReady;
-    return {
-      queue: await controls.queueMessage({
+    const queue = await controls.queueMessage({
         mode: request.mode,
         content,
         attachments
-      })
-    };
+      });
+    working.queue(request.requestId, queueCount(queue));
+    return { queue };
   });
 
   ipcMain.handle("chat:queue:update", async (_event, request: ChatQueueUpdateRequest): Promise<ChatQueueResponse> => {
@@ -103,13 +109,13 @@ export function registerChatIpc(context: IpcContext): void {
     if (!content && attachments.length === 0) throw new Error("Message content is empty.");
     if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
     const controls = run.queueControls ?? await run.queueReady;
-    return {
-      queue: await controls.updateMessage({
+    const queue = await controls.updateMessage({
         id: request.messageId,
         content,
         attachments
-      })
-    };
+      });
+    working.queue(request.requestId, queueCount(queue));
+    return { queue };
   });
 
   ipcMain.handle("chat:queue:delete", async (_event, request: ChatQueueDeleteRequest): Promise<ChatQueueResponse> => {
@@ -117,9 +123,9 @@ export function registerChatIpc(context: IpcContext): void {
     const run = activeQueueRun(request.requestId, request.threadId);
     if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
     const controls = run.queueControls ?? await run.queueReady;
-    return {
-      queue: await controls.deleteMessage(request.messageId)
-    };
+    const queue = await controls.deleteMessage(request.messageId);
+    working.queue(request.requestId, queueCount(queue));
+    return { queue };
   });
 
   ipcMain.handle("chat:queue:steer", async (_event, request: ChatQueueSteerRequest): Promise<ChatQueueResponse> => {
@@ -127,9 +133,9 @@ export function registerChatIpc(context: IpcContext): void {
     const run = activeQueueRun(request.requestId, request.threadId);
     if (run.abortController.signal.aborted) throw new Error("Response is already stopping.");
     const controls = run.queueControls ?? await run.queueReady;
-    return {
-      queue: await controls.steerMessage(request.messageId)
-    };
+    const queue = await controls.steerMessage(request.messageId);
+    working.queue(request.requestId, queueCount(queue));
+    return { queue };
   });
 
   ipcMain.handle("chat:send", async (_event, request: ChatSendRequest): Promise<ChatSendResponse> => {
@@ -146,6 +152,7 @@ export function registerChatIpc(context: IpcContext): void {
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    working.start({ requestId, threadId: request.threadId });
 
     try {
       const userDataDir = app.getPath("userData");
@@ -203,7 +210,7 @@ export function registerChatIpc(context: IpcContext): void {
           currentMessageId: userMessage.id,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -211,7 +218,8 @@ export function registerChatIpc(context: IpcContext): void {
         requestId,
         threadId: request.threadId,
         signal: abortController.signal,
-        sender: _event.sender
+        sender: _event.sender,
+        working
       });
 
       const assistantMessage = persistRuntimeGeneratedMessages(db, {
@@ -226,6 +234,7 @@ export function registerChatIpc(context: IpcContext): void {
         reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         userMessage,
         assistantMessage,
@@ -233,6 +242,9 @@ export function registerChatIpc(context: IpcContext): void {
         model: assistantMessage.modelId ?? reply.model,
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
+    } catch (error) {
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
+      throw error;
     } finally {
       finishActiveRun(requestId);
     }
@@ -247,6 +259,7 @@ export function registerChatIpc(context: IpcContext): void {
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    working.start({ requestId, threadId: request.threadId, activity: "Preparing retry" });
 
     try {
       const existingMessages = db.listMessages(request.threadId);
@@ -306,7 +319,7 @@ export function registerChatIpc(context: IpcContext): void {
           branchBeforePromptEntryId,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -314,7 +327,8 @@ export function registerChatIpc(context: IpcContext): void {
         requestId,
         threadId: request.threadId,
         signal: abortController.signal,
-        sender: _event.sender
+        sender: _event.sender,
+        working
       });
 
       // Delete the superseded turn and persist its replacement atomically so an
@@ -334,12 +348,16 @@ export function registerChatIpc(context: IpcContext): void {
         });
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         assistantMessage,
         content: assistantMessage.content,
         model: assistantMessage.modelId ?? reply.model,
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
+    } catch (error) {
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
+      throw error;
     } finally {
       finishActiveRun(requestId);
     }
@@ -357,6 +375,7 @@ export function registerChatIpc(context: IpcContext): void {
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    working.start({ requestId, threadId: request.threadId, activity: "Preparing edited response" });
 
     try {
       const existingMessages = db.listMessages(request.threadId);
@@ -442,7 +461,7 @@ export function registerChatIpc(context: IpcContext): void {
           branchBeforePromptEntryId,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender)
+          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -450,7 +469,8 @@ export function registerChatIpc(context: IpcContext): void {
         requestId,
         threadId: request.threadId,
         signal: abortController.signal,
-        sender: _event.sender
+        sender: _event.sender,
+        working
       });
 
       const assistantMessage = persistRuntimeGeneratedMessages(db, {
@@ -465,6 +485,7 @@ export function registerChatIpc(context: IpcContext): void {
         reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         userMessage,
         assistantMessage,
@@ -472,6 +493,9 @@ export function registerChatIpc(context: IpcContext): void {
         model: assistantMessage.modelId ?? reply.model,
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
+    } catch (error) {
+      working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
+      throw error;
     } finally {
       finishActiveRun(requestId);
     }
@@ -847,7 +871,14 @@ async function buildChatTurnContext(
 }
 
 // Runtime request fields shared by all three generation paths.
-function runtimeContextOptions(db: JasmineDatabase, turn: ChatTurnContext, threadId: string, sender: WebContents) {
+function runtimeContextOptions(
+  db: JasmineDatabase,
+  turn: ChatTurnContext,
+  threadId: string,
+  sender: WebContents,
+  working: WorkingRegistry,
+  requestId: string
+) {
   return {
     memoryContext: turn.memoryUsed.map((memory) => memory.content),
     skillContext: turn.skillManifests,
@@ -861,7 +892,12 @@ function runtimeContextOptions(db: JasmineDatabase, turn: ChatTurnContext, threa
       provider: turn.webSearchSettings.provider,
       search: (query: string, signal?: AbortSignal) => runWebSearchForChat(db, threadId, query, true, signal)
     },
-    askUserQuestion: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => askUserQuestionInRenderer(sender, prompt, signal),
+    askUserQuestion: async (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => {
+      working.waitingForUser(requestId);
+      const response = await askUserQuestionInRenderer(sender, prompt, signal);
+      if (!signal?.aborted) working.resumed(requestId);
+      return response;
+    },
     promptTemplatePaths: turn.promptTemplatePaths,
     remoteConnection: turn.remoteConnection
   };
@@ -895,13 +931,20 @@ async function runTracedGeneration(
     threadId: string;
     signal: AbortSignal;
     sender: WebContents;
+    working: WorkingRegistry;
   }
 ): Promise<AssistantReply> {
   return generateAssistantReply(input.request, input.runtimeProvider, {
     signal: input.signal,
-    onUpdate: (update) => emitStreamUpdate(input.sender, input.requestId, input.threadId, update),
+    onUpdate: (update) => {
+      emitStreamUpdate(input.sender, input.requestId, input.threadId, update);
+      input.working.activity(input.requestId, activityFromTimeline(update.timeline));
+    },
     onQueueReady: (controls) => setActiveRunQueueControls(input.requestId, controls),
-    onQueueUpdate: (queue) => emitQueueUpdate(input.sender, input.requestId, input.threadId, queue)
+    onQueueUpdate: (queue) => {
+      emitQueueUpdate(input.sender, input.requestId, input.threadId, queue);
+      input.working.queue(input.requestId, queueCount(queue));
+    }
   }).catch((error: unknown) => {
     db.finishToolRun({
       id: input.traceId,
@@ -911,6 +954,23 @@ async function runTracedGeneration(
     });
     throw error;
   });
+}
+
+function activityFromTimeline(timeline: ChatTimelineItem[]): string {
+  const latest = timeline.at(-1);
+  if (!latest) return "Generating response";
+  if (latest.kind === "thinking") return "Thinking";
+  if (latest.kind === "tool_call") {
+    const toolName = latest.toolName.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 48);
+    return toolName ? `Using ${toolName}` : "Using a tool";
+  }
+  if (latest.kind === "tool_result") return latest.isError ? "Tool reported an error" : "Processing tool result";
+  if (latest.kind === "assistant_text") return "Writing response";
+  return "Generating response";
+}
+
+function queueCount(queue: ChatQueueState): number {
+  return queue.followUp.length + queue.steering.length;
 }
 
 function finishTraceSuccess(db: JasmineDatabase, traceId: string, assistantMessage: ChatMessage, reply: AssistantReply): void {

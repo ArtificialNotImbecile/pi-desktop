@@ -245,9 +245,24 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       language TEXT NOT NULL DEFAULT 'en',
       chrome_takeover_enabled INTEGER NOT NULL DEFAULT 0,
       chrome_takeover_extension_id TEXT,
+      working_notification_mode TEXT NOT NULL DEFAULT 'background',
+      working_notification_include_details INTEGER NOT NULL DEFAULT 1,
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS working_tasks (
+      thread_id TEXT PRIMARY KEY REFERENCES chat_threads(id) ON DELETE CASCADE,
+      request_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('running', 'waiting_user', 'stopping', 'completed', 'failed', 'cancelled', 'interrupted')),
+      activity TEXT NOT NULL DEFAULT 'Working',
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      queue_count INTEGER NOT NULL DEFAULT 0,
+      unread INTEGER NOT NULL DEFAULT 0,
+      notified_statuses_json TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE INDEX IF NOT EXISTS idx_chat_threads_updated_at ON chat_threads(updated_at);
@@ -265,6 +280,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE INDEX IF NOT EXISTS idx_remote_connections_active ON remote_connections(active, name);
     CREATE INDEX IF NOT EXISTS idx_remote_connections_config ON remote_connections(config_path, config_host);
     CREATE INDEX IF NOT EXISTS idx_activity_observations_created_at ON activity_observations(created_at);
+    CREATE INDEX IF NOT EXISTS idx_working_tasks_status_updated_at ON working_tasks(status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_working_tasks_finished_at ON working_tasks(finished_at);
   `);
   addColumnIfMissing(db, "chat_messages", "attachments_json", "TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing(db, "chat_messages", "model_id", "TEXT");
@@ -377,6 +394,10 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   markMigration(db, 30, "agent run message linkage", now);
   if (!hasMigration(db, 31)) migrateInlineContextCaptures(db);
   markMigration(db, 31, "independent compressed context taxonomy captures", now);
+  addColumnIfMissing(db, "app_settings", "working_notification_mode", "TEXT NOT NULL DEFAULT 'background'");
+  addColumnIfMissing(db, "app_settings", "working_notification_include_details", "INTEGER NOT NULL DEFAULT 1");
+  markMigration(db, 32, "working task registry and recent results", now);
+  markMigration(db, 33, "working notification preferences", now);
 }
 
 function migrateInlineContextCaptures(db: SqlDatabase): void {
