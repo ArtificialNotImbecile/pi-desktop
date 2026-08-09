@@ -8,7 +8,8 @@ import type { IpcContext } from "./context.js";
 export function registerChromeBridgeIpc(context: IpcContext): void {
   ipcMain.handle("chromeBridge:status", async (): Promise<ChromeTakeoverStatus> => {
     const bridge = await getChromeBridge(app.getPath("userData"));
-    return toChromeTakeoverStatus(bridge.status(), context.getDatabase().getAppSettings().chromeTakeover);
+    const serviceStatus = await bridge.refreshExtensionHealth();
+    return toChromeTakeoverStatus(serviceStatus, context.getDatabase().getAppSettings().chromeTakeover);
   });
 
   ipcMain.handle("chromeBridge:register", async (_event, request: ChromeTakeoverRegisterRequest): Promise<ChromeTakeoverStatus> => {

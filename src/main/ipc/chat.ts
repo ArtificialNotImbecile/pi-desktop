@@ -873,8 +873,10 @@ async function resolveChromeTakeoverRuntime(
 ): Promise<{ enabled: boolean; bridgeFilePath?: string; extensionId?: string } | undefined> {
   if (!settings.enabled || !settings.extensionId) return undefined;
   const bridge = await getChromeBridge(userDataDir);
-  const status = bridge.status();
-  if (!status.extensionConnected) return { enabled: false, extensionId: settings.extensionId };
+  const status = await bridge.refreshExtensionHealth();
+  if (!status.extensionConnected || !status.extensionResponsive) {
+    return { enabled: false, extensionId: settings.extensionId };
+  }
   return {
     enabled: true,
     bridgeFilePath: bridgeInfoFilePath(),
