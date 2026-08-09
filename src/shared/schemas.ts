@@ -8,6 +8,14 @@ export const threadCreateSchema = z.object({
 
 export const threadIdSchema = z.string().min(1);
 
+export const contextCaptureIdSchema = z.string().uuid();
+
+export const contextTaxonomyRawRequestSchema = z.object({
+  captureId: contextCaptureIdSchema,
+  offset: z.number().int().min(0).optional(),
+  length: z.number().int().min(1).max(65_536).optional()
+});
+
 export const threadIdsSchema = z.array(threadIdSchema).min(1).max(10000);
 
 export const threadRenameSchema = z.object({

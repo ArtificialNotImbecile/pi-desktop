@@ -16,6 +16,7 @@ try {
   const threads = await import("../../dist/main/main/db/repositories/threads.js");
   const projects = await import("../../dist/main/main/db/repositories/projects.js");
   const messages = await import("../../dist/main/main/db/repositories/messages.js");
+  const contextCaptures = await import("../../dist/main/main/db/repositories/contextCaptures.js");
   const migrations = await import("../../dist/main/main/db/migrations.js");
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
   const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
@@ -258,6 +259,8 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 28").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 30").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 31").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("PRAGMA table_info(context_captures)").all().some((row) => row.name === "raw_payload_gzip"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_threads)").all().some((row) => row.name === "session_file"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "session_entry_id"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "run_id"), true);
@@ -352,7 +355,7 @@ try {
       ]),
       "legacy-user-entry"
     );
-    legacyDb.prepare("DELETE FROM schema_migrations WHERE version = 29").run();
+    legacyDb.prepare("DELETE FROM schema_migrations WHERE version IN (29, 31)").run();
     migrations.migrateDatabase(legacyDb, () => timestamp);
     const repairedDeepSeek = legacyDb.prepare("SELECT content, timeline_json FROM chat_messages WHERE id = 'legacy-deepseek-thinking'").get();
     const repairedDeepSeekTimeline = JSON.parse(repairedDeepSeek.timeline_json);
@@ -362,6 +365,12 @@ try {
       ["assistant_text", "tool_call", "tool_result", "assistant_text"]
     );
     assert.equal(repairedDeepSeekTimeline.some((item) => item.id === "deepseek-thinking-level-repair"), false);
+    assert.equal(repairedDeepSeekTimeline.some((item) => item.customType === "context-taxonomy"), false);
+    const migratedCapture = legacyDb.prepare("SELECT message_id, raw_state, raw_payload_gzip, metadata_json FROM context_captures WHERE message_id = 'legacy-deepseek-thinking'").get();
+    assert.equal(migratedCapture.message_id, "legacy-deepseek-thinking");
+    assert.equal(migratedCapture.raw_state, "unavailable");
+    assert.equal(migratedCapture.raw_payload_gzip, null);
+    assert.equal(JSON.parse(migratedCapture.metadata_json).fallbackTaxonomy.items[0].kind, "provider_options");
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get(), undefined);
 
     await writeFile(pendingCanonicalSessionFile, [
@@ -387,6 +396,37 @@ try {
     assert.deepEqual(JSON.parse(repairedStale.timeline_json).map((item) => item.kind), ["assistant_text"]);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     assert.equal(mcpServers.listMcpServers(legacyDb).length, 1);
+
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at, timeline_json)
+      VALUES ('complete-capture-message', 'legacy-thread', 'assistant', 'answer', ?, '[]')
+    `).run(timestamp);
+    const completeRaw = JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "x".repeat(16_384) }] }, null, 2);
+    const completeCaptureId = contextCaptures.addContextCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "complete-capture-message",
+      runId: "capture-run",
+      taxonomy: {
+        capturedAt: timestamp,
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        source: "provider-payload",
+        providerRequest: { index: 1, count: 1, taskIndex: 1, policy: "task-capture" },
+        rawPayload: completeRaw,
+        payloadSchemaVersion: 5,
+        reasoningValidation: { status: "pass", policyId: "deepseek-tool-interval-v1", policyVersion: 1, summary: "ok", requiredCount: 1, sentCount: 1, blocks: [] },
+        items: []
+      }
+    });
+    const storedCapture = contextCaptures.getContextCapture(legacyDb, completeCaptureId);
+    assert.equal(storedCapture.rawPayload, completeRaw);
+    assert.equal(storedCapture.summary.rawSha256.length, 64);
+    assert.equal(storedCapture.summary.reasoningValidation.status, "pass");
+    assert.deepEqual(contextCaptures.listLatestTaskContextCaptures(legacyDb, "legacy-thread").map((capture) => capture.id), [completeCaptureId]);
+    const compressedBytes = legacyDb.prepare("SELECT length(raw_payload_gzip) AS bytes FROM context_captures WHERE id = ?").get(completeCaptureId).bytes;
+    assert.ok(compressedBytes < Buffer.byteLength(completeRaw, "utf8") / 4, "repeated raw payload should be gzip compressed");
+    legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'complete-capture-message'").run();
+    assert.equal(contextCaptures.getContextCapture(legacyDb, completeCaptureId), null, "capture should cascade with its message");
   } finally {
     if (previousDefaultRoot === undefined) delete process.env.JASMINE_DEFAULT_PROJECT_ROOT;
     else process.env.JASMINE_DEFAULT_PROJECT_ROOT = previousDefaultRoot;

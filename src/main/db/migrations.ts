@@ -4,6 +4,8 @@ import { DEFAULT_BRAND_SETTINGS, LEGACY_HIRI_BRAND_COPY } from "../../shared/bra
 import type { ChatTimelineItem } from "../../shared/ipc.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
 import { readCanonicalPiBlockIndex, restoreCanonicalPiTimelineProjection } from "./canonicalPiTimelineRepair.js";
 
@@ -56,6 +58,29 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       timeline_json TEXT NOT NULL DEFAULT '[]',
       session_entry_id TEXT,
       run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS context_captures (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      run_id TEXT,
+      task_index INTEGER NOT NULL DEFAULT 1,
+      request_index INTEGER NOT NULL DEFAULT 1,
+      request_count INTEGER NOT NULL DEFAULT 1,
+      captured_at TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      source TEXT NOT NULL,
+      schema_version INTEGER NOT NULL,
+      raw_payload_gzip BLOB,
+      raw_state TEXT NOT NULL CHECK (raw_state IN ('complete', 'legacy_truncated', 'unavailable')),
+      raw_sha256 TEXT,
+      raw_char_count INTEGER NOT NULL DEFAULT 0,
+      raw_byte_count INTEGER NOT NULL DEFAULT 0,
+      validation_json TEXT NOT NULL DEFAULT '{}',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      UNIQUE(message_id, task_index, request_index)
     );
 
     CREATE TABLE IF NOT EXISTS thread_drafts (
@@ -228,6 +253,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE INDEX IF NOT EXISTS idx_chat_threads_updated_at ON chat_threads(updated_at);
     CREATE INDEX IF NOT EXISTS idx_workspace_projects_root_key ON workspace_projects(root_key);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_created_at ON chat_messages(thread_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_context_captures_thread_captured_at ON context_captures(thread_id, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_context_captures_message_id ON context_captures(message_id);
     CREATE INDEX IF NOT EXISTS idx_thread_drafts_updated_at ON thread_drafts(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tool_runs_thread_started_at ON tool_runs(thread_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
@@ -348,6 +375,86 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   markMigration(db, 28, "reserve legacy DeepSeek projection repair", now);
   if (!hasMigration(db, 29)) restoreCanonicalPiTimelineRows(db, now());
   markMigration(db, 30, "agent run message linkage", now);
+  if (!hasMigration(db, 31)) migrateInlineContextCaptures(db);
+  markMigration(db, 31, "independent compressed context taxonomy captures", now);
+}
+
+function migrateInlineContextCaptures(db: SqlDatabase): void {
+  const rows = db.prepare(`
+    SELECT id, thread_id, run_id, created_at, timeline_json
+    FROM chat_messages
+    WHERE role = 'assistant' AND timeline_json LIKE '%context-taxonomy%'
+  `).all() as Array<{ id: string; thread_id: string; run_id: string | null; created_at: string; timeline_json: string }>;
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO context_captures (
+      id, thread_id, message_id, run_id, task_index, request_index, request_count,
+      captured_at, provider, model, source, schema_version, raw_payload_gzip,
+      raw_state, raw_sha256, raw_char_count, raw_byte_count, validation_json, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateTimeline = db.prepare("UPDATE chat_messages SET timeline_json = ? WHERE id = ? AND timeline_json = ?");
+
+  for (const row of rows) {
+    let timeline: ChatTimelineItem[];
+    try { timeline = JSON.parse(row.timeline_json) as ChatTimelineItem[]; } catch { continue; }
+    const captureItems = timeline.filter((item): item is Extract<ChatTimelineItem, { kind: "system" }> =>
+      item.kind === "system" && item.customType === "context-taxonomy" && Boolean(item.data && typeof item.data === "object")
+    );
+    if (captureItems.length === 0) continue;
+    let migrated = true;
+    for (const [captureIndex, item] of captureItems.entries()) {
+      try {
+        const taxonomy = item.data as Record<string, unknown>;
+        const raw = typeof taxonomy.rawPayload === "string" ? taxonomy.rawPayload : null;
+        let rawState: "complete" | "legacy_truncated" | "unavailable" = raw ? "complete" : "unavailable";
+        if (raw) {
+          try { JSON.parse(raw); } catch { rawState = "legacy_truncated"; }
+        }
+        const request = taxonomy.providerRequest && typeof taxonomy.providerRequest === "object" ? taxonomy.providerRequest as Record<string, unknown> : {};
+        const requestIndex = positiveInteger(request.index, captureIndex + 1);
+        const requestCount = positiveInteger(request.count, captureItems.length);
+        const taskIndex = positiveInteger(request.taskIndex, 1);
+        const fallbackTaxonomy = rawState === "complete" ? undefined : withoutRawPayload(taxonomy);
+        const metadata = {
+          assemblyReason: taxonomy.assemblyReason,
+          cacheMetrics: taxonomy.cacheMetrics,
+          payloadShape: taxonomy.payloadShape,
+          ...(fallbackTaxonomy ? { fallbackTaxonomy } : {})
+        };
+        insert.run(
+          randomUUID(), row.thread_id, row.id, row.run_id, taskIndex, requestIndex, requestCount,
+          typeof taxonomy.capturedAt === "string" ? taxonomy.capturedAt : row.created_at,
+          typeof taxonomy.provider === "string" ? taxonomy.provider : "unknown-provider",
+          typeof taxonomy.model === "string" ? taxonomy.model : "unknown-model",
+          typeof taxonomy.source === "string" ? taxonomy.source : "provider-payload",
+          positiveInteger(taxonomy.payloadSchemaVersion, 4),
+          raw ? gzipSync(Buffer.from(raw, "utf8")) : null,
+          rawState,
+          typeof taxonomy.payloadHash === "string" ? taxonomy.payloadHash : raw ? createHash("sha256").update(raw).digest("hex") : null,
+          raw?.length ?? 0,
+          raw ? Buffer.byteLength(raw, "utf8") : 0,
+          JSON.stringify(taxonomy.reasoningValidation ?? {}),
+          JSON.stringify(metadata)
+        );
+      } catch {
+        migrated = false;
+        break;
+      }
+    }
+    if (migrated) {
+      const retained = timeline.filter((item) => !(item.kind === "system" && item.customType === "context-taxonomy"));
+      updateTimeline.run(JSON.stringify(retained), row.id, row.timeline_json);
+    }
+  }
+}
+
+function withoutRawPayload(taxonomy: Record<string, unknown>): Record<string, unknown> {
+  const { rawPayload: _rawPayload, ...rest } = taxonomy;
+  return rest;
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function markMigration(db: SqlDatabase, version: number, name: string, now: Clock): void {

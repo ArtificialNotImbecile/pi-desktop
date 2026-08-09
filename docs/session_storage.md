@@ -12,6 +12,8 @@ Retry and edit branch before the selected user entry and append a new path. Supe
 
 SQLite remains appropriate for transactional application state: thread/project lists, active UI messages, pagination, search, drafts, settings, provider configuration, memories, traces, and usage metadata. A thread stores its Pi session ID/file/version; each projected chat message stores the corresponding Pi entry ID.
 
+Context Taxonomy captures are diagnostic projections, not canonical conversation messages. Schema v5 stores every sanitized provider request in the independent `context_captures` table as gzip, linked to the thread/run/assistant message with task and request indexes. Normal message loads do not parse or transfer capture data. The panel first loads compact summaries, derives the readable view from sanitized raw JSON on selection, and fetches raw text in 64 KiB chunks only when expanded. Deleting a message or thread cascades to its captures.
+
 This boundary keeps the React UI unchanged and makes future Pi upgrades or external-session imports operate on Pi's native format. SQLite migrations can evolve UI indexes independently without rewriting the canonical conversation tree.
 
 ## Provider compatibility

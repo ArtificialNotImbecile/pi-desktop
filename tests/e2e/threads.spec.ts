@@ -193,13 +193,10 @@ test.describe("Jasmine threads and projects", () => {
       const threads = await window.jasmine.listThreads();
       const thread = threads.find((item) => item.projectId === projectId && item.title.includes("project cwd check"));
       if (!thread) throw new Error("Project thread was not persisted.");
-      const messages = await window.jasmine.listMessages(thread.id);
-      const taxonomy = messages
-        .flatMap((message) => message.timeline ?? [])
-        .find((item) => item.kind === "system" && item.customType === "context-taxonomy");
-      const systemPromptText = taxonomy?.kind === "system" && taxonomy.data && typeof taxonomy.data === "object"
-        ? (taxonomy.data.items ?? []).find((item) => item.kind === "system_prompt")?.text
-        : "";
+      const captures = await window.jasmine.listThreadContextTaxonomy(thread.id);
+      const latest = captures.captures.at(-1);
+      const taxonomy = latest ? (await window.jasmine.getContextTaxonomy(latest.id)).taxonomy : null;
+      const systemPromptText = taxonomy?.items.find((item) => item.kind === "system_prompt")?.text ?? "";
       return { thread, systemPromptText };
     }, project.id);
     expect(scopedMessageState.thread.projectId).toBe(project.id);

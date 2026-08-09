@@ -96,8 +96,8 @@ try {
   await smoothCenter(optionsGroup);
   const optionsItem = optionsGroup.locator(".taxonomy-item", { hasText: "Request options" }).first();
   await ensureOpen(optionsItem.locator(".taxonomy-item-details"));
-  const reasoning = optionsItem.locator(".taxonomy-segment", { hasText: "Reasoning effort" }).first();
-  const other = optionsItem.locator(".taxonomy-segment", { hasText: "Other provider options" }).first();
+  const reasoning = optionsItem.locator(".taxonomy-part", { hasText: "Reasoning effort" }).first();
+  const other = optionsItem.locator(".taxonomy-part", { hasText: "Other provider options" }).first();
   await ensureOpen(reasoning);
   await ensureOpen(other);
   const optionText = await optionsItem.innerText();

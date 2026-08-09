@@ -19,7 +19,6 @@ import type {
   ChatSendResponse,
   ChatStreamMessage,
   ChatTimelineItem,
-  ContextTaxonomy,
   ReasoningEffort,
   SkillRecord,
   SkillReference,
@@ -29,7 +28,6 @@ import { chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSc
 import { computeStreamDelta } from "../../shared/streamDelta.js";
 import { generateAssistantReply } from "../agent/runtime.js";
 import type { AssistantReply, RuntimeGeneratedMessage, RuntimeQueueControls } from "../agent/runtime.js";
-import { capContextTaxonomyForStorage } from "../agent/extensions/contextCapture/classifier.js";
 import type { JasmineDatabase } from "../db/database.js";
 import { askUserQuestionInRenderer } from "./askUserQuestion.js";
 import { getRuntimeProvider } from "../services/providers.js";
@@ -689,7 +687,7 @@ function persistRuntimeGeneratedMessages(
   // commit them atomically so a crash mid-write cannot leave a half-saved run.
   return db.runInTransaction(() => {
     let lastAssistantMessage: ChatMessage | null = null;
-    let taxonomyAttached = false;
+    const assistantMessages: ChatMessage[] = [];
 
     for (const [index, message] of generated.entries()) {
       if (message.role === "user") {
@@ -705,10 +703,6 @@ function persistRuntimeGeneratedMessages(
       }
 
       const baseTimeline = withRunMetadata(message.timeline ?? [], input.reply.model, input.reasoningEffort);
-      const timeline = taxonomyAttached
-        ? baseTimeline
-        : withContextTaxonomy(baseTimeline, input.reply.contextTaxonomy);
-      taxonomyAttached = true;
       lastAssistantMessage = db.addMessage({
         threadId: input.threadId,
         runId: input.runId,
@@ -721,9 +715,10 @@ function persistRuntimeGeneratedMessages(
         skillsUsed: input.skillsUsed,
         pluginsUsed: input.pluginsUsed,
         webSearchUsed: input.webSearchUsed,
-        timeline,
+        timeline: baseTimeline,
         sessionEntryId: message.sessionEntryId
       });
+      assistantMessages.push(lastAssistantMessage);
     }
 
     if (!lastAssistantMessage) {
@@ -739,8 +734,20 @@ function persistRuntimeGeneratedMessages(
         skillsUsed: input.skillsUsed,
         pluginsUsed: input.pluginsUsed,
         webSearchUsed: input.webSearchUsed,
-        timeline: withContextTaxonomy(withRunMetadata(input.fallbackTimeline, input.reply.model, input.reasoningEffort), input.reply.contextTaxonomy)
+        timeline: withRunMetadata(input.fallbackTimeline, input.reply.model, input.reasoningEffort)
       });
+      assistantMessages.push(lastAssistantMessage);
+    }
+    const captures = input.reply.contextTaxonomies?.length
+      ? input.reply.contextTaxonomies
+      : input.reply.contextTaxonomy
+        ? [input.reply.contextTaxonomy]
+        : [];
+    for (const taxonomy of captures) {
+      const taskIndex = taxonomy.providerRequest?.taskIndex ?? 1;
+      const message = assistantMessages[Math.min(Math.max(0, taskIndex - 1), assistantMessages.length - 1)] ?? lastAssistantMessage;
+      if (!message) continue;
+      db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
     }
     return lastAssistantMessage;
   });
@@ -774,22 +781,6 @@ function toExplicitSkillReferences(skills: SkillRecord[]): SkillReference[] {
     description: skill.description,
     instructions: skill.instructions
   }));
-}
-
-function withContextTaxonomy(timeline: ChatTimelineItem[], taxonomy?: ContextTaxonomy): ChatTimelineItem[] {
-  if (!taxonomy) return timeline;
-  const stored = capContextTaxonomyForStorage(taxonomy);
-  return [
-    {
-      id: `context-taxonomy-${crypto.randomUUID()}`,
-      kind: "system",
-      title: "Context taxonomy",
-      text: `${stored.items.length} context item${stored.items.length === 1 ? "" : "s"} captured from ${stored.source}.`,
-      customType: "context-taxonomy",
-      data: stored
-    },
-    ...timeline
-  ];
 }
 
 function shouldPrefetchWebSearch(): boolean {

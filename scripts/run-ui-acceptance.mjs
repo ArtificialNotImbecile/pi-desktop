@@ -61,7 +61,12 @@ try {
     await page.getByRole("button", { name: "Send" }).click();
     await waitForText(".assistant-block", "Mock reply from Jasmine.");
     await capture("04-kimi-chat");
-    await waitForText(".assistant-block .message-run-line", "kimi-k2.6");
+    const latestAssistant = page.locator(".assistant-block").last();
+    const recapToggle = latestAssistant.locator(".run-recap-toggle");
+    if (await recapToggle.getAttribute("aria-expanded") === "false") {
+      await recapToggle.click();
+    }
+    await latestAssistant.locator(".message-run-line").filter({ hasText: "kimi-k2.6" }).waitFor({ state: "visible" });
   });
 
   await acceptanceStep("ACCEPT-004", "Attach image and open lightbox", async () => {

@@ -6,6 +6,12 @@ export function classifyTextSegments(text: string, fallbackKind: ContextTaxonomy
   if (fallbackKind === "tool_definition") return [segment("Tool definition", "tool_definition", 0.98, trimmed)];
   if (fallbackKind === "provider_options") return splitProviderOptionSegments(trimmed) ?? [segment("Provider options", "provider_options", 0.96, trimmed)];
   if (fallbackKind === "raw_payload") return [segment("Raw payload", "raw_payload", 1, trimmed)];
+  // Provider-owned taxonomy tags are instructions only in trusted instruction
+  // roles. User/assistant text that happens to quote `<project_context>` or a
+  // similar tag must remain conversation content.
+  if (!isTrustedInstructionRole(role)) {
+    return [classifyLooseSegment(trimmed, fallbackKind, role)];
+  }
 
   const segments: ContextTaxonomySegment[] = [];
   const tagPattern = taxonomyTagPattern();
@@ -24,7 +30,12 @@ export function classifyTextSegments(text: string, fallbackKind: ContextTaxonomy
 }
 
 export function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
+  // Provider usage is the authoritative total. This estimate is only used to
+  // show composition by part. CJK text is commonly close to one token per
+  // character, while Latin/code prose is closer to four characters per token.
+  const cjk = (text.match(/[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/g) ?? []).length;
+  const other = Math.max(0, text.length - cjk);
+  return Math.max(1, cjk + Math.ceil(other / 4));
 }
 
 export function previewText(text: string): string {
@@ -163,6 +174,8 @@ const TAXONOMY_TAG_NAMES = [
   "skill-manifest",
   "skill_manifests",
   "skill-manifests",
+  "available_skills",
+  "available-skills",
   "prompt_template",
   "prompt-template",
   "prompt_templates",
@@ -194,6 +207,7 @@ function tagKind(tag: string): ContextTaxonomyKind | null {
   if (tag === "developer instructions") return "developer_instructions";
   if (tag === "skill instructions") return "skill_instructions";
   if (tag === "skill manifests" || tag === "skill manifest") return "skill_manifest";
+  if (tag === "available skills") return "skill_manifest";
   if (tag === "prompt template" || tag === "prompt templates") return "prompt_template";
   if (tag === "memory context" || tag === "remembered context") return "memory";
   if (tag === "system prompt") return "system_prompt";

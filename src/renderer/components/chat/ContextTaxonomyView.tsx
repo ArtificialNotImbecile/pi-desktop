@@ -1,378 +1,338 @@
-import { useMemo } from "react";
-import type { ContextTaxonomy, ContextTaxonomyKind, ContextTaxonomySegment } from "../../../shared/ipc";
+import { useMemo, useState, type SyntheticEvent } from "react";
+import type { ContextReasoningValidation, ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyKind, ContextTaxonomyPart, ContextTaxonomySegment } from "../../../shared/ipc";
+import { getBridge } from "../../desktopApi";
 import { looksLikeJson, ShikiCodeBlock } from "../code";
+import { Button } from "../ui";
+import { MarkdownMessage } from "./MarkdownMessage";
 
-type TaxonomySegmentViewModel = ContextTaxonomySegment;
+type CompositionItem = { kind: string; label: string; tokens: number; percent: number; color: string };
 
-type KindBreakdownItem = {
-  kind: ContextTaxonomyKind;
-  label: string;
-  tokens: number;
-  percent: number;
-  color: string;
-};
-
-type TaxonomyGroup = {
-  key: string;
-  label: string;
-  items: ContextTaxonomy["items"];
-  tokens: number;
-};
-
-export function TaxonomyView(props: { taxonomy: ContextTaxonomy }) {
-  const total = useMemo(() => props.taxonomy.items.reduce((sum, item) => sum + item.tokenEstimate, 0), [props.taxonomy]);
-  const counts = useMemo(() => ({
-    messages: props.taxonomy.items.filter((item) => item.source === "provider.payload.messages" || item.source === "session.history" || item.source === "current.prompt" || item.source === "jasmine.systemPrompt").length,
-    tools: props.taxonomy.items.filter((item) => item.kind === "tool_definition" || item.source === "provider.payload.tools").length,
-    options: props.taxonomy.items.filter((item) => item.kind === "provider_options" || item.source === "provider.payload.options").length,
-    segments: props.taxonomy.items.reduce((sum, item) => sum + (item.segments?.length ?? 0), 0)
-  }), [props.taxonomy]);
-  const kindBreakdown = useMemo(() => buildKindBreakdown(props.taxonomy), [props.taxonomy]);
-  const groups = useMemo(() => groupTaxonomyItems(props.taxonomy.items), [props.taxonomy.items]);
+export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: string }) {
+  const estimatedTotal = useMemo(() => taxonomyEstimatedTokens(props.taxonomy), [props.taxonomy]);
+  const composition = useMemo(() => buildComposition(props.taxonomy), [props.taxonomy]);
+  const actualInput = props.taxonomy.cacheMetrics?.inputTokens;
+  const request = props.taxonomy.providerRequest;
 
   return (
     <div className="taxonomy-view">
-      <div className="taxonomy-summary">
+      <header className="taxonomy-summary">
         <div className="taxonomy-summary-main">
           <strong>{props.taxonomy.provider}/{props.taxonomy.model}</strong>
-          <span>{props.taxonomy.source} / schema v{props.taxonomy.payloadSchemaVersion ?? 1} / ~{total.toLocaleString()} tokens</span>
+          <span>
+            {props.taxonomy.source} / schema v{props.taxonomy.payloadSchemaVersion ?? 1}
+            {request ? ` / request ${request.index} of ${request.count}` : ""}
+          </span>
         </div>
-        {props.taxonomy.payloadHash && <span className="taxonomy-summary-hash">payload sha256 {props.taxonomy.payloadHash.slice(0, 12)}</span>}
-        <div className="taxonomy-summary-counts" aria-label="Provider payload counts">
-          <span>{counts.messages} messages</span>
-          <span>{counts.tools} tools</span>
-          <span>{counts.options} options</span>
-          <span>{counts.segments} pieces</span>
+        <div className="taxonomy-summary-counts" aria-label="Context token evidence">
+          {actualInput !== undefined && <span>{actualInput.toLocaleString()} actual input tokens</span>}
+          <span>~{estimatedTotal.toLocaleString()} estimated by part</span>
+          <span>{props.taxonomy.items.length} wire items</span>
         </div>
-      </div>
-      {props.taxonomy.source === "jasmine-assembly" && <TaxonomyAssemblyWarning taxonomy={props.taxonomy} />}
-      {props.taxonomy.providerRequest && <TaxonomyProviderRequestNote taxonomy={props.taxonomy} />}
-      {props.taxonomy.cacheMetrics && <TaxonomyCacheMetrics taxonomy={props.taxonomy} />}
-      {props.taxonomy.payloadShape && <TaxonomyPayloadShape taxonomy={props.taxonomy} />}
-      {kindBreakdown.length > 0 && <TaxonomyComposition items={kindBreakdown} total={total} />}
-      {props.taxonomy.rawPayload && (
-        <details className="taxonomy-raw-payload">
-          <summary>
-            <strong>Raw provider payload</strong>
-            <span>captured at Pi before_provider_request</span>
-          </summary>
-          <ShikiCodeBlock code={props.taxonomy.rawPayload} language="json" kind="json" title="provider payload" />
-        </details>
-      )}
-      <p className="taxonomy-derived-note">Derived rows below are generated from the captured payload for reading. Numbering is presentation order; raw array positions are shown through each payload path.</p>
+        {props.taxonomy.payloadHash && (
+          <span className="taxonomy-summary-hash">full sanitized payload sha256 {props.taxonomy.payloadHash.slice(0, 12)}</span>
+        )}
+      </header>
+
+      {props.taxonomy.source === "jasmine-assembly" && <AssemblyWarning taxonomy={props.taxonomy} />}
+      {props.taxonomy.reasoningValidation && <ReasoningValidationCard validation={props.taxonomy.reasoningValidation} />}
+      {props.taxonomy.cacheMetrics && <CacheMetrics taxonomy={props.taxonomy} />}
+      {composition.length > 0 && <Composition items={composition} estimatedTotal={estimatedTotal} />}
+      {props.taxonomy.payloadShape && <PayloadShape taxonomy={props.taxonomy} />}
+
+      <p className="taxonomy-derived-note">
+        Items follow provider wire order. Text, reasoning, tool calls, and tool results are shown once as separate parts; per-part tokens are estimates.
+      </p>
       <div className="taxonomy-items" aria-label="Derived context taxonomy">
-        {groups.map((group) => (
-          <TaxonomyKindGroup key={group.key} group={group} />
-        ))}
+        {props.taxonomy.items.map((item) => <TaxonomyItemView key={`${item.order}-${item.payloadPath ?? item.source}`} item={item} validation={props.taxonomy.reasoningValidation} />)}
       </div>
+
+      <RawPayload captureId={props.captureId} taxonomy={props.taxonomy} />
     </div>
   );
 }
 
-function TaxonomyAssemblyWarning(props: { taxonomy: ContextTaxonomy }) {
+function AssemblyWarning(props: { taxonomy: ContextTaxonomy }) {
   return (
     <section className="taxonomy-warning-card" aria-label="Reconstructed context taxonomy warning">
       <strong>Reconstructed approximation</strong>
-      <span>Not the exact Pi provider payload. Tool definitions, project context, skills, prompt templates, and provider options may be missing.</span>
-      {props.taxonomy.assemblyReason && <code>reason: {assemblyReasonLabel(props.taxonomy.assemblyReason)}</code>}
+      <span>The exact provider payload was unavailable. Some context parts may be missing.</span>
+      {props.taxonomy.assemblyReason && <code>reason: {props.taxonomy.assemblyReason}</code>}
     </section>
   );
 }
 
-function TaxonomyProviderRequestNote(props: { taxonomy: ContextTaxonomy }) {
-  const request = props.taxonomy.providerRequest;
-  if (!request) return null;
-  const text = request.count > 1
-    ? `Showing provider request ${request.index} of ${request.count}: the latest capture for this assistant turn.`
-    : "Showing the single provider request captured for this assistant turn.";
-  return <p className="taxonomy-provider-request-note">{text}</p>;
+function ReasoningValidationCard(props: { validation: ContextReasoningValidation }) {
+  const validation = props.validation;
+  return (
+    <section className={`taxonomy-validation-card taxonomy-validation-${validation.status}`} aria-label="Reasoning retention validation">
+      <div>
+        <strong>Reasoning retention: {validationStatusLabel(validation.status)}</strong>
+        <span>{policyLabel(validation.policyId)}</span>
+      </div>
+      <p>{validation.summary}</p>
+      {validation.requiredCount > 0 && <small>{validation.sentCount}/{validation.requiredCount} required blocks present</small>}
+      {validation.policySource && <a href={validation.policySource} target="_blank" rel="noreferrer">Provider policy</a>}
+    </section>
+  );
 }
 
-function TaxonomyCacheMetrics(props: { taxonomy: ContextTaxonomy }) {
-  const metrics = props.taxonomy.cacheMetrics;
-  if (!metrics) return null;
+function CacheMetrics(props: { taxonomy: ContextTaxonomy }) {
+  const metrics = props.taxonomy.cacheMetrics!;
   return (
     <section className={`taxonomy-cache-card taxonomy-cache-card-${metrics.status}`} aria-label="Provider cache evidence">
       <div className="taxonomy-cache-heading">
-        <strong>Cache evidence</strong>
-        <span>{Math.round(metrics.hitRate * 1000) / 10}% hit from provider usage</span>
+        <strong>Provider usage</strong>
+        <span>{Math.round(metrics.hitRate * 1000) / 10}% cache hit</span>
       </div>
       <div className="taxonomy-cache-meter" aria-label={`Cache hit rate ${Math.round(metrics.hitRate * 100)} percent`}>
         <span style={{ width: `${Math.max(0, Math.min(100, metrics.hitRate * 100))}%` }} />
       </div>
       <div className="taxonomy-cache-stats">
+        <span>{metrics.inputTokens.toLocaleString()} input</span>
         <span>{metrics.cacheHitTokens.toLocaleString()} hit</span>
         <span>{metrics.cacheMissTokens.toLocaleString()} miss</span>
-        {metrics.cacheWriteTokens > 0 && <span>{metrics.cacheWriteTokens.toLocaleString()} write</span>}
-        <span>{metrics.inputTokens.toLocaleString()} input</span>
+        <span>{metrics.outputTokens.toLocaleString()} output</span>
       </div>
-      <p>{metrics.note} This is evidence from the provider response, not inferred from JSON key order.</p>
     </section>
   );
 }
 
-function TaxonomyPayloadShape(props: { taxonomy: ContextTaxonomy }) {
-  const shape = props.taxonomy.payloadShape;
-  if (!shape || shape.topLevelOrder.length === 0) return null;
+function Composition(props: { items: CompositionItem[]; estimatedTotal: number }) {
   return (
-    <section className="taxonomy-payload-shape" aria-label="Provider payload shape">
-      <div className="taxonomy-payload-heading">
-        <strong>Payload shape</strong>
-        <span>{shape.messageCount ?? 0} messages / {shape.toolCount ?? 0} tools</span>
-      </div>
-      <div className="taxonomy-payload-order" aria-label="Top-level provider payload order">
-        {shape.topLevelOrder.map((key, index) => (
-          <span key={`${key}-${index}`}>
-            {index > 0 && <i aria-hidden="true">{"->"}</i>}
-            <code>{key}</code>
-          </span>
-        ))}
-      </div>
-      <p>Top-level keys are the raw JSON order. Message/tool rows below follow that relative order; provider options are an aggregate view, not a single wire position.</p>
-    </section>
-  );
-}
-
-function TaxonomyComposition(props: { items: KindBreakdownItem[]; total: number }) {
-  return (
-    <section className="taxonomy-composition" aria-label="Context composition by kind">
+    <section className="taxonomy-composition" aria-label="Estimated context composition">
       <div className="taxonomy-composition-heading">
-        <strong>Composition</strong>
-        <span>~{props.total.toLocaleString()} tokens by context kind</span>
+        <strong>Estimated composition</strong>
+        <span>~{props.estimatedTotal.toLocaleString()} tokens</span>
       </div>
       <div className="taxonomy-composition-bar" aria-hidden="true">
-        {props.items.map((item) => (
-          <span key={item.kind} style={{ width: `${Math.max(3, item.percent)}%`, background: item.color }} />
-        ))}
+        {props.items.map((item) => <span key={item.kind} style={{ width: `${Math.max(2, item.percent)}%`, background: item.color }} />)}
       </div>
       <div className="taxonomy-composition-list">
         {props.items.map((item) => (
-          <span key={item.kind}>
-            <i style={{ background: item.color }} aria-hidden="true" />
-            {item.label} ~{item.tokens.toLocaleString()} ({Math.round(item.percent)}%)
-          </span>
+          <span key={item.kind}><i style={{ background: item.color }} aria-hidden="true" />{item.label} ~{item.tokens.toLocaleString()} ({Math.round(item.percent)}%)</span>
         ))}
       </div>
     </section>
   );
 }
 
-function TaxonomyKindGroup(props: { group: TaxonomyGroup }) {
+function PayloadShape(props: { taxonomy: ContextTaxonomy }) {
+  const shape = props.taxonomy.payloadShape!;
+  if (shape.topLevelOrder.length === 0) return null;
   return (
-    <section className="taxonomy-kind-group">
-      <details open>
-        <summary>
-          <strong>{props.group.label}</strong>
-          <span>{props.group.items.length} item{props.group.items.length === 1 ? "" : "s"} / ~{props.group.tokens.toLocaleString()} tokens</span>
-        </summary>
-        <div className="taxonomy-kind-group-items">
-          {props.group.items.map((item) => (
-            <TaxonomyItemView key={`${item.order}-${item.source}-${item.role}`} item={item} />
-          ))}
-        </div>
-      </details>
-    </section>
+    <details className="taxonomy-payload-shape">
+      <summary><strong>Payload shape</strong><span>{shape.messageCount ?? 0} messages / {shape.toolCount ?? 0} tools</span></summary>
+      <div className="taxonomy-payload-order">
+        {shape.topLevelOrder.map((key, index) => <span key={`${key}-${index}`}>{index > 0 && <i aria-hidden="true">→</i>}<code>{key}</code></span>)}
+      </div>
+    </details>
   );
 }
 
-function TaxonomyItemView(props: { item: ContextTaxonomy["items"][number] }) {
-  const segments = props.item.segments ?? [];
-  const openByDefault = props.item.kind === "current_user_prompt" || props.item.kind === "tool_definition" || props.item.source === "provider.payload.tools";
-  const title = taxonomyItemTitle(props.item);
-  const confidence = confidenceText(props.item.confidence, props.item.kind);
+function TaxonomyItemView(props: { item: ContextTaxonomyItem; validation?: ContextReasoningValidation }) {
+  const item = props.item;
+  const parts = item.parts ?? [];
+  const segments = item.segments ?? [];
+  const useInstructionSegments = (item.role === "system" || item.role === "developer") && segments.length > 1;
+  const open = item.kind === "current_user_prompt" || item.kind === "tool_definition";
   return (
     <article className="taxonomy-item">
-      <details className="taxonomy-item-details" open={openByDefault}>
+      <details className="taxonomy-item-details" open={open}>
         <summary>
-          <b title="Presentation order">{props.item.order}</b>
-          <span className="taxonomy-item-title">
-            <strong>{title}</strong>
-            <small>{props.item.source}</small>
-          </span>
-          {props.item.kind && <span className="taxonomy-kind-pill">{kindLabel(props.item.kind)}</span>}
+          <b title="Wire presentation order">{item.order}</b>
+          <span className="taxonomy-item-title"><strong>{itemTitle(item)}</strong><small>{item.role} · {item.payloadPath ?? item.source}</small></span>
+          {item.kind && <span className="taxonomy-kind-pill">{kindLabel(item.kind)}</span>}
         </summary>
         <div className="taxonomy-item-meta">
-          <span>{props.item.label}</span>
-          <span>presentation item {props.item.order}</span>
-          {props.item.payloadPath && <code>{props.item.payloadPath}</code>}
-          <span>~{props.item.tokenEstimate.toLocaleString()} tokens</span>
-          {confidence && <span>{confidence}</span>}
+          <span>{item.label}</span><span>~{item.tokenEstimate.toLocaleString()} estimated tokens</span>
         </div>
-        {segments.length === 0 && <p className="taxonomy-preview">{props.item.preview}</p>}
-        {segments.length === 1 && <p className="taxonomy-preview">{props.item.preview}</p>}
-        <TaxonomySegments segments={segments} itemTitle={title} />
+        {parts.length > 0 && !useInstructionSegments
+          ? <div className="taxonomy-parts">{parts.map((part) => <TaxonomyPartView key={`${part.order}-${part.payloadPath ?? part.title}`} part={part} validation={props.validation} openByDefault={item.kind === "current_user_prompt"} />)}</div>
+          : segments.length > 0
+            ? <LegacySegments segments={segments} />
+            : <RenderedBody text={item.text ?? item.preview} format={looksLikeJson(item.text ?? "") ? "json" : "markdown"} title={item.label} />}
       </details>
     </article>
   );
 }
 
-function taxonomyItemTitle(item: ContextTaxonomy["items"][number]): string {
-  if (item.kind === "tool_definition" || item.source === "provider.payload.tools") return item.label.replace(/^Tool definition:?\s*/i, "Tool: ");
-  if (item.kind === "provider_options" || item.source === "provider.payload.options") return "Request options";
-  if (item.kind === "current_user_prompt") return "Current user prompt";
-  if (item.kind === "conversation_history") return "Conversation history";
-  if (item.kind === "system_prompt") return "System prompt";
-  if (item.kind === "developer_instructions") return "Developer instructions";
-  if (item.kind === "provider_message") return item.role;
-  return item.role;
+function TaxonomyPartView(props: { part: ContextTaxonomyPart; validation?: ContextReasoningValidation; openByDefault?: boolean }) {
+  const part = props.part;
+  const failedReasoning = part.kind === "reasoning" && props.validation?.status === "fail";
+  return (
+    <details className={`taxonomy-part taxonomy-part-${part.kind}`} open={props.openByDefault || failedReasoning || part.kind === "tool_call" || part.kind === "tool_result"}>
+      <summary>
+        <span>{part.title}</span>
+        <small>
+          {part.toolName ? `${part.toolName} · ` : ""}{part.toolCallId ? `${part.toolCallId} · ` : ""}~{part.tokenEstimate.toLocaleString()} tokens
+        </small>
+      </summary>
+      <RenderedBody text={part.text} format={part.format} title={part.title} />
+    </details>
+  );
 }
 
-function TaxonomySegments(props: { segments: TaxonomySegmentViewModel[]; itemTitle: string }) {
-  if (props.segments.length === 0) return null;
+function LegacySegments(props: { segments: ContextTaxonomySegment[] }) {
   return (
-    <div className="taxonomy-segments" aria-label={`Context pieces for ${props.itemTitle}`}>
-      {props.segments.map((segment, index) => {
-        const confidence = confidenceText(segment.confidence, segment.kind);
-        return (
-          <details key={`${segment.title}-${segment.kind}-${index}`} className="taxonomy-segment" open={shouldOpenTaxonomySegment(segment, props.segments.length)}>
-            <summary>
-              <span>{segment.title}</span>
-              <small>{kindLabel(segment.kind)} / ~{segment.tokenEstimate.toLocaleString()} tokens{confidence ? ` / ${confidence}` : ""}</small>
-            </summary>
-            <ShikiCodeBlock
-              code={segment.text}
-              language={taxonomySegmentLanguage(segment)}
-              kind={looksLikeJson(segment.text) ? "json" : "code"}
-              title={segment.title}
-            />
-          </details>
-        );
-      })}
+    <div className="taxonomy-parts">
+      {props.segments.map((segment, index) => (
+        <details key={`${segment.kind}-${index}`} className="taxonomy-part" open={segment.kind === "current_user_prompt"}>
+          <summary><span>{segment.title}</span><small>~{segment.tokenEstimate.toLocaleString()} tokens</small></summary>
+          <RenderedBody text={segment.text} format={looksLikeJson(segment.text) ? "json" : "markdown"} title={segment.title} />
+        </details>
+      ))}
     </div>
   );
 }
 
-function buildKindBreakdown(taxonomy: ContextTaxonomy): KindBreakdownItem[] {
-  const tokensByKind = new Map<ContextTaxonomyKind, number>();
-  for (const item of taxonomy.items) {
-    if (item.segments?.length) {
-      for (const segment of item.segments) {
-        tokensByKind.set(segment.kind, (tokensByKind.get(segment.kind) ?? 0) + segment.tokenEstimate);
-      }
-      continue;
+function RenderedBody(props: { text: string; format: "text" | "markdown" | "json"; title: string }) {
+  if (props.format === "json") return <ShikiCodeBlock code={props.text} language="json" kind="json" title={props.title} />;
+  return <MarkdownMessage content={props.text} onCopyCode={(text) => { void getBridge().writeClipboardText(text); }} />;
+}
+
+function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
+  const [text, setText] = useState("");
+  const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadMore = async () => {
+    if (loading || done || props.taxonomy.rawState === "unavailable") return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await getBridge().getContextTaxonomyRaw({ captureId: props.captureId, offset: text.length, length: 65_536 });
+      setText((current) => current + response.text);
+      setDone(response.done);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
     }
-    const kind = item.kind ?? "unknown";
-    tokensByKind.set(kind, (tokensByKind.get(kind) ?? 0) + item.tokenEstimate);
-  }
-  const total = Array.from(tokensByKind.values()).reduce((sum, value) => sum + value, 0);
-  return Array.from(tokensByKind.entries())
-    .map(([kind, tokens]) => ({
-      kind,
-      label: kindLabel(kind),
-      tokens,
-      percent: total > 0 ? (tokens / total) * 100 : 0,
-      color: kindColor(kind)
-    }))
-    .sort((first, second) => second.tokens - first.tokens);
-}
-
-function groupTaxonomyItems(items: ContextTaxonomy["items"]): TaxonomyGroup[] {
-  const groups = new Map<string, TaxonomyGroup>();
-  for (const item of items) {
-    const key = groupKey(item.kind ?? "unknown");
-    const label = groupLabel(key);
-    const group = groups.get(key) ?? { key, label, items: [], tokens: 0 };
-    group.items.push(item);
-    group.tokens += item.tokenEstimate;
-    groups.set(key, group);
-  }
-  return Array.from(groups.values()).sort((first, second) => first.items[0].order - second.items[0].order);
-}
-
-function groupKey(kind: ContextTaxonomyKind): string {
-  if (kind === "system_prompt" || kind === "developer_instructions") return "system";
-  if (kind === "project_context") return "project";
-  if (kind === "skill_manifest" || kind === "skill_instructions" || kind === "prompt_template") return "skills";
-  if (kind === "conversation_history" || kind === "provider_message" || kind === "attachment") return "history";
-  if (kind === "current_user_prompt") return "current";
-  if (kind === "tool_definition") return "tools";
-  if (kind === "provider_options") return "options";
-  if (kind === "memory") return "memory";
-  return "other";
-}
-
-function groupLabel(key: string): string {
-  const labels: Record<string, string> = {
-    system: "System and developer",
-    project: "Project context",
-    skills: "Skills and templates",
-    history: "Conversation history",
-    current: "Current prompt",
-    tools: "Tools",
-    options: "Provider options",
-    memory: "Memory",
-    other: "Other context"
   };
-  return labels[key] ?? "Other context";
+
+  const onToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
+    if (event.currentTarget.open && !text && !done) void loadMore();
+  };
+
+  const copyFull = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      let offset = 0;
+      let complete = false;
+      const chunks: string[] = [];
+      while (!complete) {
+        const response = await getBridge().getContextTaxonomyRaw({ captureId: props.captureId, offset, length: 65_536 });
+        chunks.push(response.text);
+        offset += response.text.length;
+        complete = response.done || response.text.length === 0;
+      }
+      await getBridge().writeClipboardText(chunks.join(""));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <details className="taxonomy-raw-payload" onToggle={onToggle}>
+      <summary>
+        <span><strong>Sanitized raw provider payload</strong><small>{rawStateLabel(props.taxonomy.rawState)} · {(props.taxonomy.rawByteCount ?? 0).toLocaleString()} bytes gzip-backed</small></span>
+        <Button size="sm" variant="quiet" disabled={props.taxonomy.rawState === "unavailable" || loading} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void copyFull(); }}>{copied ? "Copied" : "Copy full"}</Button>
+      </summary>
+      {error && <p className="taxonomy-raw-error">{error}</p>}
+      {text && <ShikiCodeBlock code={text} language="json" kind="json" title="sanitized provider payload" />}
+      {!done && props.taxonomy.rawState !== "unavailable" && <Button className="taxonomy-load-more" size="sm" variant="quiet" loading={loading} onClick={() => void loadMore()}>{loading ? "Loading…" : "Load next 64 KiB"}</Button>}
+      {props.taxonomy.rawState === "unavailable" && <p className="taxonomy-raw-error">Raw payload was not available for this legacy or reconstructed capture.</p>}
+    </details>
+  );
 }
 
-function taxonomySegmentLanguage(segment: TaxonomySegmentViewModel): string {
-  if (segment.kind === "tool_definition" || segment.kind === "provider_options" || segment.kind === "raw_payload" || looksLikeJson(segment.text)) return "json";
-  if (["project_context", "skill_manifest", "skill_instructions", "system_prompt", "developer_instructions", "prompt_template", "memory"].includes(segment.kind)) return "markdown";
-  return "text";
+function taxonomyEstimatedTokens(taxonomy: ContextTaxonomy): number {
+  return taxonomy.items.reduce((total, item) => {
+    const useInstructionSegments = (item.role === "system" || item.role === "developer") && (item.segments?.length ?? 0) > 1;
+    return total + (item.parts?.length && !useInstructionSegments
+    ? item.parts.reduce((sum, part) => sum + part.tokenEstimate, 0)
+    : item.segments?.length
+      ? item.segments.reduce((sum, segment) => sum + segment.tokenEstimate, 0)
+      : item.tokenEstimate);
+  }, 0);
 }
 
-function shouldOpenTaxonomySegment(segment: TaxonomySegmentViewModel, segmentCount: number): boolean {
-  if (segment.kind === "tool_definition") return true;
-  return segmentCount === 1 && segment.text.length < 900;
+function buildComposition(taxonomy: ContextTaxonomy): CompositionItem[] {
+  const values = new Map<string, number>();
+  for (const item of taxonomy.items) {
+    const useInstructionSegments = (item.role === "system" || item.role === "developer") && (item.segments?.length ?? 0) > 1;
+    if (item.parts?.length && !useInstructionSegments) {
+      for (const part of item.parts) values.set(part.kind, (values.get(part.kind) ?? 0) + part.tokenEstimate);
+    } else if (item.segments?.length) {
+      for (const segment of item.segments) values.set(segment.kind, (values.get(segment.kind) ?? 0) + segment.tokenEstimate);
+    } else {
+      const kind = item.kind ?? "unknown";
+      values.set(kind, (values.get(kind) ?? 0) + item.tokenEstimate);
+    }
+  }
+  const total = Array.from(values.values()).reduce((sum, value) => sum + value, 0);
+  return Array.from(values.entries()).map(([kind, tokens]) => ({
+    kind, label: partOrKindLabel(kind), tokens, percent: total ? tokens / total * 100 : 0, color: compositionColor(kind)
+  })).sort((left, right) => right.tokens - left.tokens);
+}
+
+function itemTitle(item: ContextTaxonomyItem): string {
+  if (item.kind === "tool_definition") return item.label.replace(/^Tool definition:?\s*/i, "Tool: ");
+  if (item.kind === "provider_options") return "Request options";
+  if (item.kind === "current_user_prompt") return "Current user prompt";
+  if (item.kind === "conversation_history") return "Conversation history";
+  if (item.kind === "system_prompt") return "System prompt";
+  return item.label || item.role;
 }
 
 function kindLabel(kind: ContextTaxonomyKind): string {
   const labels: Record<ContextTaxonomyKind, string> = {
-    system_prompt: "System prompt",
-    developer_instructions: "Developer instructions",
-    project_context: "Project context",
-    skill_manifest: "Skill manifest",
-    skill_instructions: "Skill instructions",
-    prompt_template: "Prompt template",
-    memory: "Memory",
-    conversation_history: "History",
-    current_user_prompt: "Current prompt",
-    tool_definition: "Tool",
-    provider_options: "Options",
-    attachment: "Attachment",
-    provider_message: "Provider message",
-    raw_payload: "Raw payload",
-    unknown: "Unknown"
+    system_prompt: "System", developer_instructions: "Developer", project_context: "Project", skill_manifest: "Skills",
+    skill_instructions: "Skill instructions", prompt_template: "Template", memory: "Memory", conversation_history: "History",
+    current_user_prompt: "Current prompt", tool_definition: "Tool", provider_options: "Options", attachment: "Attachment",
+    provider_message: "Provider message", raw_payload: "Raw", unknown: "Unknown"
   };
   return labels[kind];
 }
 
-function kindColor(kind: ContextTaxonomyKind): string {
-  const colors: Record<ContextTaxonomyKind, string> = {
-    system_prompt: "var(--ink)",
-    developer_instructions: "var(--muted)",
-    project_context: "var(--success)",
-    skill_manifest: "var(--accent)",
-    skill_instructions: "var(--accent)",
-    prompt_template: "color-mix(in srgb, var(--accent) 72%, var(--success))",
-    memory: "var(--success)",
-    conversation_history: "var(--muted)",
-    current_user_prompt: "var(--accent)",
-    tool_definition: "color-mix(in srgb, var(--accent) 72%, var(--danger))",
-    provider_options: "color-mix(in srgb, var(--success) 70%, var(--danger))",
-    attachment: "var(--danger)",
-    provider_message: "var(--muted)",
-    raw_payload: "var(--ink)",
-    unknown: "var(--faint)"
-  };
-  return colors[kind];
+function partOrKindLabel(kind: string): string {
+  const labels: Record<string, string> = { text: "Text", reasoning: "Reasoning", tool_call: "Tool calls", tool_result: "Tool results", attachment: "Attachments", refusal: "Refusal", metadata: "Metadata" };
+  return labels[kind] ?? kindLabel(kind as ContextTaxonomyKind) ?? kind;
 }
 
-function confidenceText(confidence: number | undefined, kind: ContextTaxonomyKind | undefined): string | null {
-  if (typeof confidence !== "number") return null;
-  if (!kind) return null;
-  if (confidence <= 0.75 || kind === "provider_message" || kind === "unknown") {
-    return `${Math.round(confidence * 100)}% inferred`;
-  }
-  return null;
+function compositionColor(kind: string): string {
+  if (kind === "reasoning") return "var(--accent)";
+  if (kind === "tool_call" || kind === "tool_definition") return "color-mix(in srgb, var(--accent) 68%, var(--danger))";
+  if (kind === "tool_result") return "var(--success)";
+  if (kind === "current_user_prompt") return "var(--accent)";
+  if (kind === "attachment") return "var(--danger)";
+  return "var(--muted)";
 }
 
-function assemblyReasonLabel(reason: NonNullable<ContextTaxonomy["assemblyReason"]>): string {
-  const labels: Record<NonNullable<ContextTaxonomy["assemblyReason"]>, string> = {
-    mock: "mock runtime",
-    "no-capture": "no provider capture",
-    "extension-missing": "capture extension missing"
-  };
-  return labels[reason];
+function validationStatusLabel(status: ContextReasoningValidation["status"]): string {
+  return ({ pass: "Pass", fail: "Missing required context", not_applicable: "Not required", unknown: "Unknown" } as const)[status];
+}
+
+function policyLabel(policy: ContextReasoningValidation["policyId"]): string {
+  return ({
+    "deepseek-tool-interval-v1": "DeepSeek tool-interval policy",
+    "kimi-k3-preserved-v1": "Kimi K3 preserved thinking",
+    "kimi-k2.7-preserved-v1": "Kimi K2.7 preserved thinking",
+    "kimi-k2.6-configurable-v1": "Kimi K2.6 configurable thinking",
+    "kimi-k2.5-unsupported-v1": "Kimi K2.5",
+    unknown: "Unregistered policy"
+  } as const)[policy];
+}
+
+function rawStateLabel(state: ContextTaxonomy["rawState"]): string {
+  if (state === "legacy_truncated") return "Legacy truncated raw";
+  if (state === "unavailable") return "Raw unavailable";
+  return "Complete raw";
 }

@@ -142,6 +142,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       provider: input.provider.providerName,
       model: input.provider.modelId,
       currentUserPromptText: currentPromptAnchorText,
+      getCanonicalMessages: () => sessionManager.buildSessionContext().messages,
       onCapture: input.onContextTaxonomy
     })] } : {})
   };

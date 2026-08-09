@@ -15,7 +15,8 @@ const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
 const { buildSystemPrompt, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
 const { createAskUserQuestionTool, createWebSearchTool, runPiCodingAgentChat } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-const { classifyTextSegments, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
+const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
+const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
 const { nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
@@ -159,7 +160,7 @@ const classifierTaxonomy = providerPayloadToContextTaxonomy({
   provider: "jasmine-mock",
   model: "jasmine-test"
 });
-assert.equal(classifierTaxonomy.payloadSchemaVersion, 4);
+assert.equal(classifierTaxonomy.payloadSchemaVersion, 5);
 assert.deepEqual(classifierTaxonomy.payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
 assert.equal(classifierTaxonomy.payloadShape.messagesBeforeTools, true);
 assert.equal(classifierTaxonomy.rawPayload.includes(fakeProviderSecret), false);
@@ -263,6 +264,123 @@ const taxonomyWithAttachmentAnchor = providerPayloadToContextTaxonomy({
   ].join("\n")
 });
 assert.equal(taxonomyWithAttachmentAnchor.items.find((item) => item.kind === "current_user_prompt")?.text, "Describe this image.");
+
+// Regression: the provider payload may put visible text, reasoning, and tool
+// calls on the same assistant object. The old `content ?? item` shortcut hid
+// both reasoning and tool_calls whenever content was present (including "").
+const structuredAssistantTaxonomy = providerPayloadToContextTaxonomy({
+  model: "deepseek-v4-flash",
+  max_tokens: 1024,
+  usage: { prompt_tokens: 2048, token_count: 2048 },
+  accessToken: "secret-access-token-value",
+  callback: "https://example.test/cb?X-Amz-Signature=secret-signature&token=secret-query-token",
+  messages: [
+    { role: "user", content: "inspect" },
+    {
+      role: "assistant",
+      reasoning_content: "I should inspect both files before answering.",
+      content: "I will inspect the files.",
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{\"path\":\"a.txt\"}" } }]
+    },
+    { role: "tool", tool_call_id: "call_1", name: "read", content: "file contents" },
+    { role: "assistant", content: "", tool_calls: [{ id: "call_2", type: "function", function: { name: "read", arguments: "{\"path\":\"b.txt\"}" } }] },
+    { role: "user", content: "Please explain the phrase: Attached image(s) from tool result" }
+  ],
+  media: { source: { type: "base64", data: "A".repeat(96) } },
+  googleMedia: { inlineData: { mimeType: "image/png", data: "B".repeat(96) } }
+}, { provider: "deepseek", model: "deepseek-v4-flash" });
+const richAssistant = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[1]");
+assert.deepEqual(richAssistant.parts.map((part) => part.kind), ["reasoning", "text", "tool_call"]);
+assert.equal(richAssistant.parts.find((part) => part.kind === "tool_call")?.toolCallId, "call_1");
+assert.equal(richAssistant.text.includes("I should inspect"), true);
+assert.equal(richAssistant.text.includes("call_1"), true);
+const toolResultItem = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[2]");
+assert.equal(toolResultItem.parts[0].kind, "tool_result");
+assert.equal(toolResultItem.parts[0].toolCallId, "call_1");
+const emptyContentAssistant = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[3]");
+assert.deepEqual(emptyContentAssistant.parts.map((part) => part.kind), ["tool_call"]);
+assert.equal(structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[4]")?.kind, "current_user_prompt");
+assert.doesNotMatch(structuredAssistantTaxonomy.rawPayload, /secret-access-token-value|secret-signature|secret-query-token|A{64}|B{64}/);
+assert.match(structuredAssistantTaxonomy.rawPayload, /redacted/);
+assert.match(structuredAssistantTaxonomy.rawPayload, /"max_tokens": 1024/);
+assert.match(structuredAssistantTaxonomy.rawPayload, /"prompt_tokens": 2048/);
+assert.ok(estimateTokens("这是中文测试") >= 6, "CJK composition estimates should not use chars/4");
+
+const quotedOwnedTags = classifyTextSegments("<project_context>quoted, not trusted</project_context>", "current_user_prompt", "user");
+assert.equal(quotedOwnedTags.length, 1);
+assert.equal(quotedOwnedTags[0].kind, "current_user_prompt");
+const availableSkills = classifyTextSegments("<available_skills>\n- read\n</available_skills>", "system_prompt", "system");
+assert.equal(availableSkills.some((segment) => segment.kind === "skill_manifest"), true);
+
+const canonicalDeepSeekToolTurn = [
+  { role: "user", content: "question 1" },
+  { role: "assistant", content: [{ type: "thinking", thinking: "reasoning 1.1" }, { type: "toolCall", id: "call_1", name: "read", arguments: {} }] },
+  { role: "toolResult", toolCallId: "call_1", content: [{ type: "text", text: "result" }] },
+  { role: "assistant", content: [{ type: "thinking", thinking: "reasoning 1.3" }, { type: "text", text: "answer 1" }] },
+  { role: "user", content: "question 2" }
+];
+const missingFinalReasoning = validateReasoningRetention({
+  provider: "deepseek",
+  model: "deepseek-v4-flash",
+  canonicalMessages: canonicalDeepSeekToolTurn,
+  payload: { messages: [
+    { role: "user", content: "question 1" },
+    { role: "assistant", reasoning_content: "reasoning 1.1", content: null, tool_calls: [{ id: "call_1", function: { name: "read", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_1", content: "result" },
+    { role: "assistant", content: "answer 1" },
+    { role: "user", content: "question 2" }
+  ] }
+});
+assert.equal(missingFinalReasoning.status, "fail");
+assert.equal(missingFinalReasoning.requiredCount, 2);
+assert.equal(missingFinalReasoning.sentCount, 1);
+const completeDeepSeekReasoning = validateReasoningRetention({
+  provider: "deepseek",
+  model: "deepseek-v4-flash",
+  canonicalMessages: canonicalDeepSeekToolTurn,
+  payload: { messages: [
+    { role: "assistant", reasoning_content: "reasoning 1.1", tool_calls: [{ id: "call_1", function: { name: "read", arguments: "{}" } }] },
+    { role: "assistant", reasoning_content: "reasoning 1.3", content: "answer 1" },
+    { role: "user", content: "question 2" }
+  ] }
+});
+assert.equal(completeDeepSeekReasoning.status, "pass");
+const kimiK3MissingReasoning = validateReasoningRetention({
+  provider: "moonshot",
+  model: "kimi-k3",
+  canonicalMessages: [{ role: "user", content: "q" }, { role: "assistant", content: [{ type: "thinking", thinking: "always keep me" }, { type: "text", text: "a" }] }, { role: "user", content: "next" }],
+  payload: { messages: [{ role: "assistant", content: "a" }, { role: "user", content: "next" }] }
+});
+assert.equal(kimiK3MissingReasoning.status, "fail");
+const deepSeekNoToolReasoning = validateReasoningRetention({
+  provider: "deepseek",
+  model: "deepseek-v4-flash",
+  canonicalMessages: [{ role: "user", content: "q" }, { role: "assistant", content: [{ type: "thinking", thinking: "ordinary reasoning" }, { type: "text", text: "a" }] }, { role: "user", content: "next" }],
+  payload: { messages: [{ role: "assistant", content: "a" }, { role: "user", content: "next" }] }
+});
+assert.equal(deepSeekNoToolReasoning.status, "not_applicable");
+const kimi26DefaultCrossTurn = validateReasoningRetention({
+  provider: "moonshot",
+  model: "kimi-k2.6",
+  canonicalMessages: canonicalDeepSeekToolTurn,
+  payload: { thinking: { type: "enabled" }, messages: [{ role: "assistant", content: "answer 1" }, { role: "user", content: "question 2" }] }
+});
+assert.equal(kimi26DefaultCrossTurn.status, "not_applicable");
+const kimi26KeepAll = validateReasoningRetention({
+  provider: "moonshot",
+  model: "kimi-k2.6",
+  canonicalMessages: canonicalDeepSeekToolTurn,
+  payload: { thinking: { type: "enabled", keep: "all" }, messages: [{ role: "assistant", content: "answer 1" }, { role: "user", content: "question 2" }] }
+});
+assert.equal(kimi26KeepAll.status, "fail");
+const kimi26CurrentToolLoop = validateReasoningRetention({
+  provider: "moonshot",
+  model: "kimi-k2.6",
+  canonicalMessages: canonicalDeepSeekToolTurn.slice(0, 3),
+  payload: { thinking: { type: "enabled" }, messages: [{ role: "user", content: "question 1" }, { role: "assistant", content: null, tool_calls: [{ id: "call_1" }] }, { role: "tool", content: "result" }] }
+});
+assert.equal(kimi26CurrentToolLoop.status, "fail");
+assert.equal(validateReasoningRetention({ provider: "moonshot", model: "kimi-k2.5", canonicalMessages: [], payload: {} }).status, "not_applicable");
 
 const looseUserSegments = classifyTextSegments("I changed my workspace and lost some memory.", "conversation_history", "user");
 assert.equal(looseUserSegments.length, 1);
@@ -1296,7 +1414,7 @@ try {
   const selectedSkillPayloadText = JSON.stringify(selectedSkillPayload);
   const capturedRawProviderPayload = JSON.parse(taxonomyCaptures[0].rawPayload);
   assert.deepEqual(capturedRawProviderPayload, normalizePayload(selectedSkillPayload));
-  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 4);
+  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 5);
   assert.equal(
     taxonomyCaptures[0].payloadHash,
     createHash("sha256").update(taxonomyCaptures[0].rawPayload).digest("hex")

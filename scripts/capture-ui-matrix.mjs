@@ -134,7 +134,7 @@ try {
   if (await systemTaxonomy.count()) {
     await systemTaxonomy.locator(".taxonomy-item-details > summary").click();
   }
-  const projectSegment = page.locator(".taxonomy-segment", { hasText: "Project context" });
+  const projectSegment = page.locator(".taxonomy-part", { hasText: "Project context" });
   if (await projectSegment.count()) {
     await projectSegment.locator("summary").click();
   }

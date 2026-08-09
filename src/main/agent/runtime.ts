@@ -16,6 +16,7 @@ export type AssistantReply = {
   timeline: ChatTimelineItem[];
   webSearchUsed: WebSearchResult[];
   contextTaxonomy?: ContextTaxonomy;
+  contextTaxonomies?: ContextTaxonomy[];
   generatedMessages?: RuntimeGeneratedMessage[];
 };
 
@@ -175,6 +176,18 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }]
       };
     }
+    const structuredTaxonomy = lastUserText.toLowerCase().includes("structured taxonomy") ? mockStructuredTaxonomy(provider) : null;
+    const mockTaxonomy = structuredTaxonomy ?? buildAssemblyTaxonomy({
+      provider,
+      systemPrompt,
+      messages: request.messages,
+      content: parsed.content,
+      attachments: request.attachments ?? [],
+      reason: "mock"
+    });
+    const mockTaxonomies = structuredTaxonomy
+      ? [1, 2].map((index) => ({ ...structuredTaxonomy, providerRequest: { index, count: 2, taskIndex: 1, policy: "task-capture" as const } }))
+      : [mockTaxonomy];
     return {
       content,
       model: provider.modelId,
@@ -184,16 +197,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         reasoningEffort: parsed.reasoningEffort
       }),
       webSearchUsed: request.webSearchContext ?? [],
-      contextTaxonomy: lastUserText.toLowerCase().includes("structured taxonomy")
-        ? mockStructuredTaxonomy(provider)
-        : buildAssemblyTaxonomy({
-            provider,
-            systemPrompt,
-            messages: request.messages,
-            content: parsed.content,
-            attachments: request.attachments ?? [],
-            reason: "mock"
-          }),
+      contextTaxonomy: mockTaxonomies.at(-1),
+      contextTaxonomies: mockTaxonomies,
       generatedMessages: mockQueue.generatedMessages
     };
   }
@@ -237,22 +242,26 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     console.warn("[context-taxonomy] Falling back to Jasmine assembly taxonomy because no Pi provider payload capture was emitted.");
   }
 
+  const scopedTaxonomies = groupProviderRequestCaptures(capturedTaxonomies);
+  const fallbackTaxonomy = capturedTaxonomies.length === 0
+    ? buildAssemblyTaxonomy({
+        provider,
+        systemPrompt,
+        messages: request.messages,
+        content: parsed.content,
+        attachments: request.attachments ?? [],
+        reason: "no-capture"
+      })
+    : undefined;
+
   return {
     content: normalizedResult.content,
     model: provider.modelId,
     elapsedMs: Date.now() - startedAt,
     timeline: normalizedResult.timeline,
     webSearchUsed: result.webSearchUsed,
-    contextTaxonomy: capturedTaxonomies.length > 0
-      ? withProviderRequestScope(capturedTaxonomies.at(-1)!, capturedTaxonomies.length)
-      : buildAssemblyTaxonomy({
-          provider,
-          systemPrompt,
-          messages: request.messages,
-          content: parsed.content,
-          attachments: request.attachments ?? [],
-          reason: "no-capture"
-        }),
+    contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
+    contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
     generatedMessages: result.generatedMessages
   };
 }
@@ -634,15 +643,24 @@ function buildAssemblyTaxonomy(input: {
   };
 }
 
-function withProviderRequestScope(taxonomy: ContextTaxonomy, count: number): ContextTaxonomy {
-  return {
-    ...taxonomy,
+function groupProviderRequestCaptures(captures: ContextTaxonomy[]): ContextTaxonomy[] {
+  const groups: Array<{ key: string; taskIndex: number; captures: ContextTaxonomy[] }> = [];
+  for (const capture of captures) {
+    const current = capture.items.find((item) => item.kind === "current_user_prompt");
+    const key = `${current?.payloadPath ?? "unknown"}\n${current?.text ?? current?.preview ?? ""}`;
+    const latest = groups.at(-1);
+    if (latest?.key === key) latest.captures.push(capture);
+    else groups.push({ key, taskIndex: groups.length + 1, captures: [capture] });
+  }
+  return groups.flatMap((group) => group.captures.map((capture, index) => ({
+    ...capture,
     providerRequest: {
-      index: count,
-      count,
-      policy: count > 1 ? "latest-capture" : "single-capture"
+      index: index + 1,
+      count: group.captures.length,
+      taskIndex: group.taskIndex,
+      policy: "task-capture" as const
     }
-  };
+  })));
 }
 
 function historyBeforeCurrentPrompt(messages: ChatSendRequest["messages"], content: string, attachments: NonNullable<ChatSendRequest["attachments"]>): ChatSendRequest["messages"] {
@@ -698,7 +716,7 @@ function mockStructuredTaxonomy(provider: RuntimeProviderConfig): ContextTaxonom
     stream: true,
     tools: [toolDefinition]
   };
-  return withContextCacheMetrics(providerPayloadToContextTaxonomy(payload, {
+  const taxonomy = withContextCacheMetrics(providerPayloadToContextTaxonomy(payload, {
     provider: provider.providerName,
     model: provider.modelId
   }), {
@@ -708,6 +726,19 @@ function mockStructuredTaxonomy(provider: RuntimeProviderConfig): ContextTaxonom
     cacheWrite: 0,
     totalTokens: 4251
   });
+  return {
+    ...taxonomy,
+    reasoningValidation: {
+      status: "not_applicable",
+      policyId: "deepseek-tool-interval-v1",
+      policyVersion: 1,
+      policySource: "https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/",
+      summary: "No reasoning block is required by this policy for the captured request.",
+      requiredCount: 0,
+      sentCount: 0,
+      blocks: []
+    }
+  };
 }
 
 function promptTextForTaxonomy(content: string, attachments: NonNullable<ChatSendRequest["attachments"]>): string {

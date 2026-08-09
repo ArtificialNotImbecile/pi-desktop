@@ -32,7 +32,7 @@ for (const target of [
 }
 
 const extensionModule = await import(pathToFileURL(path.join(packageDir, "dist", "index.js")).href);
-assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 4);
+assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 5);
 assert.equal(typeof extensionModule.createContextCaptureExtension, "function");
 assert.equal(typeof extensionModule.classifyTextSegments, "function");
 assert.equal(typeof extensionModule.default, "function");
@@ -43,11 +43,11 @@ const sdkBus = createFakePiBus();
 await extensionModule.createContextCaptureExtension({
   provider: "deepseek",
   model: "fallback-model",
+  getCanonicalMessages: () => [{ role: "user", content: "hello" }],
   onCapture: (taxonomy) => captured.push(taxonomy)
 })(sdkBus.pi);
 
-sdkBus.emit("before_provider_request", {
-  payload: {
+const observedPayload = {
     model: "deepseek-v4-flash",
     apiKey: fakeProviderSecret,
     messages: [
@@ -56,8 +56,9 @@ sdkBus.emit("before_provider_request", {
     ],
     tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
     stream: true
-  }
-});
+};
+const returnedPayload = sdkBus.emit("before_provider_request", { payload: observedPayload });
+assert.equal(returnedPayload, observedPayload, "capture must remain a read-only observer of the provider payload");
 sdkBus.emit("message_end", {
   message: {
     role: "assistant",
@@ -72,7 +73,7 @@ sdkBus.emit("message_end", {
 });
 
 assert.equal(captured.length, 1);
-assert.equal(captured[0].payloadSchemaVersion, 4);
+assert.equal(captured[0].payloadSchemaVersion, 5);
 assert.equal(captured[0].provider, "deepseek");
 assert.equal(captured[0].model, "deepseek-v4-flash");
 assert.deepEqual(captured[0].payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
@@ -80,6 +81,7 @@ assert.equal(captured[0].payloadShape.messagesBeforeTools, true);
 assert.equal(captured[0].cacheMetrics.cacheHitTokens, 4096);
 assert.equal(captured[0].cacheMetrics.cacheMissTokens, 137);
 assert.equal(captured[0].cacheMetrics.status, "hit");
+assert.equal(captured[0].reasoningValidation.status, "not_applicable");
 assert.equal(captured[0].rawPayload.includes(fakeProviderSecret), false);
 assert.match(captured[0].rawPayload, /\[redacted\]/);
 

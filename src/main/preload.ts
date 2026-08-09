@@ -347,6 +347,12 @@ const api: JasmineApi = {
   listThreadContextTaxonomy(threadId: string) {
     return ipcRenderer.invoke("thread:contextTaxonomy:list", threadId);
   },
+  getContextTaxonomy(captureId: string) {
+    return ipcRenderer.invoke("thread:contextTaxonomy:get", captureId);
+  },
+  getContextTaxonomyRaw(request) {
+    return ipcRenderer.invoke("thread:contextTaxonomy:raw", request);
+  },
   getActivitySettings() {
     return ipcRenderer.invoke("activity:settings:get");
   },

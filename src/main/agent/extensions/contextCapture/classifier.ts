@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { CONTEXT_TAXONOMY_SCHEMA_VERSION } from "./schema.js";
 import { classifyTextSegments, estimateTokens, fallbackKindForRole, previewText } from "./segments.js";
-import type { ContextCacheMetrics, ContextPayloadShape, ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyKind } from "./schema.js";
+import type { ContextCacheMetrics, ContextPayloadShape, ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyKind, ContextTaxonomyPart } from "./schema.js";
 
 export { classifyTextSegments, estimateTokens, previewText } from "./segments.js";
 
@@ -18,6 +18,8 @@ type PayloadMessage = {
   role?: unknown;
   text: string;
   payloadPath: string;
+  parts: ContextTaxonomyPart[];
+  syntheticToolResult: boolean;
 };
 
 type PayloadTool = {
@@ -59,7 +61,8 @@ export function providerPayloadToContextTaxonomy(payload: unknown, metadata: Con
           kind,
           confidence,
           payloadPath: message.payloadPath,
-          text: message.text
+          text: message.text,
+          parts: message.parts
         }));
       }
       continue;
@@ -111,6 +114,9 @@ export function providerPayloadToContextTaxonomy(payload: unknown, metadata: Con
     source: metadata.source ?? "provider-payload",
     rawPayload,
     payloadHash: createHash("sha256").update(rawPayload).digest("hex"),
+    rawState: "complete",
+    rawCharCount: rawPayload.length,
+    rawByteCount: Buffer.byteLength(rawPayload, "utf8"),
     payloadSchemaVersion: CONTEXT_TAXONOMY_SCHEMA_VERSION,
     payloadShape,
     items
@@ -145,9 +151,16 @@ export function capContextTaxonomyForStorage(taxonomy: ContextTaxonomy): Context
   const rawPayload = taxonomy.rawPayload === undefined
     ? undefined
     : capText(collapseInlineMedia(taxonomy.rawPayload), TAXONOMY_MAX_RAW_PAYLOAD_CHARS);
+  const rawWasTruncated = rawPayload !== taxonomy.rawPayload;
   return {
     ...taxonomy,
     ...(rawPayload === undefined ? {} : { rawPayload }),
+    ...(rawPayload === undefined ? {} : {
+      payloadHash: createHash("sha256").update(rawPayload).digest("hex"),
+      rawState: rawWasTruncated ? "legacy_truncated" : (taxonomy.rawState ?? "complete"),
+      rawCharCount: rawPayload.length,
+      rawByteCount: Buffer.byteLength(rawPayload, "utf8")
+    }),
     items
   };
 }
@@ -197,6 +210,7 @@ export function taxonomyItem(input: {
   confidence: number;
   payloadPath?: string;
   text: string;
+  parts?: ContextTaxonomyPart[];
 }): ContextTaxonomyItem {
   return {
     order: input.order,
@@ -209,7 +223,8 @@ export function taxonomyItem(input: {
     tokenEstimate: estimateTokens(input.text),
     preview: previewText(input.text),
     text: input.text,
-    segments: classifyTextSegments(input.text, input.kind, input.role)
+    segments: classifyTextSegments(input.text, input.kind, input.role),
+    ...(input.parts?.length ? { parts: input.parts } : {})
   };
 }
 
@@ -272,39 +287,53 @@ export function safeStringify(value: unknown): string {
   }
 }
 
-function sanitizePayload(value: unknown): unknown {
+export function sanitizePayload(value: unknown): unknown {
   return sanitizeValue(value, "", new WeakSet<object>());
 }
 
 function sanitizeValue(value: unknown, key: string, seen: WeakSet<object>): unknown {
   if (isSecretKey(key)) return "[redacted]";
-  if (typeof value === "string") return redactSecrets(value);
+  if (typeof value === "string") {
+    if (/^(?:data|inlineData)$/i.test(key) && isLikelyBase64(value)) return `[redacted base64 ${value.length} chars]`;
+    return redactSecrets(value);
+  }
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "function") return "[function]";
   if (!value || typeof value !== "object") return value;
   if (seen.has(value)) return "[circular]";
   seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, "", seen));
-  const output: Record<string, unknown> = {};
-  for (const [innerKey, innerValue] of Object.entries(value)) {
-    output[innerKey] = sanitizeValue(innerValue, innerKey, seen);
+  try {
+    if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, "", seen));
+    const output: Record<string, unknown> = {};
+    for (const [innerKey, innerValue] of Object.entries(value)) {
+      output[innerKey] = sanitizeValue(innerValue, innerKey, seen);
+    }
+    return output;
+  } finally {
+    seen.delete(value);
   }
-  return output;
 }
 
 function isSecretKey(key: string): boolean {
   // Token *values* are sensitive; token-count fields such as max_tokens are
   // model settings/usage and must remain inspectable in the payload taxonomy.
-  return /api[_-]?key|authorization|bearer|(^|[_-])token($|[_-])|secret|password|credential/i.test(key);
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  if (normalized === "token_count" || /^(?:max|prompt|completion|input|output|total|cache|cached|reasoning|budget)_tokens?(?:_count)?$/.test(normalized)) return false;
+  return /api[_-]?key|authorization|bearer|(^|[_-])token($|[_-])|auth[_-]?token|access[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|client[_-]?secret|secret|password|credential/i.test(normalized);
 }
 
 function redactSecrets(value: string): string {
   return value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|x-amz-signature)=)[^&#\s]+/gi, "$1[redacted]")
     .replace(/\bdata:([A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g, (_match, mediaType: string, data: string) => {
       return `data:${mediaType};base64,[redacted ${data.length} chars]`;
     });
+}
+
+function isLikelyBase64(value: string): boolean {
+  return value.length >= 64 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
 function extractPayloadMessages(payload: unknown): PayloadMessage[] {
@@ -313,11 +342,15 @@ function extractPayloadMessages(payload: unknown): PayloadMessage[] {
   const direct = key ? candidate[key] as unknown[] : [];
   return direct.map((item, index) => {
     const message = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    const payloadPath = `$.${key ?? "messages"}[${index}]`;
+    const parts = messageParts(message, payloadPath);
     return {
       index,
       role: message.role,
-      text: messageText(message.content ?? message.text ?? item),
-      payloadPath: `$.${key ?? "messages"}[${index}]`
+      text: parts.map((part) => part.text).filter(Boolean).join("\n\n") || messageText(item),
+      payloadPath,
+      parts,
+      syntheticToolResult: isStructuredToolResultAttachment(message)
     };
   });
 }
@@ -366,6 +399,142 @@ function messageText(content: unknown): string {
   return safeStringify(content);
 }
 
+function messageParts(message: Record<string, unknown>, payloadPath: string): ContextTaxonomyPart[] {
+  const role = String(message.role ?? "unknown").toLowerCase();
+  const parts: ContextTaxonomyPart[] = [];
+  const push = (input: Omit<ContextTaxonomyPart, "order" | "tokenEstimate">) => {
+    parts.push({ ...input, order: parts.length + 1, tokenEstimate: estimateTokens(input.text) });
+  };
+
+  const reasoning = typeof message.reasoning_content === "string"
+    ? message.reasoning_content
+    : typeof message.reasoning === "string"
+      ? message.reasoning
+      : "";
+  if (reasoning) {
+    push({ kind: "reasoning", title: "Reasoning", text: reasoning, format: "markdown", payloadPath: `${payloadPath}.reasoning_content` });
+  }
+
+  if (role === "tool") {
+    const text = messageText(message.content ?? message.text ?? "");
+    push({
+      kind: "tool_result",
+      title: "Tool result",
+      text,
+      format: looksLikeJsonText(text) ? "json" : "text",
+      payloadPath: `${payloadPath}.content`,
+      ...(typeof message.name === "string" ? { toolName: message.name } : {}),
+      ...(typeof message.tool_call_id === "string" ? { toolCallId: message.tool_call_id } : {})
+    });
+  } else {
+    appendContentParts(message.content ?? message.text, `${payloadPath}.content`, push);
+  }
+
+  if (typeof message.refusal === "string" && message.refusal) {
+    push({ kind: "refusal", title: "Refusal", text: message.refusal, format: "markdown", payloadPath: `${payloadPath}.refusal` });
+  }
+
+  if (Array.isArray(message.tool_calls)) {
+    message.tool_calls.forEach((call, index) => {
+      const record = call && typeof call === "object" ? call as Record<string, unknown> : {};
+      const fn = record.function && typeof record.function === "object" ? record.function as Record<string, unknown> : {};
+      push({
+        kind: "tool_call",
+        title: typeof fn.name === "string" ? `Tool call: ${fn.name}` : "Tool call",
+        text: safeStringify(call),
+        format: "json",
+        payloadPath: `${payloadPath}.tool_calls[${index}]`,
+        ...(typeof fn.name === "string" ? { toolName: fn.name } : {}),
+        ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
+      });
+    });
+  }
+
+  if (parts.length === 0) {
+    push({ kind: "metadata", title: "Message metadata", text: safeStringify(message), format: "json", payloadPath });
+  }
+  return parts;
+}
+
+function appendContentParts(
+  content: unknown,
+  payloadPath: string,
+  push: (input: Omit<ContextTaxonomyPart, "order" | "tokenEstimate">) => void
+): void {
+  if (typeof content === "string") {
+    if (content) push({ kind: "text", title: "Text", text: content, format: "markdown", payloadPath });
+    return;
+  }
+  if (!Array.isArray(content)) {
+    if (content !== undefined && content !== null) push({ kind: "metadata", title: "Content", text: safeStringify(content), format: "json", payloadPath });
+    return;
+  }
+  content.forEach((entry, index) => {
+    const path = `${payloadPath}[${index}]`;
+    if (typeof entry === "string") {
+      if (entry) push({ kind: "text", title: "Text", text: entry, format: "markdown", payloadPath: path });
+      return;
+    }
+    const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+    const type = String(record.type ?? "").toLowerCase();
+    const reasoning = typeof record.thinking === "string" ? record.thinking : typeof record.reasoning === "string" ? record.reasoning : "";
+    if ((type === "thinking" || type.includes("reason")) && reasoning) {
+      push({ kind: "reasoning", title: "Reasoning", text: reasoning, format: "markdown", payloadPath: path });
+      return;
+    }
+    if (type === "tool_use" || type === "toolcall" || type === "tool_call") {
+      push({
+        kind: "tool_call",
+        title: typeof record.name === "string" ? `Tool call: ${record.name}` : "Tool call",
+        text: safeStringify(record),
+        format: "json",
+        payloadPath: path,
+        ...(typeof record.name === "string" ? { toolName: record.name } : {}),
+        ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
+      });
+      return;
+    }
+    if (type === "tool_result" || type === "toolresult") {
+      push({
+        kind: "tool_result",
+        title: "Tool result",
+        text: safeStringify(record),
+        format: "json",
+        payloadPath: path,
+        ...(typeof record.tool_use_id === "string" ? { toolCallId: record.tool_use_id } : {})
+      });
+      return;
+    }
+    if (typeof record.text === "string") {
+      push({ kind: type.includes("reason") || type === "thinking" ? "reasoning" : "text", title: type === "thinking" ? "Reasoning" : "Text", text: record.text, format: "markdown", payloadPath: `${path}.text` });
+      return;
+    }
+    if (isAttachmentBlock(record)) {
+      push({ kind: "attachment", title: "Attachment", text: safeStringify(record), format: "json", payloadPath: path });
+      return;
+    }
+    push({ kind: "metadata", title: type ? `Content: ${type}` : "Content", text: safeStringify(record), format: "json", payloadPath: path });
+  });
+}
+
+function isAttachmentBlock(record: Record<string, unknown>): boolean {
+  const type = String(record.type ?? "").toLowerCase();
+  return type.includes("image") || type.includes("audio") || type.includes("file") || "image_url" in record || "source" in record || "inlineData" in record;
+}
+
+function looksLikeJsonText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false;
+  try { JSON.parse(trimmed); return true; } catch { return false; }
+}
+
+function isStructuredToolResultAttachment(message: Record<string, unknown>): boolean {
+  if (String(message.role ?? "").toLowerCase() !== "user" || !Array.isArray(message.content)) return false;
+  const hasAdapterMarker = message.content.some((entry) => typeof entry === "string" && /^Attached image\(s\) from tool result:/i.test(entry.trim()));
+  const hasAttachment = message.content.some((entry) => entry && typeof entry === "object" && isAttachmentBlock(entry as Record<string, unknown>));
+  return hasAdapterMarker && hasAttachment;
+}
+
 function findCurrentUserMessageIndex(messages: PayloadMessage[], currentUserPromptText?: string): number {
   const normalizedPrompt = normalizePromptText(currentUserPromptText);
   if (normalizedPrompt) {
@@ -403,9 +572,7 @@ function isRole(message: PayloadMessage, role: string): boolean {
 }
 
 function isSyntheticToolResultUserMessage(message: PayloadMessage): boolean {
-  if (!isRole(message, "user")) return false;
-  return /Attached image\(s\) from tool result/i.test(message.text)
-    || (/tool result/i.test(message.text) && /data:image\/[A-Za-z0-9.+-]+;base64,/i.test(message.text));
+  return isRole(message, "user") && message.syntheticToolResult;
 }
 
 function classifyMessage(message: PayloadMessage, currentUserMessageIndex: number): { kind: ContextTaxonomyKind; confidence: number } {

@@ -5,7 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { ChatMessage, ChatThread, ContextTaxonomy, TerminalSession, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { ClipboardIcon, CopyIcon, CutIcon, FolderIcon, MinimizeIcon, PlusIcon, SelectAllIcon, SlidersIcon, TerminalIcon } from "../icons/Icons";
-import { MenuItem, MenuSurface } from "../ui";
+import { Button, MenuItem, MenuSurface } from "../ui";
 import { TaxonomyView } from "./ContextTaxonomyView";
 import { useI18n } from "../../i18n";
 import { useThrottledValue } from "../../hooks/useThrottledValue";
@@ -594,23 +594,32 @@ function mergeArtifacts(
 
 function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMessage[] }) {
   const [data, setData] = useState<ThreadContextTaxonomyResponse | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [taxonomy, setTaxonomy] = useState<ContextTaxonomy | null>(null);
   const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
   // See ArtifactsPane: bound the per-stream-tick scan to <= 1 recompute/second.
   const messages = useThrottledValue(props.messages, 1000);
 
   useEffect(() => {
     if (!props.threadId) {
       setData(null);
+      setSelectedId(null);
+      setTaxonomy(null);
       return;
     }
     let active = true;
     setLoading(true);
     getBridge().listThreadContextTaxonomy(props.threadId)
       .then((response) => {
-        if (active) setData(response);
+        if (!active) return;
+        setData(response);
+        setSelectedId((current) => response.captures.some((capture) => capture.id === current)
+          ? current
+          : response.captures.at(-1)?.id ?? null);
       })
       .catch(() => {
-        if (active) setData({ threadId: props.threadId ?? "", taxonomies: [] });
+        if (active) setData({ threadId: props.threadId ?? "", captures: [] });
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -620,42 +629,46 @@ function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMes
     };
   }, [props.threadId, messages.length]);
 
-  const latest = useMemo(
-    () => newestTaxonomy(data?.taxonomies.at(-1) ?? null, findLatestTaxonomy(messages)),
-    [data, messages]
-  );
-  if (loading) return <p className="panel-empty">Loading context taxonomy...</p>;
-  if (!latest) return <p className="panel-empty">No captured context taxonomy yet. Send a message to record one.</p>;
-  return <TaxonomyView taxonomy={latest} />;
-}
-
-function findLatestTaxonomy(messages: ChatMessage[]): ThreadContextTaxonomyResponse["taxonomies"][number] | null {
-  for (const message of [...messages].reverse()) {
-    for (const item of message.timeline ?? []) {
-      if (item.kind === "system" && item.customType === "context-taxonomy" && isContextTaxonomy(item.data)) {
-        return {
-          messageId: message.id,
-          createdAt: message.createdAt,
-          taxonomy: item.data
-        };
-      }
+  useEffect(() => {
+    if (!selectedId) {
+      setTaxonomy(null);
+      return;
     }
-  }
-  return null;
-}
+    let active = true;
+    setDetailLoading(true);
+    getBridge().getContextTaxonomy(selectedId)
+      .then((response) => { if (active) setTaxonomy(response.taxonomy); })
+      .catch(() => { if (active) setTaxonomy(null); })
+      .finally(() => { if (active) setDetailLoading(false); });
+    return () => { active = false; };
+  }, [selectedId]);
 
-function newestTaxonomy(
-  left: ThreadContextTaxonomyResponse["taxonomies"][number] | null,
-  right: ThreadContextTaxonomyResponse["taxonomies"][number] | null
-): ContextTaxonomy | null {
-  if (!left) return right?.taxonomy ?? null;
-  if (!right) return left.taxonomy;
-  return Date.parse(right.createdAt) > Date.parse(left.createdAt) ? right.taxonomy : left.taxonomy;
-}
-
-function isContextTaxonomy(value: unknown): value is ContextTaxonomy {
-  const record = value && typeof value === "object" ? value as Partial<ContextTaxonomy> : null;
-  return Boolean(record?.capturedAt && record?.provider && record?.model && Array.isArray(record.items));
+  if (loading) return <p className="panel-empty">Loading context taxonomy...</p>;
+  const captures = data?.captures ?? [];
+  if (!selectedId || captures.length === 0) return <p className="panel-empty">No captured context taxonomy yet. Send a message to record one.</p>;
+  return (
+    <div className="taxonomy-pane">
+      {captures.length > 1 && (
+        <div className="taxonomy-request-switcher" role="group" aria-label="Provider request">
+          {captures.map((capture) => (
+            <Button
+              key={capture.id}
+              size="sm"
+              variant="quiet"
+              className={capture.id === selectedId ? "active" : ""}
+              aria-pressed={capture.id === selectedId}
+              onClick={() => setSelectedId(capture.id)}
+            >
+              {capture.requestIndex}/{capture.requestCount}
+            </Button>
+          ))}
+        </div>
+      )}
+      {detailLoading || !taxonomy
+        ? <p className="panel-empty">Loading selected provider request...</p>
+        : <TaxonomyView taxonomy={taxonomy} captureId={selectedId} />}
+    </div>
+  );
 }
 
 function panelIcon(mode: RightPanelMode): ReactNode {

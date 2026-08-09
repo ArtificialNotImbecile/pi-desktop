@@ -2,12 +2,14 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { providerPayloadToContextTaxonomy, withContextCacheMetrics } from "./classifier.js";
+import { validateReasoningRetention } from "./reasoningPolicy.js";
 import type { ContextTaxonomy } from "./schema.js";
 
-export { capContextTaxonomyForStorage, classifyTextSegments, contextCacheMetricsFromUsage, estimateTokens, previewText, providerPayloadToContextTaxonomy, safeStringify, taxonomyItem, withContextCacheMetrics } from "./classifier.js";
+export { capContextTaxonomyForStorage, classifyTextSegments, contextCacheMetricsFromUsage, estimateTokens, previewText, providerPayloadToContextTaxonomy, safeStringify, sanitizePayload, taxonomyItem, withContextCacheMetrics } from "./classifier.js";
+export { reasoningPolicyId, validateReasoningRetention } from "./reasoningPolicy.js";
 export { CONTEXT_TAXONOMY_SCHEMA_VERSION } from "./schema.js";
 export type { ContextCacheUsage, ContextCaptureMetadata } from "./classifier.js";
-export type { ContextCacheMetrics, ContextPayloadShape, ContextProviderRequestScope, ContextTaxonomy, ContextTaxonomyAssemblyReason, ContextTaxonomyItem, ContextTaxonomyKind, ContextTaxonomySegment } from "./schema.js";
+export type { ContextCacheMetrics, ContextPayloadShape, ContextProviderRequestScope, ContextRawPayloadState, ContextReasoningPolicyId, ContextReasoningValidation, ContextReasoningValidationBlock, ContextTaxonomy, ContextTaxonomyAssemblyReason, ContextTaxonomyItem, ContextTaxonomyKind, ContextTaxonomyPart, ContextTaxonomyPartKind, ContextTaxonomySegment } from "./schema.js";
 
 export type ContextCaptureHandler = (taxonomy: ContextTaxonomy) => void | Promise<void>;
 
@@ -15,6 +17,7 @@ export type ContextCaptureExtensionOptions = {
   provider?: string;
   model?: string;
   currentUserPromptText?: string;
+  getCanonicalMessages?(): unknown[] | undefined;
   outputDir?: string;
   onCapture?: ContextCaptureHandler;
   onError?(error: unknown, taxonomy?: ContextTaxonomy): void;
@@ -59,6 +62,18 @@ function registerContextCapture(pi: Pick<ExtensionAPI, "on">, options: ContextCa
       provider: options.provider || "unknown-provider",
       model: payloadModel || options.model || "unknown-model",
       currentUserPromptText: options.currentUserPromptText
+    });
+    let canonicalMessages: unknown[] | undefined;
+    try {
+      canonicalMessages = options.getCanonicalMessages?.();
+    } catch {
+      canonicalMessages = undefined;
+    }
+    latestTaxonomy.reasoningValidation = validateReasoningRetention({
+      payload: event.payload,
+      canonicalMessages,
+      provider: latestTaxonomy.provider,
+      model: latestTaxonomy.model
     });
     emittedLatestTaxonomy = false;
     return event.payload;

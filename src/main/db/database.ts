@@ -12,6 +12,7 @@ import type {
   ChatRole,
   ChatTimelineItem,
   ChatThread,
+  ContextTaxonomy,
   MemoryRecord,
   MemoryReference,
   PickedPath,
@@ -149,6 +150,12 @@ import {
   updateWebSearchSettings as updateWebSearchSettingsRow
 } from "./repositories/webSearch.js";
 import type { SqlDatabase } from "./repositories/types.js";
+import {
+  addContextCapture as addContextCaptureRow,
+  getContextCapture as getContextCaptureRow,
+  listLatestTaskContextCaptures as listLatestTaskContextCaptureRows
+} from "./repositories/contextCaptures.js";
+import type { StoredContextCapture } from "./repositories/contextCaptures.js";
 import { loadExternalSkills } from "../services/externalSkills.js";
 import {
   createLocalSkill,
@@ -387,6 +394,18 @@ export class JasmineDatabase {
       this.touchThread(input.threadId);
       return message;
     });
+  }
+
+  addContextCapture(input: { threadId: string; messageId: string; runId?: string; taxonomy: ContextTaxonomy }): string {
+    return addContextCaptureRow(this.db, input);
+  }
+
+  listLatestTaskContextCaptures(threadId: string) {
+    return listLatestTaskContextCaptureRows(this.db, threadId);
+  }
+
+  getContextCapture(captureId: string): StoredContextCapture | null {
+    return getContextCaptureRow(this.db, captureId);
   }
 
   getThreadMessageCount(threadId: string): number {

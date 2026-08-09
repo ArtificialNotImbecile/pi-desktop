@@ -1,12 +1,12 @@
 import { ipcMain } from "electron";
-import type { ChatMessage, ContextTaxonomy, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../shared/ipc.js";
-import { withMissingContextTaxonomySegments } from "../agent/extensions/contextCapture/classifier.js";
-import { threadIdSchema } from "../../shared/schemas.js";
+import type { ChatMessage, ContextTaxonomy, ContextTaxonomyDetailResponse, ContextTaxonomyRawRequest, ContextTaxonomyRawResponse, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../shared/ipc.js";
+import { providerPayloadToContextTaxonomy, withMissingContextTaxonomySegments } from "../agent/extensions/contextCapture/classifier.js";
+import { contextCaptureIdSchema, contextTaxonomyRawRequestSchema, threadIdSchema } from "../../shared/schemas.js";
+import type { StoredContextCapture } from "../db/repositories/contextCaptures.js";
 import type { IpcContext } from "./context.js";
 
-// Right-panel data is derived from the newest slice of the thread instead of a
-// full-thread load: artifacts older than the window are rarely relevant and the
-// taxonomy pane only renders the most recent capture (plan Phase 5.3).
+// Artifact data is derived from a bounded message window. Context captures live
+// in their own compressed table and are fetched independently/lazily.
 const RIGHT_PANEL_MESSAGE_WINDOW = 500;
 
 export function registerRightPanelIpc(context: IpcContext): void {
@@ -22,9 +22,33 @@ export function registerRightPanelIpc(context: IpcContext): void {
     threadId = threadIdSchema.parse(threadId);
     return {
       threadId,
-      taxonomies: context.getDatabase().listMessagesPage({ threadId, limit: RIGHT_PANEL_MESSAGE_WINDOW })
-        .filter((message) => message.role === "assistant")
-        .flatMap((message) => collectTaxonomies(message))
+      captures: context.getDatabase().listLatestTaskContextCaptures(threadId)
+    };
+  });
+
+  ipcMain.handle("thread:contextTaxonomy:get", (_event, captureId: string): ContextTaxonomyDetailResponse => {
+    captureId = contextCaptureIdSchema.parse(captureId);
+    const capture = context.getDatabase().getContextCapture(captureId);
+    if (!capture) throw new Error("Context capture not found.");
+    return { captureId, taxonomy: taxonomyFromCapture(capture) };
+  });
+
+  ipcMain.handle("thread:contextTaxonomy:raw", (_event, input: ContextTaxonomyRawRequest): ContextTaxonomyRawResponse => {
+    const request = contextTaxonomyRawRequestSchema.parse(input);
+    const capture = context.getDatabase().getContextCapture(request.captureId);
+    if (!capture) throw new Error("Context capture not found.");
+    const raw = capture.rawPayload ?? "";
+    const offset = Math.min(request.offset ?? 0, raw.length);
+    const length = request.length ?? 65_536;
+    const text = raw.slice(offset, offset + length);
+    return {
+      captureId: request.captureId,
+      state: capture.summary.rawState,
+      offset,
+      totalChars: capture.summary.rawCharCount,
+      text,
+      done: offset + text.length >= raw.length,
+      sha256: capture.summary.rawSha256
     };
   });
 }
@@ -72,20 +96,46 @@ function collectArtifacts(messages: ChatMessage[]): ThreadArtifactsResponse["art
   return dedupeArtifacts(artifacts);
 }
 
-function collectTaxonomies(message: ChatMessage): ThreadContextTaxonomyResponse["taxonomies"] {
-  return (message.timeline ?? []).flatMap((item) => {
-    if (item.kind !== "system" || item.customType !== "context-taxonomy" || !isContextTaxonomy(item.data)) return [];
-    return [{
-      messageId: message.id,
-      createdAt: message.createdAt,
-      taxonomy: withMissingContextTaxonomySegments(item.data)
-    }];
-  });
-}
-
-function isContextTaxonomy(value: unknown): value is ContextTaxonomy {
-  const record = value && typeof value === "object" ? value as Partial<ContextTaxonomy> : null;
-  return Boolean(record?.capturedAt && record?.provider && record?.model && Array.isArray(record.items));
+function taxonomyFromCapture(capture: StoredContextCapture): ContextTaxonomy {
+  const summary = capture.summary;
+  let taxonomy: ContextTaxonomy | null = null;
+  if (capture.rawPayload && summary.rawState === "complete") {
+    try {
+      taxonomy = providerPayloadToContextTaxonomy(JSON.parse(capture.rawPayload) as unknown, {
+        provider: summary.provider,
+        model: summary.model,
+        capturedAt: summary.createdAt,
+        source: summary.source
+      });
+    } catch {
+      taxonomy = null;
+    }
+  }
+  taxonomy ??= capture.metadata.fallbackTaxonomy ? withMissingContextTaxonomySegments(capture.metadata.fallbackTaxonomy) : {
+    capturedAt: summary.createdAt,
+    provider: summary.provider,
+    model: summary.model,
+    source: summary.source,
+    assemblyReason: "no-capture",
+    items: []
+  };
+  const { rawPayload: _rawPayload, ...withoutInlineRaw } = taxonomy;
+  return {
+    ...withoutInlineRaw,
+    providerRequest: {
+      index: summary.requestIndex,
+      count: summary.requestCount,
+      taskIndex: summary.taskIndex,
+      policy: "task-capture"
+    },
+    payloadHash: summary.rawSha256 ?? taxonomy.payloadHash,
+    payloadSchemaVersion: summary.schemaVersion,
+    rawState: summary.rawState,
+    rawCharCount: summary.rawCharCount,
+    rawByteCount: summary.rawByteCount,
+    ...(capture.metadata.cacheMetrics ? { cacheMetrics: capture.metadata.cacheMetrics } : {}),
+    ...(summary.reasoningValidation ? { reasoningValidation: summary.reasoningValidation } : {})
+  };
 }
 
 function pathFromArguments(argumentsJson: string): string | undefined {

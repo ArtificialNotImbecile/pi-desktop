@@ -281,6 +281,12 @@ contextBridge.exposeInMainWorld("jasmine", {
   listThreadContextTaxonomy(threadId) {
     return ipcRenderer.invoke("thread:contextTaxonomy:list", threadId);
   },
+  getContextTaxonomy(captureId) {
+    return ipcRenderer.invoke("thread:contextTaxonomy:get", captureId);
+  },
+  getContextTaxonomyRaw(request) {
+    return ipcRenderer.invoke("thread:contextTaxonomy:raw", request);
+  },
   getActivitySettings() {
     return ipcRenderer.invoke("activity:settings:get");
   },

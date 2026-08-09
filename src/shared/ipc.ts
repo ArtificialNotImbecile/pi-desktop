@@ -566,6 +566,21 @@ export type ContextTaxonomyItem = {
   preview: string;
   text?: string;
   segments?: ContextTaxonomySegment[];
+  parts?: ContextTaxonomyPart[];
+};
+
+export type ContextTaxonomyPartKind = "text" | "reasoning" | "tool_call" | "tool_result" | "attachment" | "refusal" | "metadata";
+
+export type ContextTaxonomyPart = {
+  order: number;
+  kind: ContextTaxonomyPartKind;
+  title: string;
+  text: string;
+  format: "text" | "markdown" | "json";
+  tokenEstimate: number;
+  payloadPath?: string;
+  toolName?: string;
+  toolCallId?: string;
 };
 
 export type ContextTaxonomyKind =
@@ -621,8 +636,32 @@ export type ContextTaxonomyAssemblyReason =
 export type ContextProviderRequestScope = {
   index: number;
   count: number;
-  policy: "single-capture" | "latest-capture";
+  taskIndex?: number;
+  policy: "single-capture" | "latest-capture" | "task-capture";
 };
+
+export type ContextReasoningPolicyId = "deepseek-tool-interval-v1" | "kimi-k3-preserved-v1" | "kimi-k2.7-preserved-v1" | "kimi-k2.6-configurable-v1" | "kimi-k2.5-unsupported-v1" | "unknown";
+
+export type ContextReasoningValidationBlock = {
+  fingerprint: string;
+  messageIndex: number;
+  required: boolean;
+  sent: boolean;
+  reason: string;
+};
+
+export type ContextReasoningValidation = {
+  status: "pass" | "fail" | "not_applicable" | "unknown";
+  policyId: ContextReasoningPolicyId;
+  policyVersion: 1;
+  policySource?: string;
+  summary: string;
+  requiredCount: number;
+  sentCount: number;
+  blocks: ContextReasoningValidationBlock[];
+};
+
+export type ContextRawPayloadState = "complete" | "legacy_truncated" | "unavailable";
 
 export type ContextTaxonomy = {
   capturedAt: string;
@@ -636,6 +675,10 @@ export type ContextTaxonomy = {
   payloadSchemaVersion?: number;
   payloadShape?: ContextPayloadShape;
   cacheMetrics?: ContextCacheMetrics;
+  reasoningValidation?: ContextReasoningValidation;
+  rawState?: ContextRawPayloadState;
+  rawCharCount?: number;
+  rawByteCount?: number;
   items: ContextTaxonomyItem[];
 };
 
@@ -655,11 +698,46 @@ export type ThreadArtifactsResponse = {
 
 export type ThreadContextTaxonomyResponse = {
   threadId: string;
-  taxonomies: Array<{
+  captures: Array<{
+    id: string;
     messageId: string;
+    runId: string | null;
     createdAt: string;
-    taxonomy: ContextTaxonomy;
+    provider: string;
+    model: string;
+    source: ContextTaxonomy["source"];
+    schemaVersion: number;
+    taskIndex: number;
+    requestIndex: number;
+    requestCount: number;
+    rawState: ContextRawPayloadState;
+    rawSha256: string | null;
+    rawCharCount: number;
+    rawByteCount: number;
+    cacheMetrics?: ContextCacheMetrics;
+    reasoningValidation?: ContextReasoningValidation;
   }>;
+};
+
+export type ContextTaxonomyDetailResponse = {
+  captureId: string;
+  taxonomy: ContextTaxonomy;
+};
+
+export type ContextTaxonomyRawRequest = {
+  captureId: string;
+  offset?: number;
+  length?: number;
+};
+
+export type ContextTaxonomyRawResponse = {
+  captureId: string;
+  state: ContextRawPayloadState;
+  offset: number;
+  totalChars: number;
+  text: string;
+  done: boolean;
+  sha256: string | null;
 };
 
 export type ChatSendRequest = {
@@ -1197,6 +1275,8 @@ export type JasmineApi = {
   writeClipboardText(text: string): Promise<void>;
   listThreadArtifacts(threadId: string): Promise<ThreadArtifactsResponse>;
   listThreadContextTaxonomy(threadId: string): Promise<ThreadContextTaxonomyResponse>;
+  getContextTaxonomy(captureId: string): Promise<ContextTaxonomyDetailResponse>;
+  getContextTaxonomyRaw(request: ContextTaxonomyRawRequest): Promise<ContextTaxonomyRawResponse>;
   getActivitySettings(): Promise<ActivitySettings>;
   updateActivitySettings(request: ActivitySettingsUpdateRequest): Promise<ActivitySettings>;
   listActivityObservations(request?: ActivityObservationListRequest): Promise<ActivityObservation[]>;

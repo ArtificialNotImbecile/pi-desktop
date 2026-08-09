@@ -10,17 +10,18 @@
 
 DeepSeek 与 Kimi K3 的关键差异是：
 
-- **DeepSeek** 的历史思考主要按工具调用链保留。两个 `user` 消息之间没有发生工具调用时，中间 assistant 的 `reasoning_content` 不需要进入下一用户轮次；发生工具调用时则必须回传。
+- **DeepSeek** 以“两条 `user` 消息之间的完整区间”为判断单位。区间内没有发生工具调用时，assistant 的 `reasoning_content` 不需要进入下一用户轮次；只要发生过至少一次工具调用，该区间内**每条 assistant message 的全部 `reasoning_content`**都必须在后续用户轮次回传，包括最后一次工具结果之后、最终 `content` 之前且自身不含 `tool_calls` 的 reasoning（图示中的“思维链 1.3”）。
 - **Kimi K3** 始终启用 Preserved Thinking。历史 assistant 的 `reasoning_content` 是否需要回传，不取决于它后面有没有 `tool_call`；多轮对话和工具调用中都必须原样回传完整 assistant message。
 
-因此，不能把“只回传带 `tool_call` 的 reasoning”作为所有 provider 的统一规则。
+因此，“只回传自身带 `tool_call` 的 reasoning”即使对 DeepSeek 也不正确，更不能作为所有 provider 的统一规则。
 
 ```mermaid
 flowchart LR
   subgraph DS["DeepSeek"]
-    D0["assistant 输出 reasoning_content"] --> D1{"本轮是否进入工具调用链？"}
-    D1 -->|"是"| D2["后续请求回传该 reasoning_content"]
-    D1 -->|"否"| D3["下一用户轮次无需回传"]
+    D0["两条 user 消息之间的完整区间"] --> D1{"区间内是否发生过工具调用？"}
+    D1 -->|"是"| D2["回传区间内全部 assistant reasoning"]
+    D2 --> D3["包含工具前、工具间和最终回答前 reasoning"]
+    D1 -->|"否"| D4["下一用户轮次无需回传该区间 reasoning"]
   end
 
   subgraph K3["Kimi K3"]
@@ -42,7 +43,7 @@ Kimi 对第一个边界和第二个边界使用不同规则。仅观察 thinking
 
 | Provider / 模型 | 同一工具循环内 | 进入下一用户轮次 | 配置方式 |
 | --- | --- | --- | --- |
-| DeepSeek thinking 模式 | 工具调用关联的 `reasoning_content` 必须回传 | 没有工具调用的普通思考无需回传；工具调用链中的思考必须保留 | `thinking.type` / `reasoning_effort` |
+| DeepSeek thinking 模式 | 当前工具区间内全部 `reasoning_content` 必须回传 | 无工具调用的区间无需回传；有任一工具调用的区间必须完整保留，包括 post-tool final reasoning | `thinking.type` / `reasoning_effort` |
 | Kimi K3 | 回传全部历史 assistant message，包括 `reasoning_content` | 回传全部历史 `reasoning_content` | Preserved Thinking 始终开启；不接受 `thinking` 参数 |
 | Kimi K2.7 Code / Highspeed | 回传全部历史 assistant message，包括 `reasoning_content` | 回传全部历史 `reasoning_content` | Preserved Thinking 始终开启；`thinking.keep` 无法关闭 |
 | Kimi K2.6，默认 | 当前工具循环的全部中间思考必须回传 | 忽略全部历史 `reasoning_content`，包括曾与工具调用关联的思考 | `thinking.keep=null` 或不传 |
@@ -51,7 +52,7 @@ Kimi 对第一个边界和第二个边界使用不同规则。仅观察 thinking
 
 ### DeepSeek 的严格工具模式边界
 
-DeepSeek 文档同时给出一条更严格的工程约束：携带 `tools` 参数的请求，在后续请求中必须完整回传 `reasoning_content`；缺失时 API 可能返回 `400`。因此实现时应把**已经进入 tool-enabled 请求流程**视为严格保留区域，而不是尝试在工具循环中做更细粒度裁剪。
+DeepSeek 文档同时给出一条更严格的工程约束：携带 `tools` 参数的请求，在后续请求中必须完整回传 `reasoning_content`；缺失时 API 可能返回 `400`。这里的“完整”覆盖两条 user 消息之间整个发生过工具调用的区间，不是只覆盖直接携带 `tool_calls` 的 assistant message。
 
 这不改变普通多轮对话的结论：如果两个 `user` 消息之间没有工具调用，上一轮普通回答的 `reasoning_content` 不需要拼接到下一用户轮次。
 
@@ -64,7 +65,7 @@ reasoning_content -> tool_calls
 reasoning_content -> content（最终回答）
 ```
 
-第二种正是它与 DeepSeek 简化回传规则的核心差异。
+如果该用户区间完全没有工具调用，第二种是 Kimi K3 与 DeepSeek 的差异；如果区间内发生过工具调用，DeepSeek 同样必须回传最终回答前的这段 reasoning。
 
 ## 对 Jasmine Context Taxonomy 的含义
 
@@ -80,14 +81,14 @@ Context Taxonomy 应区分三个事实，不应把它们折叠成一个“是否
 
 ```text
 currentToolLoop: preserve_all
-crossUserTurn: tool_chain | preserve_all | discard_all
+crossUserTurn: tool_interval_all | preserve_all | discard_all
 ```
 
 对应关系：
 
 | 模型 / 配置 | `currentToolLoop` | `crossUserTurn` |
 | --- | --- | --- |
-| DeepSeek | `preserve_all` | `tool_chain` |
+| DeepSeek | `preserve_all` | `tool_interval_all` |
 | Kimi K3 | `preserve_all` | `preserve_all` |
 | Kimi K2.7 Code | `preserve_all` | `preserve_all` |
 | Kimi K2.6 `keep=null` | `preserve_all` | `discard_all` |
@@ -98,16 +99,28 @@ crossUserTurn: tool_chain | preserve_all | discard_all
 Provider adapter 或 Pi 依赖升级后，至少验证以下 payload：
 
 1. DeepSeek：`reasoning_content -> content`，下一用户轮次不携带历史 reasoning。
-2. DeepSeek：`reasoning_content -> tool_calls -> tool result`，后续工具请求携带原始 reasoning。
-3. Kimi K3：`reasoning_content -> content`，下一用户轮次仍携带原始 reasoning。
-4. Kimi K3：多步工具循环中的每段 reasoning 和最终回答前的 reasoning 都进入下一用户轮次。
-5. Kimi K2.6 默认：同一工具循环保留 reasoning，下一用户轮次忽略全部历史 reasoning。
-6. Kimi K2.6 `keep="all"`：下一用户轮次携带全部历史 reasoning。
+2. DeepSeek：`user -> reasoning+tool_calls -> tool result -> reasoning+content(no tool_calls) -> user`，下一请求必须同时携带工具调用前 reasoning 和最终回答前 reasoning。
+3. DeepSeek：多步工具循环内每段 reasoning 均进入后续工具请求。
+4. Kimi K3：`reasoning_content -> content`，下一用户轮次仍携带原始 reasoning。
+5. Kimi K3：多步工具循环中的每段 reasoning 和最终回答前的 reasoning 都进入下一用户轮次。
+6. Kimi K2.6 默认：同一工具循环保留 reasoning，下一用户轮次忽略全部历史 reasoning。
+7. Kimi K2.6 `keep="all"`：下一用户轮次携带全部历史 reasoning。
 
 断言应检查实际发往 provider 的 `messages`，不能只检查 Jasmine UI 或 Pi JSONL，因为“已保存”不等于“已发送”。
+
+## Jasmine 的实现与审计界面
+
+Context Taxonomy schema v5 在 `before_provider_request` 上只读观察最终 payload，并把 sanitized raw payload 以 gzip 形式保存到 SQLite 的独立 `context_captures` 表。它不修改 Pi 事件 payload，也不把调试数据塞入 `chat_messages.timeline_json`。
+
+- 默认界面只加载最新用户任务的 provider 请求摘要，并可在 `1/N` 请求之间切换。
+- 派生视图按 wire order 分开显示 text、reasoning、tool call、tool result 与 attachment；`tool_call_id` 会保留用于配对。
+- raw payload 只有在展开时才按 64 KiB 分块解压传给 renderer；hash 明确表示完整 sanitized payload。
+- DeepSeek/Kimi validator 比较 Pi 当前 active/compacted session context 与实际 provider payload，显示 `pass`、`fail`、`not_applicable` 或 `unknown`。未知模型和取不到规范上下文时不会误报通过。
+- provider 返回的 input/cache usage 是总量事实；分项 token 仅用于构成估算，CJK 按接近一字一 token、其余文本按约四字符一 token 估算。
+
+当前可读归一化以 Jasmine 实际运行的 OpenAI-compatible `messages` / `input` / `tools` payload 为一等支持范围。安全清洗已经防御 Anthropic `source.data` 与 Gemini `inlineData.data`，但将来若 Jasmine 改用这些 provider 的原生 wire schema，仍应新增独立 adapter 与对应 fixture，而不是继续扩大一组含混的通用启发式规则。
 
 ## 官方资料
 
 - [DeepSeek：思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)
 - [Kimi：思考模型](https://platform.kimi.com/docs/guide/use-thinking-models)
-

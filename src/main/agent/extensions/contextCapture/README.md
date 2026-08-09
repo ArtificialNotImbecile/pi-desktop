@@ -9,7 +9,9 @@ The captured raw provider payload is the source of truth. `items`, `segments`, a
 - ESM only.
 - Node.js `>=22.19.0`.
 - Peer dependency: `@earendil-works/pi-coding-agent >=0.79.0 <1`.
-- Stable schema version is exported as `CONTEXT_TAXONOMY_SCHEMA_VERSION`.
+- Stable schema version is exported as `CONTEXT_TAXONOMY_SCHEMA_VERSION` (currently v5).
+- Assistant `text`, `reasoning_content`, `tool_calls`, tool results, and attachments are preserved as ordered parts instead of being collapsed through a single content fallback.
+- Optional canonical-session input validates DeepSeek/Kimi reasoning retention without mutating `before_provider_request` payloads.
 - Public exports: default Pi extension, `createContextCaptureExtension`, `writeContextCaptureFile`, schema types, classifier helpers, and reusable segment helpers.
 - Secrets are redacted by key name and common bearer/API-key patterns before hashing or persistence.
 

@@ -3829,6 +3829,177 @@ body:has(.settings-panel) .message-jump-rail {
   font-size: 12px;
 }
 
+/* Context Taxonomy v5: one readable body per wire part, with raw JSON loaded
+   separately from compressed persistence only when the user opens it. */
+.taxonomy-pane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.taxonomy-request-switcher {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.taxonomy-request-switcher button,
+.taxonomy-load-more,
+.taxonomy-raw-payload > summary button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--surface);
+  font: inherit;
+  font-size: 11px;
+}
+
+.taxonomy-request-switcher button:hover:not(:disabled),
+.taxonomy-request-switcher button.active,
+.taxonomy-load-more:hover:not(:disabled),
+.taxonomy-raw-payload > summary button:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.taxonomy-validation-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 11px;
+}
+
+.taxonomy-validation-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.taxonomy-validation-card strong { color: var(--ink); }
+.taxonomy-validation-card p { margin: 0; line-height: 1.45; }
+.taxonomy-validation-card a { justify-self: start; color: var(--accent); }
+
+.taxonomy-validation-pass {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--line));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+
+.taxonomy-validation-fail {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+  background: var(--danger-soft);
+}
+
+.taxonomy-validation-fail strong { color: var(--danger-ink); }
+
+.taxonomy-payload-shape > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.taxonomy-payload-shape > summary::-webkit-details-marker { display: none; }
+
+.taxonomy-parts {
+  display: grid;
+  gap: 7px;
+  padding: 0 9px 9px;
+}
+
+.taxonomy-part {
+  min-width: 0;
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.taxonomy-part > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.taxonomy-part > summary::-webkit-details-marker { display: none; }
+.taxonomy-part > summary span { font-size: 11px; font-weight: 650; }
+.taxonomy-part > summary small { color: var(--faint); font-size: 10px; text-align: right; }
+
+.taxonomy-part-reasoning > summary {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.taxonomy-part-tool_call > summary,
+.taxonomy-part-tool_result > summary { color: var(--success); }
+
+.taxonomy-part .markdown-message {
+  min-width: 0;
+  padding: 9px 10px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.taxonomy-part .markdown-message > :first-child { margin-top: 0; }
+.taxonomy-part .markdown-message > :last-child { margin-bottom: 0; }
+.taxonomy-part .code-block { margin: 0; border: 0; border-radius: 0; }
+.taxonomy-part .code-block .shiki { max-height: 420px; overflow: auto; }
+
+.taxonomy-raw-payload {
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.taxonomy-raw-payload > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.taxonomy-raw-payload > summary > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.taxonomy-raw-payload > summary small {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.taxonomy-raw-payload .code-block { margin: 8px; }
+.taxonomy-load-more { margin: 0 8px 8px; }
+.taxonomy-raw-error { margin: 8px; color: var(--danger-ink); font-size: 11px; }
+
 .run-recap {
   display: grid;
   max-width: 720px;
