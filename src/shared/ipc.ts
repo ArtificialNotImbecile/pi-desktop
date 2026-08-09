@@ -488,12 +488,60 @@ export type ChromeTakeoverSettings = {
   extensionId: string | null;
 };
 
+export type WorkingNotificationMode = "background" | "always" | "never";
+
+export type WorkingNotificationSettings = {
+  mode: WorkingNotificationMode;
+  includeDetails: boolean;
+};
+
+export type WorkingTaskStatus =
+  | "running"
+  | "waiting_user"
+  | "stopping"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type WorkingTask = {
+  requestId: string;
+  threadId: string;
+  threadTitle: string;
+  projectId: string | null;
+  projectName: string | null;
+  status: WorkingTaskStatus;
+  activity: string;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  queueCount: number;
+  unread: boolean;
+};
+
+export type WorkingSnapshot = {
+  items: WorkingTask[];
+  activeCount: number;
+  attentionCount: number;
+};
+
+export type WorkingViewUpdateRequest = {
+  threadId: string | null;
+};
+
+export type WorkingNavigationTarget = {
+  requestId: string;
+  threadId: string;
+  projectId: string | null;
+};
+
 export type AppSettings = {
   toolModel: ToolModelSettings;
   appearance: AppearanceSettings;
   brand: BrandSettings;
   language: AppLanguage;
   chromeTakeover: ChromeTakeoverSettings;
+  workingNotifications: WorkingNotificationSettings;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -508,6 +556,7 @@ export type AppSettingsUpdateRequest = {
   brand?: Partial<Pick<BrandSettings, "logoDataUrl" | "mainTitle" | "subtitle">>;
   language?: AppLanguage;
   chromeTakeover?: Partial<ChromeTakeoverSettings>;
+  workingNotifications?: Partial<WorkingNotificationSettings>;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -1203,6 +1252,14 @@ export type JasmineApi = {
   removeProject(request: ProjectRemoveRequest): Promise<void>;
   openProjectInExplorer(request: ProjectOpenInExplorerRequest): Promise<void>;
   onProjectOpened(callback: (project: WorkspaceProject) => void): () => void;
+  getWorkingSnapshot(): Promise<WorkingSnapshot>;
+  markWorkingRead(requestId: string): Promise<WorkingSnapshot>;
+  clearCompletedWorking(): Promise<WorkingSnapshot>;
+  stopWorkingTask(requestId: string): Promise<boolean>;
+  updateWorkingView(request: WorkingViewUpdateRequest): Promise<void>;
+  consumePendingWorkingNavigation(): Promise<WorkingNavigationTarget | null>;
+  onWorkingChanged(callback: (snapshot: WorkingSnapshot) => void): () => void;
+  onWorkingNavigate(callback: (target: WorkingNavigationTarget) => void): () => void;
   getTodoSnapshot(): Promise<TodoSnapshot>;
   addTodo(request: TodoAddRequest): Promise<TodoSnapshot>;
   openTodoFile(request: TodoOpenFileRequest): Promise<TodoOpenFileResponse>;

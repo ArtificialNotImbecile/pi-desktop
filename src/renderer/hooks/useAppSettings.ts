@@ -26,6 +26,10 @@ export const defaultAppSettings: AppSettings = {
   chromeTakeover: {
     enabled: false,
     extensionId: null
+  },
+  workingNotifications: {
+    mode: "background",
+    includeDetails: true
   }
 };
 
@@ -98,6 +102,9 @@ export function readStartupSettingsCache(): AppSettings | null {
       !parsed.chromeTakeover ||
       typeof parsed.chromeTakeover.enabled !== "boolean" ||
       (parsed.chromeTakeover.extensionId !== null && typeof parsed.chromeTakeover.extensionId !== "string") ||
+      !parsed.workingNotifications ||
+      !["background", "always", "never"].includes(parsed.workingNotifications.mode) ||
+      typeof parsed.workingNotifications.includeDetails !== "boolean" ||
       !parsed.toolModel ||
       typeof parsed.toolModel.providerId !== "string" ||
       typeof parsed.toolModel.modelId !== "string" ||

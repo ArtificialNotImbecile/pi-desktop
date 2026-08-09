@@ -13,6 +13,9 @@ export function AppShell(props: {
   activeThreadId: string | null;
   activeProjectId: string | null;
   todoActive: boolean;
+  workingActive: boolean;
+  workingActiveCount: number;
+  workingAttention: boolean;
   messagesEmpty: boolean;
   sidebarCollapsed: boolean;
   moreOpen: boolean;
@@ -25,6 +28,7 @@ export function AppShell(props: {
   onSelectProject(projectId: string): void;
   onSelectThread(threadId: string): void;
   onOpenTodo(): void;
+  onOpenWorking(): void;
   onToggleMore(): void;
   onClearHistory(): void;
   onOpenSettings(): void;
@@ -47,6 +51,9 @@ export function AppShell(props: {
         activeThreadId={props.activeThreadId}
         activeProjectId={props.activeProjectId}
         todoActive={props.todoActive}
+        workingActive={props.workingActive}
+        workingActiveCount={props.workingActiveCount}
+        workingAttention={props.workingAttention}
         moreOpen={props.moreOpen}
         onToggleCollapsed={stable.onToggleSidebar}
         onSearch={stable.onSearch}
@@ -57,6 +64,7 @@ export function AppShell(props: {
         onSelectProject={stable.onSelectProject}
         onSelectThread={stable.onSelectThread}
         onOpenTodo={stable.onOpenTodo}
+        onOpenWorking={stable.onOpenWorking}
         onToggleMore={stable.onToggleMore}
         onClearHistory={stable.onClearHistory}
         onOpenSettings={stable.onOpenSettings}

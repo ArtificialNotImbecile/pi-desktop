@@ -17,7 +17,7 @@ export type SpotlightWindowHelpers = {
   consumePendingCommand(): SpotlightExecuteRequest | null;
 };
 
-export function registerSpotlightIpc(context: IpcContext, helpers: SpotlightWindowHelpers): void {
+export function registerSpotlightIpc(context: Pick<IpcContext, "getDatabase">, helpers: SpotlightWindowHelpers): void {
   ipcMain.handle("spotlight:search", (_event, request: SpotlightSearchRequest): SpotlightSearchResponse => {
     const { query } = spotlightSearchSchema.parse(request);
     const normalized = query.trim().toLowerCase();

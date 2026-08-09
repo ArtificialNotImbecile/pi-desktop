@@ -20,6 +20,8 @@ type AppSettingsRow = {
   language: AppLanguage;
   chrome_takeover_enabled?: number | null;
   chrome_takeover_extension_id?: string | null;
+  working_notification_mode?: string | null;
+  working_notification_include_details?: number | null;
   skill_editor_path?: string | null;
   terminal_shell_path?: string | null;
   updated_at: string;
@@ -45,10 +47,12 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       language,
       chrome_takeover_enabled,
       chrome_takeover_extension_id,
+      working_notification_mode,
+      working_notification_include_details,
       skill_editor_path,
       terminal_shell_path,
       updated_at
-    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, NULL, NULL, ?)`
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, NULL, NULL, ?)`
   ).run(
     DEFAULT_APPEARANCE.accent,
     DEFAULT_APPEARANCE.surface,
@@ -80,6 +84,8 @@ export function getAppSettings(db: SqlDatabase): AppSettings | null {
         language,
         chrome_takeover_enabled,
         chrome_takeover_extension_id,
+        working_notification_mode,
+        working_notification_include_details,
         skill_editor_path,
         terminal_shell_path,
         updated_at
@@ -112,6 +118,8 @@ export function updateAppSettings(
     language: normalizeLanguage(input.language, current.language),
     chromeTakeoverEnabled: input.chromeTakeover?.enabled ?? current.chromeTakeover.enabled,
     chromeTakeoverExtensionId: normalizeChromeExtensionId(input.chromeTakeover?.extensionId, current.chromeTakeover.extensionId),
+    workingNotificationMode: normalizeWorkingNotificationMode(input.workingNotifications?.mode, current.workingNotifications.mode),
+    workingNotificationIncludeDetails: input.workingNotifications?.includeDetails ?? current.workingNotifications.includeDetails,
     skillEditorPath: normalizeOptionalPath(input.skillEditorPath, current.skillEditorPath),
     terminalShellPath: normalizeTerminalShellPath(input.terminalShellPath, current.terminalShellPath)
   };
@@ -132,6 +140,8 @@ export function updateAppSettings(
         language = ?,
         chrome_takeover_enabled = ?,
         chrome_takeover_extension_id = ?,
+        working_notification_mode = ?,
+        working_notification_include_details = ?,
         skill_editor_path = ?,
         terminal_shell_path = ?,
         updated_at = ?
@@ -151,6 +161,8 @@ export function updateAppSettings(
     next.language,
     next.chromeTakeoverEnabled ? 1 : 0,
     next.chromeTakeoverExtensionId,
+    next.workingNotificationMode,
+    next.workingNotificationIncludeDetails ? 1 : 0,
     next.skillEditorPath ?? null,
     next.terminalShellPath ?? null,
     timestamp
@@ -183,6 +195,10 @@ function mapAppSettings(row: AppSettingsRow): AppSettings {
     chromeTakeover: {
       enabled: Boolean(row.chrome_takeover_enabled),
       extensionId: normalizeChromeExtensionId(row.chrome_takeover_extension_id, null)
+    },
+    workingNotifications: {
+      mode: normalizeWorkingNotificationMode(row.working_notification_mode, "background"),
+      includeDetails: row.working_notification_include_details !== 0
     },
     skillEditorPath: normalizeOptionalPath(row.skill_editor_path, undefined),
     terminalShellPath: normalizeTerminalShellPath(row.terminal_shell_path, undefined)
@@ -228,6 +244,13 @@ function normalizeChromeExtensionId(value: string | null | undefined, fallback: 
   if (value === null) return null;
   const candidate = value.trim().toLowerCase();
   return /^[a-p]{32}$/.test(candidate) ? candidate : fallback;
+}
+
+function normalizeWorkingNotificationMode(
+  value: string | null | undefined,
+  fallback: "background" | "always" | "never"
+): "background" | "always" | "never" {
+  return value === "background" || value === "always" || value === "never" ? value : fallback;
 }
 
 function normalizeTerminalShellPath(value: string | null | undefined, fallback: string | undefined): string | undefined {

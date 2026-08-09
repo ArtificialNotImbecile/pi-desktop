@@ -51,6 +51,34 @@ contextBridge.exposeInMainWorld("jasmine", {
     ipcRenderer.on("projects:opened", listener);
     return () => ipcRenderer.removeListener("projects:opened", listener);
   },
+  getWorkingSnapshot() {
+    return ipcRenderer.invoke("working:snapshot");
+  },
+  markWorkingRead(requestId) {
+    return ipcRenderer.invoke("working:markRead", requestId);
+  },
+  clearCompletedWorking() {
+    return ipcRenderer.invoke("working:clearCompleted");
+  },
+  stopWorkingTask(requestId) {
+    return ipcRenderer.invoke("working:stop", requestId);
+  },
+  updateWorkingView(request) {
+    return ipcRenderer.invoke("working:view", request);
+  },
+  consumePendingWorkingNavigation() {
+    return ipcRenderer.invoke("working:navigation:consume");
+  },
+  onWorkingChanged(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("working:changed", listener);
+    return () => ipcRenderer.removeListener("working:changed", listener);
+  },
+  onWorkingNavigate(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("working:navigate", listener);
+    return () => ipcRenderer.removeListener("working:navigate", listener);
+  },
   getTodoSnapshot() {
     return ipcRenderer.invoke("todos:snapshot");
   },

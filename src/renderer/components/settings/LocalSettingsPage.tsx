@@ -40,8 +40,8 @@ import { useI18n } from "../../i18n";
 import { APPEARANCE_THEMES } from "../../../shared/theme";
 import { getBridge } from "../../desktopApi";
 import DEFAULT_BRAND_LOGO_URL from "../../assets/jasmine-logo.png";
-import { Button, Select, TextArea, TextInput } from "../ui";
-import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon } from "../icons/Icons";
+import { Button, Select, Switch, TextArea, TextInput } from "../ui";
+import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon, WorkingIcon } from "../icons/Icons";
 import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
 import packageMetadata from "../../../../package.json";
 
@@ -493,6 +493,7 @@ function GeneralSettingsPage(props: {
   const [editorPathDraft, setEditorPathDraft] = useState(props.settings.skillEditorPath ?? "");
   const [terminalShellDraft, setTerminalShellDraft] = useState(props.settings.terminalShellPath ?? "");
   const [brandDraft, setBrandDraft] = useState(props.settings.brand);
+  const [workingNotificationsDraft, setWorkingNotificationsDraft] = useState(props.settings.workingNotifications);
   const [editorDiscovery, setEditorDiscovery] = useState<ExecutableDiscovery | null>(null);
   const [terminalDiscovery, setTerminalDiscovery] = useState<ExecutableDiscovery | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
@@ -510,7 +511,9 @@ function GeneralSettingsPage(props: {
     terminalShellDraft.trim() !== (props.settings.terminalShellPath ?? "") ||
     brandDraft.logoDataUrl !== props.settings.brand.logoDataUrl ||
     brandDraft.mainTitle.trim() !== props.settings.brand.mainTitle ||
-    brandDraft.subtitle.trim() !== props.settings.brand.subtitle;
+    brandDraft.subtitle.trim() !== props.settings.brand.subtitle ||
+    workingNotificationsDraft.mode !== props.settings.workingNotifications.mode ||
+    workingNotificationsDraft.includeDetails !== props.settings.workingNotifications.includeDetails;
   const brandTitleInvalid = !brandDraft.mainTitle.trim();
 
   useEffect(() => {
@@ -520,11 +523,12 @@ function GeneralSettingsPage(props: {
     setEditorPathDraft(props.settings.skillEditorPath ?? "");
     setTerminalShellDraft(props.settings.terminalShellPath ?? "");
     setBrandDraft(props.settings.brand);
-  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle]);
+    setWorkingNotificationsDraft(props.settings.workingNotifications);
+  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle, props.settings.workingNotifications.mode, props.settings.workingNotifications.includeDetails]);
 
   useEffect(() => {
     setSaveState("idle");
-  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle]);
+  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle, workingNotificationsDraft.mode, workingNotificationsDraft.includeDetails]);
 
   useEffect(() => {
     let cancelled = false;
@@ -571,6 +575,7 @@ function GeneralSettingsPage(props: {
         mainTitle: brandDraft.mainTitle.trim(),
         subtitle: brandDraft.subtitle.trim()
       },
+      workingNotifications: workingNotificationsDraft,
       skillEditorPath: editorPathDraft.trim(),
       terminalShellPath: terminalShellDraft.trim()
     });
@@ -581,6 +586,7 @@ function GeneralSettingsPage(props: {
       setEditorPathDraft(result.skillEditorPath ?? "");
       setTerminalShellDraft(result.terminalShellPath ?? "");
       setBrandDraft(result.brand);
+      setWorkingNotificationsDraft(result.workingNotifications);
       setDraftTouched(false);
     }
   }
@@ -768,6 +774,45 @@ function GeneralSettingsPage(props: {
               />
             }
           />
+        </SettingsSection>
+        <SettingsSection className="general-settings-list-section" aria-label={t("settings.general.taskNotifications")}>
+          <SettingsListRow
+            className="general-working-notifications-row"
+            icon={<WorkingIcon />}
+            title={t("settings.general.taskNotifications")}
+            description={t("settings.general.taskNotificationsDescription")}
+          >
+            <div className="working-notification-controls">
+              <label>
+                <span>{t("settings.general.notificationMode")}</span>
+                <Select
+                  aria-label={t("settings.general.notificationModeAria")}
+                  disabled={props.loading || props.saving}
+                  value={workingNotificationsDraft.mode}
+                  onChange={(event) => {
+                    setDraftTouched(true);
+                    setWorkingNotificationsDraft((current) => ({ ...current, mode: event.target.value as "background" | "always" | "never" }));
+                  }}
+                >
+                  <option value="background">{t("settings.general.notificationMode.background")}</option>
+                  <option value="always">{t("settings.general.notificationMode.always")}</option>
+                  <option value="never">{t("settings.general.notificationMode.never")}</option>
+                </Select>
+              </label>
+              <Switch
+                checked={workingNotificationsDraft.includeDetails}
+                disabled={props.loading || props.saving || workingNotificationsDraft.mode === "never"}
+                aria-label={t("settings.general.notificationDetailsAria")}
+                onChange={(includeDetails) => {
+                  setDraftTouched(true);
+                  setWorkingNotificationsDraft((current) => ({ ...current, includeDetails }));
+                }}
+                onLabel={t("app.on")}
+                offLabel={t("app.off")}
+              />
+              <span className="working-notification-detail-copy">{t("settings.general.notificationDetails")}</span>
+            </div>
+          </SettingsListRow>
         </SettingsSection>
         <SettingsSection className="general-settings-list-section" aria-label={t("settings.general.utility")}>
           <SettingsListRow

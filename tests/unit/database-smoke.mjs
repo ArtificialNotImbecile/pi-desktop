@@ -19,6 +19,7 @@ try {
   const contextCaptures = await import("../../dist/main/main/db/repositories/contextCaptures.js");
   const migrations = await import("../../dist/main/main/db/migrations.js");
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
+  const workingTasks = await import("../../dist/main/main/db/repositories/workingTasks.js");
   const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
   const remoteConnections = await import("../../dist/main/main/db/repositories/remoteConnections.js");
   const skillFiles = await import("../../dist/main/main/services/skillFiles.js");
@@ -92,6 +93,8 @@ try {
       language TEXT NOT NULL DEFAULT 'en',
       chrome_takeover_enabled INTEGER NOT NULL DEFAULT 0,
       chrome_takeover_extension_id TEXT,
+      working_notification_mode TEXT NOT NULL DEFAULT 'background',
+      working_notification_include_details INTEGER NOT NULL DEFAULT 1,
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
@@ -260,6 +263,10 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 30").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 31").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 32").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 33").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("PRAGMA table_info(app_settings)").all().some((row) => row.name === "working_notification_mode"), true);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'working_tasks'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("PRAGMA table_info(context_captures)").all().some((row) => row.name === "raw_payload_gzip"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_threads)").all().some((row) => row.name === "session_file"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "session_entry_id"), true);
@@ -427,6 +434,15 @@ try {
     assert.ok(compressedBytes < Buffer.byteLength(completeRaw, "utf8") / 4, "repeated raw payload should be gzip compressed");
     legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'complete-capture-message'").run();
     assert.equal(contextCaptures.getContextCapture(legacyDb, completeCaptureId), null, "capture should cascade with its message");
+
+    workingTasks.startWorkingTask(legacyDb, { requestId: "working-request", threadId: "legacy-thread", activity: "Preparing response" }, timestamp);
+    assert.equal(workingTasks.listWorkingTasks(legacyDb, "2000-01-01T00:00:00.000Z").activeCount, 1);
+    workingTasks.updateWorkingTask(legacyDb, { requestId: "working-request", status: "waiting_user", unread: true }, timestamp);
+    assert.equal(workingTasks.listWorkingTasks(legacyDb, "2000-01-01T00:00:00.000Z").attentionCount, 1);
+    assert.equal(workingTasks.markWorkingNotificationSent(legacyDb, "working-request", "waiting_user"), true);
+    assert.equal(workingTasks.markWorkingNotificationSent(legacyDb, "working-request", "waiting_user"), false);
+    workingTasks.recoverInterruptedWorking(legacyDb, timestamp);
+    assert.equal(workingTasks.listWorkingTasks(legacyDb, "2000-01-01T00:00:00.000Z").items[0].status, "interrupted");
   } finally {
     if (previousDefaultRoot === undefined) delete process.env.JASMINE_DEFAULT_PROJECT_ROOT;
     else process.env.JASMINE_DEFAULT_PROJECT_ROOT = previousDefaultRoot;
@@ -444,6 +460,10 @@ try {
   assert.deepEqual(appSettings.getAppSettings(db).chromeTakeover, {
     enabled: false,
     extensionId: null
+  });
+  assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, {
+    mode: "background",
+    includeDetails: true
   });
   assert.deepEqual(appSettings.getAppSettings(db).brand, {
     logoDataUrl: null,
@@ -474,6 +494,8 @@ try {
     enabled: true,
     extensionId: "a".repeat(32)
   });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { workingNotifications: { mode: "never", includeDetails: false } }, timestamp);
+  assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, { mode: "never", includeDetails: false });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { skillEditorPath: process.execPath }, timestamp);
   assert.equal(appSettings.getAppSettings(db).skillEditorPath, process.execPath);
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { terminalShellPath: process.execPath }, timestamp);

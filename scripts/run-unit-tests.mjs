@@ -16,6 +16,7 @@ if (!existsSync(path.join(rootDir, "dist", "main", "main"))) {
 
 const tasks = [
   { name: "database-smoke", steps: [["node", "--no-warnings", "tests/unit/database-smoke.mjs"]] },
+  { name: "working-registry", steps: [["node", "--no-warnings", "tests/unit/working-registry.mjs"]] },
   { name: "stream-delta", steps: [["node", "--no-warnings", "tests/unit/stream-delta.mjs"]] },
   { name: "pi-runtime-equivalence", steps: [["node", "--no-warnings", "tests/unit/pi-runtime-equivalence.mjs"]] },
   { name: "pi-context-usage", steps: [["node", "--no-warnings", "tests/unit/pi-context-usage.mjs"]] },

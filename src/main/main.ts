@@ -1,19 +1,20 @@
-import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, screen, Tray, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, Notification, screen, Tray, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "node:fs";
 import { cp, mkdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { DEFAULT_APPEARANCE } from "../shared/theme.js";
-import type { AppLanguage } from "../shared/ipc.js";
-import type { SpotlightExecuteRequest } from "../shared/ipc.js";
+import type { AppLanguage, SpotlightExecuteRequest, WorkingNavigationTarget } from "../shared/ipc.js";
 import type { JasmineDatabase } from "./db/database.js";
 import { stopChromeBridge } from "./services/chromeBridge.js";
+import { WorkingRegistry, type WorkingNotification } from "./services/workingRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 let database: JasmineDatabase | null = null;
 let createDatabase: (() => JasmineDatabase) | null = null;
+let workingRegistry: WorkingRegistry | null = null;
 let ipcRegistered = false;
 let mainWindow: BrowserWindow | null = null;
 let spotlightWindow: BrowserWindow | null = null;
@@ -22,6 +23,8 @@ let focusOnWindowCreate = false;
 let tray: Tray | null = null;
 let isQuitting = false;
 let pendingSpotlightCommand: SpotlightExecuteRequest | null = null;
+let pendingWorkingNavigation: WorkingNavigationTarget | null = null;
+const harnessWorkingNotifications: Array<{ notification: WorkingNotification; click(): void }> = [];
 const APP_USER_MODEL_ID = "works.earendil.jasmine";
 const SPOTLIGHT_SHORTCUT = "Alt+Space";
 const SPOTLIGHT_WIDTH = 680;
@@ -159,6 +162,36 @@ function getDatabase(): JasmineDatabase {
   return database;
 }
 
+function getWorkingRegistry(): WorkingRegistry {
+  workingRegistry ??= new WorkingRegistry(getDatabase(), {
+    broadcast(snapshot) {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("working:changed", snapshot);
+    },
+    isBackground() {
+      return !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized() || !mainWindow.isFocused();
+    },
+    showNotification(notification, onClick) {
+      if (isE2eHarness) {
+        harnessWorkingNotifications.push({ notification, click: onClick });
+        return true;
+      }
+      if (!Notification.isSupported()) return false;
+      const toast = new Notification({ title: notification.title, body: notification.body });
+      toast.once("click", onClick);
+      toast.show();
+      return true;
+    },
+    route: routeWorkingNavigation
+  });
+  return workingRegistry;
+}
+
+function consumePendingWorkingNavigation(): WorkingNavigationTarget | null {
+  const target = pendingWorkingNavigation;
+  pendingWorkingNavigation = null;
+  return target;
+}
+
 async function startApplication(): Promise<void> {
   const win = createWindow();
   if (!win) return;
@@ -181,7 +214,8 @@ async function startApplication(): Promise<void> {
       import("./ipc/spotlight.js")
     ]);
     createDatabase = () => new JasmineDatabase();
-    registerIpc({ getDatabase });
+    registerIpc({ getDatabase, getWorkingRegistry, consumePendingWorkingNavigation });
+    getWorkingRegistry().initialize();
     registerSpotlightIpc(
       { getDatabase },
       {
@@ -209,6 +243,11 @@ async function startApplication(): Promise<void> {
         isMainVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
         isMainAlive: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
         hasTray: () => Boolean(tray)
+      };
+      (globalThis as { __jasmineWorkingNotifications?: unknown }).__jasmineWorkingNotifications = {
+        list: () => harnessWorkingNotifications.map((item) => item.notification),
+        clear: () => { harnessWorkingNotifications.splice(0); },
+        click: (index: number) => harnessWorkingNotifications[index]?.click()
       };
     }
     ipcRegistered = true;
@@ -379,6 +418,22 @@ function routeSpotlightCommand(payload: SpotlightExecuteRequest): void {
     return;
   }
   pendingSpotlightCommand = payload;
+  showMainWindow();
+}
+
+function routeWorkingNavigation(target: WorkingNavigationTarget): void {
+  const existing = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (existing) {
+    if (shouldQueueSpotlightCommand(existing)) {
+      pendingWorkingNavigation = target;
+      showMainWindow();
+      return;
+    }
+    showMainWindow();
+    existing.webContents.send("working:navigate", target);
+    return;
+  }
+  pendingWorkingNavigation = target;
   showMainWindow();
 }
 

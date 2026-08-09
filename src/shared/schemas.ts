@@ -436,8 +436,18 @@ export const appSettingsUpdateSchema = z.object({
     enabled: z.boolean().optional(),
     extensionId: z.union([z.string().trim().toLowerCase().regex(/^[a-p]{32}$/), z.null()]).optional()
   }).optional(),
+  workingNotifications: z.object({
+    mode: z.enum(["background", "always", "never"]).optional(),
+    includeDetails: z.boolean().optional()
+  }).optional(),
   skillEditorPath: z.string().trim().max(1000).optional(),
   terminalShellPath: z.string().trim().max(1000).optional()
+});
+
+export const workingRequestIdSchema = z.string().trim().min(1).max(200);
+
+export const workingViewUpdateSchema = z.object({
+  threadId: z.union([z.string().trim().min(1).max(200), z.null()])
 });
 
 export const terminalStartSchema = z.object({
