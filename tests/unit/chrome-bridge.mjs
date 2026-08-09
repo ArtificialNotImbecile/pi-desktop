@@ -14,6 +14,8 @@ process.env.JASMINE_CHROME_BRIDGE_FILE = bridgeFile;
 process.env.JASMINE_CHROME_SKIP_EXTERNAL_REGISTRATION = "1";
 
 let bridge;
+let extension;
+let agent;
 try {
   // 1. Native messaging framing round-trips, including split chunks.
   {
@@ -60,23 +62,24 @@ try {
     assert.equal(typeof info.port, "number");
     assert.equal(typeof info.token, "string");
 
-    const extension = await connectClient(info.port);
-    extension.send({ type: "hello", token: info.token, role: "chrome-extension" });
-
+    extension = await connectClient(info.port);
+    let replyToExtension = true;
     extension.onMessage((message) => {
-      if (typeof message.__bridgeId === "number") {
-        extension.send({ __bridgeId: message.__bridgeId, ok: true, result: fakeExtensionResult(message) });
+      if (replyToExtension && typeof message.id === "number") {
+        assert.equal(message.__bridgeId, undefined);
+        extension.send({ id: message.id, ok: true, result: fakeExtensionResult(message) });
       }
     });
+    extension.send({ type: "hello", token: info.token, role: "chrome-extension" });
 
-    await waitFor(() => bridge.status().extensionConnected);
+    await waitFor(() => bridge.status().extensionConnected && bridge.status().extensionResponsive);
 
-    const agent = await connectClient(info.port);
+    agent = await connectClient(info.port);
     agent.send({ type: "hello", token: info.token, role: "agent" });
 
     const replyPromise = new Promise((resolve) => agent.onMessage(resolve));
     agent.send({ id: "req-1", method: "snapshot", params: { maxItems: 5 } });
-    const reply = await replyPromise;
+    const reply = await withTimeout(replyPromise, 1000, "Real extension reply was not routed back to the agent.");
     assert.equal(reply.id, "req-1");
     assert.equal(reply.ok, true);
     assert.equal(reply.result.method, "snapshot");
@@ -90,6 +93,8 @@ try {
     assert.match(textOf(statusResult), /takeover bridge/);
     const tabsResult = await runTool(tools, "chrome_list_tabs", {});
     assert.match(textOf(tabsResult), /Real Chrome tab/);
+    const openResult = await runTool(tools, "chrome_open_url", { url: "https://example.test/opened" });
+    assert.match(textOf(openResult), /https:\/\/example\.test\/opened/);
     const snapshotResult = await runTool(tools, "chrome_snapshot", { maxItems: 5 });
     assert.match(textOf(snapshotResult), /\[e1\] input/);
     assert.equal(snapshotResult.details.takeover, true);
@@ -101,8 +106,15 @@ try {
     assert.equal(screenshotResult.details.takeover, true);
     await access(screenshotResult.details.path);
 
+    replyToExtension = false;
+    const degraded = await bridge.refreshExtensionHealth(50);
+    assert.equal(degraded.extensionConnected, true);
+    assert.equal(degraded.extensionResponsive, false);
+
     extension.close();
+    extension = null;
     agent.close();
+    agent = null;
   }
 
   // 4. A bad auth token is rejected.
@@ -132,6 +144,8 @@ try {
 
   console.log("chrome-bridge unit test passed");
 } finally {
+  extension?.close?.();
+  agent?.close?.();
   await bridge?.stop?.();
   if (previousBridgeFile === undefined) delete process.env.JASMINE_CHROME_BRIDGE_FILE;
   else process.env.JASMINE_CHROME_BRIDGE_FILE = previousBridgeFile;
@@ -231,4 +245,12 @@ async function waitFor(predicate, timeoutMs = 3000) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error("Condition not met within timeout.");
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

@@ -57,10 +57,14 @@ export function ChromeControlSettingsPage(props: {
     },
     {
       label: t("settings.chrome.status.extension"),
-      value: status?.extensionConnected ? t("settings.chrome.connected") : t("settings.chrome.notConnected"),
-      tone: status?.extensionConnected ? "success" : "warning"
+      value: status?.extensionConnected
+        ? status.extensionResponsive
+          ? t("settings.chrome.connected")
+          : t("settings.chrome.unresponsive")
+        : t("settings.chrome.notConnected"),
+      tone: status?.extensionConnected && status.extensionResponsive ? "success" : "warning"
     }
-  ] satisfies Array<{ label: string; value: string; tone: "neutral" | "success" | "warning" }>, [enabled, status?.bridgeRunning, status?.extensionConnected, status?.hostRegistered, t]);
+  ] satisfies Array<{ label: string; value: string; tone: "neutral" | "success" | "warning" }>, [enabled, status?.bridgeRunning, status?.extensionConnected, status?.extensionResponsive, status?.hostRegistered, t]);
 
   async function refreshStatus() {
     try {

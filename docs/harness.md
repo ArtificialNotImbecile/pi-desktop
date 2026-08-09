@@ -31,6 +31,7 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `providers.spec.ts`: provider settings, discovery, menus, labels, and options.
 - `chat-runtime.spec.ts`: streaming, queueing, stop, traces, search, edit, and recovery.
 - `settings.spec.ts`: settings shell, appearance, brand, language, and window states.
+- `chrome-takeover.spec.ts`: real-extension protocol correlation, responsive/degraded health, and `@Chrome` status/list/open routing without managed-CDP fallback.
 - `panels.spec.ts`: memory, activity, search, terminal, artifacts, and context.
 - `integrations.spec.ts`: MCP, remotes, skills, prompts, and plugins.
 - `rendering.spec.ts`: markdown, timelines, tool summaries, images, and actions.

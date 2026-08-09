@@ -24,16 +24,28 @@ export function deriveExtensionIdFromKey(keyBase64: string): string {
 export type ChromeTakeoverStatus = {
   bridgeRunning: boolean;
   extensionConnected: boolean;
+  extensionResponsive: boolean;
   hostRegistered: boolean;
   extensionId: string | null;
   extensionPath: string | null;
   bridgePort: number | null;
 };
 
-type PendingRequest = {
+type AgentPendingRequest = {
+  kind: "agent";
   socket: Socket;
+  extensionSocket: Socket;
   requestId: number | string;
 };
+
+type HealthPendingRequest = {
+  kind: "health";
+  extensionSocket: Socket;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (responsive: boolean) => void;
+};
+
+type PendingRequest = AgentPendingRequest | HealthPendingRequest;
 
 // The native host reads this same default path, so the app must publish the
 // bridge port and token here (or at JASMINE_CHROME_BRIDGE_FILE for tests).
@@ -146,6 +158,8 @@ export class ChromeBridge {
   private port: number | null = null;
   private token = "";
   private extensionSocket: Socket | null = null;
+  private extensionResponsive = false;
+  private extensionResponseVersion = 0;
   private hostRegistered = false;
   private extensionId: string | null = null;
   private nextRequestId = 1;
@@ -173,6 +187,8 @@ export class ChromeBridge {
   async stop(): Promise<void> {
     for (const socket of [this.extensionSocket]) socket?.destroy();
     this.extensionSocket = null;
+    this.extensionResponsive = false;
+    this.failPendingForExtension();
     await new Promise<void>((resolve) => {
       if (!this.server) return resolve();
       this.server.close(() => resolve());
@@ -190,11 +206,38 @@ export class ChromeBridge {
     return {
       bridgeRunning: Boolean(this.server),
       extensionConnected: Boolean(this.extensionSocket),
+      extensionResponsive: Boolean(this.extensionSocket) && this.extensionResponsive,
       hostRegistered: this.hostRegistered,
       extensionId: this.extensionId ?? BUNDLED_CHROME_EXTENSION_ID,
       extensionPath: resolveChromeExtensionRoot(),
       bridgePort: this.port
     };
+  }
+
+  async refreshExtensionHealth(timeoutMs = 1000): Promise<ChromeTakeoverStatus> {
+    const extensionSocket = this.extensionSocket;
+    if (!extensionSocket || extensionSocket.destroyed) {
+      this.extensionResponsive = false;
+      return this.status();
+    }
+
+    const bridgeId = this.nextRequestId++;
+    const responseVersion = this.extensionResponseVersion;
+    const responsive = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(bridgeId);
+        if (pending?.kind !== "health") return;
+        this.pending.delete(bridgeId);
+        if (this.extensionSocket === extensionSocket && this.extensionResponseVersion === responseVersion) {
+          this.extensionResponsive = false;
+        }
+        resolve(false);
+      }, Math.max(1, timeoutMs));
+      this.pending.set(bridgeId, { kind: "health", extensionSocket, timer, resolve });
+      extensionSocket.write(`${JSON.stringify({ id: bridgeId, method: "status", params: {} })}\n`);
+    });
+    if (responsive && this.extensionSocket === extensionSocket) this.extensionResponsive = true;
+    return this.status();
   }
 
   private async publishBridgeInfo(): Promise<void> {
@@ -241,40 +284,78 @@ export class ChromeBridge {
       }
     });
     socket.on("close", () => {
-      if (this.extensionSocket === socket) this.extensionSocket = null;
+      if (this.extensionSocket === socket) {
+        this.extensionSocket = null;
+        this.extensionResponsive = false;
+        this.failPendingForExtension(socket);
+      }
       for (const [id, pending] of this.pending) {
-        if (pending.socket === socket) this.pending.delete(id);
+        if (pending.kind === "agent" && pending.socket === socket) this.pending.delete(id);
       }
     });
     socket.on("error", () => socket.destroy());
   }
 
   private attachExtension(socket: Socket): void {
-    this.extensionSocket?.destroy();
+    const previousSocket = this.extensionSocket;
+    if (previousSocket && previousSocket !== socket) {
+      this.failPendingForExtension(previousSocket);
+      previousSocket.destroy();
+    }
     this.extensionSocket = socket;
+    this.extensionResponsive = false;
+    void this.refreshExtensionHealth();
   }
 
   // Extension -> agent: route the reply back to the waiting agent by bridge id.
   private onExtensionMessage(message: Record<string, unknown>): void {
-    const bridgeId = Number(message.__bridgeId);
-    if (!Number.isFinite(bridgeId)) return;
+    const bridgeId = Number(message.id);
+    if (!Number.isInteger(bridgeId)) return;
     const pending = this.pending.get(bridgeId);
     if (!pending) return;
     this.pending.delete(bridgeId);
+    this.extensionResponseVersion += 1;
+    this.extensionResponsive = true;
+    if (pending.kind === "health") {
+      clearTimeout(pending.timer);
+      pending.resolve(true);
+      return;
+    }
     const reply = { ...message, id: pending.requestId };
     delete (reply as { __bridgeId?: number }).__bridgeId;
     if (!pending.socket.destroyed) pending.socket.write(`${JSON.stringify(reply)}\n`);
   }
 
-  // Agent -> extension: tag with a bridge id so replies can be demultiplexed.
+  // Agent -> extension: use the bridge id as the protocol id, then restore the
+  // agent's original id when the extension reply returns.
   private onAgentMessage(socket: Socket, message: Record<string, unknown>): void {
     if (!this.extensionSocket) {
       socket.write(`${JSON.stringify({ id: message.id, ok: false, error: "Chrome extension is not connected." })}\n`);
       return;
     }
     const bridgeId = this.nextRequestId++;
-    this.pending.set(bridgeId, { socket, requestId: message.id as number | string });
-    this.extensionSocket.write(`${JSON.stringify({ ...message, __bridgeId: bridgeId })}\n`);
+    const extensionSocket = this.extensionSocket;
+    this.pending.set(bridgeId, { kind: "agent", socket, extensionSocket, requestId: message.id as number | string });
+    const request = { ...message, id: bridgeId };
+    delete (request as { __bridgeId?: number }).__bridgeId;
+    extensionSocket.write(`${JSON.stringify(request)}\n`);
+  }
+
+  private failPendingForExtension(extensionSocket?: Socket): void {
+    for (const [bridgeId, pending] of this.pending) {
+      if (extensionSocket && pending.extensionSocket !== extensionSocket) continue;
+      this.pending.delete(bridgeId);
+      if (pending.kind === "health") {
+        clearTimeout(pending.timer);
+        pending.resolve(false);
+      } else if (!pending.socket.destroyed) {
+        pending.socket.write(`${JSON.stringify({
+          id: pending.requestId,
+          ok: false,
+          error: "Chrome extension disconnected before replying."
+        })}\n`);
+      }
+    }
   }
 
   async registerNativeHost(extensionId?: string): Promise<ChromeTakeoverStatus> {
@@ -312,7 +393,7 @@ export class ChromeBridge {
 
     this.extensionId = trimmed;
     this.hostRegistered = true;
-    return this.status();
+    return this.refreshExtensionHealth();
   }
 
   async unregisterNativeHost(): Promise<ChromeTakeoverStatus> {

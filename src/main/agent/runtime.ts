@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
@@ -119,7 +120,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       .filter((skill) => (parsed.inlineSkillIds ?? []).includes(skill.id))
       .map((skill) => skill.name);
     const remotePrefix = request.remoteConnection?.active && request.toolsEnabled ? `Remote coding target: ${request.remoteConnection.name}. ` : "";
-    const content = remotePrefix + mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []);
+    const chromeTakeoverFlow = await runMockChromeTakeoverFlow(request, lastUserText, options.signal);
+    const content = remotePrefix + (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
     const latestUpdate: { current?: RuntimeUpdate } = {};
     const onUpdate = options.onUpdate
       ? (update: RuntimeUpdate) => {
@@ -129,17 +131,25 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       : undefined;
     try {
       if (lastUserText.toLowerCase().includes("slow response")) await abortableDelay(750, options.signal);
-      await streamMockReply(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
-        modelId: provider.modelId,
-        reasoningEffort: parsed.reasoningEffort,
-        ...options,
-        onUpdate
-      });
+      if (chromeTakeoverFlow) {
+        onUpdate?.({
+          content,
+          timeline: chromeTakeoverFlow.timeline,
+          liveMessages: [{ role: "assistant", content, timeline: chromeTakeoverFlow.timeline }]
+        });
+      } else {
+        await streamMockReply(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+          modelId: provider.modelId,
+          reasoningEffort: parsed.reasoningEffort,
+          ...options,
+          onUpdate
+        });
+      }
       const initialAssistantEntryId = appendMockAssistant(mockSession, provider, content);
       mockQueue.generatedMessages.push({
         role: "assistant",
         content,
-        timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+        timeline: chromeTakeoverFlow?.timeline ?? mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
           modelId: provider.modelId,
           reasoningEffort: parsed.reasoningEffort
         }),
@@ -528,6 +538,70 @@ type MockTimelineMeta = {
   complete?: boolean;
   thinkingProgress?: number;
 };
+
+type MockChromeToolResult = {
+  content?: Array<{ text?: string }>;
+};
+
+type MockChromeTool = {
+  name: string;
+  execute(toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<MockChromeToolResult>;
+};
+
+async function runMockChromeTakeoverFlow(
+  request: RuntimeChatRequest,
+  lastUserText: string,
+  signal?: AbortSignal
+): Promise<{ content: string; timeline: ChatTimelineItem[] } | null> {
+  if (process.env.JASMINE_E2E_CHROME_TAKEOVER_FLOW !== "1" || !lastUserText.toLowerCase().includes("e2e chrome takeover flow")) {
+    return null;
+  }
+  if (request.toolsEnabled === false) throw new Error("Chrome takeover E2E requires tools to be enabled.");
+  if (!request.chromeTakeover?.enabled) throw new Error("Chrome takeover E2E did not receive a healthy takeover runtime.");
+  const chromeSource = request.packageExtensionPaths?.find((source) => path.basename(source).toLowerCase() === "chrome");
+  if (!chromeSource) throw new Error("Chrome takeover E2E requires the @Chrome plugin to be active.");
+  const entryPath = path.extname(chromeSource) ? chromeSource : path.join(chromeSource, "index.js");
+  if (!existsSync(entryPath)) throw new Error(`Chrome takeover E2E package entry was not found: ${entryPath}`);
+
+  const loaded = await import(pathToFileURL(entryPath).href) as { default?: (pi: { registerTool(tool: MockChromeTool): void }) => void };
+  if (typeof loaded.default !== "function") throw new Error("Chrome takeover E2E package did not export a default extension function.");
+  const tools = new Map<string, MockChromeTool>();
+  loaded.default({ registerTool(tool) { tools.set(tool.name, tool); } });
+
+  const calls = [
+    { name: "chrome_status", params: {} },
+    { name: "chrome_list_tabs", params: {} },
+    { name: "chrome_open_url", params: { url: "https://e2e.example/opened" } }
+  ];
+  const timeline: ChatTimelineItem[] = [];
+  const output: string[] = [];
+  for (const [index, call] of calls.entries()) {
+    const tool = tools.get(call.name);
+    if (!tool) throw new Error(`Chrome takeover E2E tool was not registered: ${call.name}`);
+    const callId = `mock-chrome-${index + 1}`;
+    timeline.push({
+      id: `${callId}-call`,
+      kind: "tool_call",
+      toolName: call.name,
+      title: call.name,
+      argumentsJson: JSON.stringify(call.params, null, 2)
+    });
+    const result = await tool.execute(callId, call.params, signal);
+    const text = (result.content ?? []).map((item) => item.text ?? "").filter(Boolean).join("\n");
+    output.push(`${call.name}: ${text}`);
+    timeline.push({
+      id: `${callId}-result`,
+      kind: "tool_result",
+      toolName: call.name,
+      title: call.name,
+      content: text,
+      isError: false
+    });
+  }
+  const content = output.join("\n\n");
+  timeline.push({ id: "mock-chrome-output", kind: "assistant_text", text: content });
+  return { content, timeline };
+}
 
 async function streamMockReply(
   content: string,

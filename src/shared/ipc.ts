@@ -358,6 +358,7 @@ export type ChromeTakeoverStatus = {
   enabled: boolean;
   bridgeRunning: boolean;
   extensionConnected: boolean;
+  extensionResponsive: boolean;
   hostRegistered: boolean;
   extensionId: string | null;
   extensionPath: string | null;
