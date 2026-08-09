@@ -37,6 +37,7 @@ import {
   saveSettings,
   seedLargeThreadMessages,
   seedMarkdownThreadMessages,
+  seedLegacyDeepSeekContentProjection,
   seedPiAgentPackageSettings,
   stableChatLayoutSnapshot,
   startEmptyThread,
@@ -136,6 +137,44 @@ test.describe("Jasmine message rendering", () => {
     });
     expect(timeline.map((item) => item.kind).slice(-4)).toEqual(["thinking", "tool_call", "tool_result", "assistant_text"]);
     expect(timeline.some((item) => item.kind === "system" && item.title === "Model")).toBe(true);
+  });
+
+  test("continued imported DeepSeek content-only tool turns stay collapsible without becoming Thinking after restart", async ({}, testInfo) => {
+    const { page, userDataDir } = harness;
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("seed imported deepseek continuation");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    await quitElectron(harness.app);
+    const threadId = seedLegacyDeepSeekContentProjection(userDataDir);
+    harness = await launchJasmine(`${testInfo.title}-restart`, userDataDir);
+
+    const repairedAssistant = harness.page.locator(".assistant-block").last();
+    await expect(repairedAssistant.getByLabel("Assistant output")).toContainText("Visible final answer.");
+    await expect(repairedAssistant.getByLabel("Assistant output")).not.toContainText("Mock reply from Jasmine.");
+    await expect(repairedAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(repairedAssistant.locator(".message-run-line")).toContainText("high");
+    const preambleToggle = repairedAssistant.getByRole("button", { name: "Tool preamble", exact: true });
+    await expect(preambleToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(repairedAssistant.getByRole("button", { name: "Thinking", exact: true })).toHaveCount(0);
+    await preambleToggle.click();
+    await expect(preambleToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(repairedAssistant.locator(".tool-preamble-item")).toContainText("Mock reply from Jasmine.");
+
+    const stored = await harness.page.evaluate(async (id) => {
+      const assistant = (await window.jasmine.listMessages(id)).find((message) => message.role === "assistant");
+      return {
+        content: assistant?.content,
+        kinds: assistant?.timeline?.filter((item) => item.kind !== "system").map((item) => item.kind),
+        effort: assistant?.timeline?.find((item) => item.kind === "system" && item.title === "Thinking level")?.text
+      };
+    }, threadId);
+    expect(stored).toEqual({
+      content: "Mock reply from Jasmine.\nVisible final answer.",
+      kinds: ["assistant_text", "tool_call", "tool_result", "assistant_text"],
+      effort: "high"
+    });
   });
 
   test("assistant timeline pairs tool results across interleaved thinking", async () => {

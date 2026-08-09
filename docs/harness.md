@@ -10,14 +10,17 @@ Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generate
 - `npm run harness:inspect`: writes the UI snapshot and audit under `test-results/ui-harness/inspect/`.
 - `npm run harness:visual`: writes screenshots and a matrix under `test-results/ui-harness/visual/`.
 - `npm run harness:accept`: runs the headed desktop acceptance path and writes `test-results/ui-harness/acceptance/`.
-- `npm run test:e2e:smoke`: fast critical paths.
-- `npm run test:e2e`: full Electron suite.
+- `npm run test:e2e:smoke`: fast critical paths in background/off-screen mode.
+- `npm run test:e2e`: full Electron suite in background/off-screen mode.
+- `npm run test:e2e:headed`: explicit foreground run for interactive debugging.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
 - `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.
 - `npm run dist:win`: builds the Windows x64 NSIS installer under ignored `release/v0.1.1/`.
 - `npm run test:packaged`: launches `release/v0.1.1/win-unpacked/Jasmine.exe` and verifies the packaged renderer and bundled resources.
 
 Use `npm.cmd` and `npx.cmd` on Windows.
+
+Normal E2E commands create transparent, non-focusable Electron windows outside the visible desktop and keep them out of the taskbar. This includes the secondary Spotlight window, so the suite can run without covering apps or stealing keyboard focus. Use `test:e2e:headed` only when a visible interactive run is intentional. `harness:accept` remains a headed release-acceptance path.
 
 ## E2E map
 

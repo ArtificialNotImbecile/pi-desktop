@@ -92,7 +92,9 @@ function createWindow() {
     // repositions the window onto a display, nothing shows on the desktop.
     // CDP-driven input and screenshots work on the renderer surface and are
     // unaffected by OS-level window opacity.
-    ...(isE2eOffscreen ? { ...offscreenWindowPosition(), opacity: 0, skipTaskbar: true } : {}),
+    ...(isE2eOffscreen
+      ? { ...offscreenWindowPosition(), opacity: 0, skipTaskbar: true, focusable: false }
+      : {}),
     webPreferences: {
       preload: resolvePreloadPath(),
       contextIsolation: true,
@@ -399,14 +401,17 @@ function createSpotlightWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    alwaysOnTop: true,
+    ...(isE2eOffscreen
+      ? { ...offscreenWindowPosition(), opacity: 0, focusable: false, alwaysOnTop: false }
+      : { alwaysOnTop: true }),
     webPreferences: {
       preload: resolvePreloadPath(),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(isE2eOffscreen ? { backgroundThrottling: false } : {})
     }
   });
-  win.setAlwaysOnTop(true, "floating");
+  if (!isE2eOffscreen) win.setAlwaysOnTop(true, "floating");
   if (!isE2eHarness) {
     win.on("blur", () => hideSpotlight());
   }
@@ -433,7 +438,8 @@ function showSpotlight(): void {
   const winX = Math.round(x + (width - SPOTLIGHT_WIDTH) / 2);
   const winY = Math.round(y + height * 0.22);
   win.setBounds({ x: winX, y: winY, width: SPOTLIGHT_WIDTH, height: SPOTLIGHT_HEIGHT });
-  win.show();
+  if (isE2eOffscreen) win.showInactive();
+  else win.show();
   focusSpotlightWindow(win);
   if (win.webContents.isLoadingMainFrame()) {
     win.webContents.once("did-finish-load", () => {
@@ -447,8 +453,10 @@ function showSpotlight(): void {
 
 function focusSpotlightWindow(win: BrowserWindow): void {
   if (win.isDestroyed() || !win.isVisible()) return;
-  win.focus();
-  win.webContents.focus();
+  if (!isE2eOffscreen) {
+    win.focus();
+    win.webContents.focus();
+  }
   win.webContents.send("spotlight:reset");
 }
 

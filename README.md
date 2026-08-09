@@ -109,7 +109,7 @@ npm.cmd run harness:check
 npm.cmd run test:e2e:smoke
 ```
 
-Run `npm.cmd run test:e2e` for the full Electron suite and `npm.cmd run harness:release` for the complete local release gate. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
+Run `npm.cmd run test:e2e` for the full Electron suite in background/off-screen mode. It keeps test windows transparent, non-focusable, and out of the taskbar; use `npm.cmd run test:e2e:headed` only for intentional foreground debugging. Run `npm.cmd run harness:release` for the complete local release gate; its final acceptance stage is intentionally headed. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
 
 Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
 

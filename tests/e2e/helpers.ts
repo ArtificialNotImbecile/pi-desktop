@@ -24,6 +24,50 @@ export type HarnessApp = {
   userDataDir: string;
 };
 
+export function seedLegacyDeepSeekContentProjection(userDataDir: string): string {
+  const db = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"));
+  try {
+    const row = db.prepare(`
+      SELECT id, thread_id, session_entry_id FROM chat_messages
+      WHERE role = 'assistant'
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get();
+    if (!row?.id || !row.thread_id || !row.session_entry_id) throw new Error("Assistant fixture row is unavailable.");
+    const timeline = [
+      {
+        id: "e2e-context-taxonomy",
+        kind: "system",
+        title: "Context taxonomy",
+        text: "captured",
+        customType: "context-taxonomy",
+        data: {
+          items: [{ kind: "provider_options", text: JSON.stringify({ thinking: { type: "enabled" }, reasoning_effort: "high" }) }]
+        }
+      },
+      { id: "deepseek-thinking-level-repair", kind: "system", title: "Thinking level", text: "high" },
+      { id: "e2e-thinking-level", kind: "system", title: "Thinking level", text: "high" },
+      { id: `${row.session_entry_id}-0`, kind: "thinking", text: "Mock reply from Jasmine." },
+      { id: "e2e-tool-call", kind: "tool_call", toolName: "read", title: "read", argumentsJson: JSON.stringify({ path: "AGENTS.md" }) },
+      { id: "e2e-tool-result", kind: "tool_result", toolName: "read", title: "read", content: "Project instructions loaded." },
+      { id: "e2e-final-answer", kind: "assistant_text", text: "Visible final answer." }
+    ];
+    db.prepare(`
+      UPDATE chat_messages
+      SET content = ?, model_id = 'deepseek-v4-flash', timeline_json = ?
+      WHERE id = ?
+    `).run(
+      "Visible final answer.",
+      JSON.stringify(timeline),
+      row.id
+    );
+    db.prepare("DELETE FROM schema_migrations WHERE version = 29").run();
+    return String(row.thread_id);
+  } finally {
+    db.close();
+  }
+}
+
 export async function readThreadPiSession(userDataDir: string, threadId: string): Promise<{
   sessionId: string;
   sessionFile: string;

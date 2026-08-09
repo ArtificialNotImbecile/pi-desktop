@@ -11,6 +11,6 @@ Checked rows have reproducible automated evidence. Add a new row for a new major
 | [x] | SETTINGS-001 | Settings | General, appearance, brand, language, provider, integration, and window-state controls save visibly. | `tests/e2e/settings.spec.ts` |
 | [x] | PANEL-001 | Work panels | Memory, activity, terminal, artifacts, context, and search panels retain correct ownership and state. | `tests/e2e/panels.spec.ts` |
 | [x] | INTEGRATION-001 | Integrations | MCP, remote SSH, skills, prompt templates, and package plugins are manageable without exposing secrets. | `tests/e2e/integrations.spec.ts` |
-| [x] | RENDER-001 | Message rendering | Markdown, code, thinking, tools, images, traces, and actions are readable and accessible. | `tests/e2e/rendering.spec.ts` |
+| [x] | RENDER-001 | Message rendering | Markdown, code, native thinking, collapsible DeepSeek tool preambles, tools, images, traces, and actions are readable, semantically distinct, and accessible. | `tests/e2e/rendering.spec.ts` |
 | [x] | SPOTLIGHT-001 | Spotlight | Global launcher focus, search, commands, routing, hiding, and restore behavior remain reliable. | `tests/e2e/spotlight.spec.ts` |
 | [x] | VISUAL-001 | UI audit and visual matrix | Core surfaces expose structured controls without audit errors and can generate ignored visual evidence. | `npm run harness:inspect`, `npm run harness:visual` |

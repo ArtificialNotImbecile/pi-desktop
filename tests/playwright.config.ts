@@ -13,9 +13,9 @@ const workers = process.env.JASMINE_E2E_WORKERS
 // pack of parallel Electron launches, so they run alone after the main pass.
 const startupTimingGrep = /Jasmine cold start/;
 
-// Spotlight hides on window blur, so its tests depend on real OS focus.
-// Parallel Electron launches steal focus and blur the launcher mid-test,
-// which makes these tests flaky in the parallel pass; they run serially.
+// Spotlight exercises a second BrowserWindow and shared window lifecycle.
+// Keep it serial so parallel Electron launches cannot interfere with those
+// visibility transitions. The default off-screen mode does not need OS focus.
 const focusSensitiveGrep = /Spotlight quick launcher/;
 
 export default defineConfig({

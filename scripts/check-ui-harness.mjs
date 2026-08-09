@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
 const paths = {
   inventory: new URL("../docs/ui_inventory.md", import.meta.url),
   issues: new URL("../docs/ui_issue_register.md", import.meta.url),
@@ -29,6 +31,16 @@ for (const issueId of new Set(docs.issues.match(/UI-OPEN-\d{3}/g) ?? [])) {
 
 for (const required of ["test-results/ui-harness", "npm run harness:accept", "npm run test:e2e", "tests/e2e/"]) {
   if (!combined.includes(required)) throw new Error(`Harness docs are missing required term: ${required}`);
+}
+
+for (const scriptName of ["test:e2e", "test:e2e:smoke"]) {
+  const script = packageJson.scripts?.[scriptName] ?? "";
+  if (!script.includes("JASMINE_E2E_OFFSCREEN=1")) {
+    throw new Error(`${scriptName} must run Electron in background/off-screen mode by default.`);
+  }
+}
+if ((packageJson.scripts?.["test:e2e:headed"] ?? "").includes("JASMINE_E2E_OFFSCREEN=1")) {
+  throw new Error("test:e2e:headed must remain an explicit visible debugging command.");
 }
 
 console.log("UI harness docs are current, reproducible, and free of tracked visual artifacts.");

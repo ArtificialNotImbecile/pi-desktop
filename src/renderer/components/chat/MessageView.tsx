@@ -90,7 +90,7 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
           {runMeta.reasoningEffort && <small>{runMeta.reasoningEffort}</small>}
         </div>
       )}
-      <MessageTimeline items={visibleTimeline} onCopyCode={props.onCopyCode} live={isLive} />
+      <MessageTimeline items={visibleTimeline} onCopyCode={props.onCopyCode} live={isLive} modelId={runMeta.model} />
       {props.message.memoryUsed && props.message.memoryUsed.length > 0 && (
         <div className="memory-used-line" aria-label={t("message.memoryUsed")}>
           <BrainIcon />

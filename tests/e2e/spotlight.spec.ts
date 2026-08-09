@@ -32,6 +32,8 @@ test.describe("Spotlight quick launcher", () => {
       await showSpotlight(app);
       const spotlight = await waitForSpotlightPage(app, 10_000);
 
+      await expectOffscreenWindowsToStayInBackground(app);
+
       // Card renders and the input is focused.
       await expect(spotlight.locator(".spotlight-card")).toBeVisible();
       await expect(spotlight.locator(".spotlight-input input")).toBeFocused();
@@ -282,9 +284,6 @@ async function launchJasmine(label: string): Promise<SpotlightHarness> {
       JASMINE_E2E_USER_DATA_DIR: userDataDir,
       JASMINE_E2E_HARNESS: "1",
       JASMINE_E2E_MOCK_AI: "1",
-      // Spotlight show/hide depends on real OS focus and blur; never run these
-      // launches in the off-screen background mode.
-      JASMINE_E2E_OFFSCREEN: "",
       DEEPSEEK_API_KEY: "e2e-mock-key",
       KIMI_API_KEY: "e2e-mock-key"
     }
@@ -292,4 +291,17 @@ async function launchJasmine(label: string): Promise<SpotlightHarness> {
   const page = await app.firstWindow();
   await page.waitForSelector(".app-shell");
   return { app, page, userDataDir };
+}
+
+async function expectOffscreenWindowsToStayInBackground(app: ElectronApplication): Promise<void> {
+  if (process.env.JASMINE_E2E_OFFSCREEN !== "1") return;
+  const states = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().map((win) => ({
+      focusable: win.isFocusable(),
+      opacity: win.getOpacity(),
+      alwaysOnTop: win.isAlwaysOnTop()
+    }))
+  );
+  expect(states.length).toBeGreaterThanOrEqual(2);
+  expect(states.every((state) => !state.focusable && state.opacity === 0 && !state.alwaysOnTop)).toBe(true);
 }

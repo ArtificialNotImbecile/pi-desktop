@@ -1,9 +1,11 @@
 import type { SqlDatabase } from "./repositories/types.js";
 import { DEFAULT_APPEARANCE } from "../../shared/theme.js";
 import { DEFAULT_BRAND_SETTINGS, LEGACY_HIRI_BRAND_COPY } from "../../shared/brand.js";
+import type { ChatTimelineItem } from "../../shared/ipc.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
 import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
+import { readCanonicalPiBlockIndex, restoreCanonicalPiTimelineProjection } from "./canonicalPiTimelineRepair.js";
 
 type Clock = () => string;
 
@@ -340,6 +342,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     mergeCurrentPiProviderModels(db, "moonshot", ["kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3"], now());
   }
   markMigration(db, 27, "refresh bundled DeepSeek and Kimi model catalogs", now);
+  markMigration(db, 28, "reserve legacy DeepSeek projection repair", now);
+  if (!hasMigration(db, 29)) restoreCanonicalPiTimelineRows(db, now());
 }
 
 function markMigration(db: SqlDatabase, version: number, name: string, now: Clock): void {
@@ -367,6 +371,96 @@ function mergeCurrentPiProviderModels(db: SqlDatabase, providerId: string, bundl
     timestamp,
     providerId
   );
+}
+
+function restoreCanonicalPiTimelineRows(db: SqlDatabase, appliedAt: string): void {
+  const rows = db.prepare(`
+    SELECT messages.id, messages.content, messages.timeline_json, messages.session_entry_id,
+           threads.session_id, threads.session_file
+    FROM chat_messages AS messages
+    JOIN chat_threads AS threads ON threads.id = messages.thread_id
+    WHERE messages.role = 'assistant'
+      AND messages.timeline_json IS NOT NULL
+      AND messages.session_entry_id IS NOT NULL
+      AND lower(messages.model_id) LIKE '%deepseek-v4%'
+      AND threads.session_id IS NOT NULL
+      AND threads.session_file IS NOT NULL
+  `).all() as Array<{
+    id: string;
+    content: string;
+    timeline_json: string | null;
+    session_entry_id: string;
+    session_id: string | null;
+    session_file: string;
+  }>;
+  const plans: Array<{ id: string; oldContent: string; oldTimelineJson: string; content: string; timelineJson: string }> = [];
+  let unresolvedCanonicalSource = false;
+  const canonicalByFile = new Map<string, ReturnType<typeof readCanonicalPiBlockIndex>>();
+  for (const row of rows) {
+    if (!row.timeline_json) {
+      unresolvedCanonicalSource = true;
+      continue;
+    }
+    let timeline: unknown;
+    try {
+      timeline = JSON.parse(row.timeline_json);
+    } catch {
+      unresolvedCanonicalSource = true;
+      continue;
+    }
+    if (!Array.isArray(timeline)) {
+      unresolvedCanonicalSource = true;
+      continue;
+    }
+    let canonical = canonicalByFile.get(row.session_file);
+    if (canonical === undefined) {
+      canonical = readCanonicalPiBlockIndex(row.session_file);
+      canonicalByFile.set(row.session_file, canonical);
+    }
+    if (!canonical || canonical.sessionId !== row.session_id) {
+      unresolvedCanonicalSource = true;
+      continue;
+    }
+    const repaired = restoreCanonicalPiTimelineProjection(timeline as ChatTimelineItem[], row.content, canonical, row.session_entry_id);
+    if (!repaired.resolved) {
+      unresolvedCanonicalSource = true;
+      continue;
+    }
+    if (!repaired.changed) continue;
+    plans.push({
+      id: row.id,
+      oldContent: row.content,
+      oldTimelineJson: row.timeline_json,
+      content: repaired.content,
+      timelineJson: JSON.stringify(repaired.timeline)
+    });
+  }
+
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    const update = db.prepare(`
+      UPDATE chat_messages SET content = ?, timeline_json = ?
+      WHERE id = ? AND content = ? AND timeline_json = ?
+    `);
+    for (const plan of plans) {
+      const result = update.run(plan.content, plan.timelineJson, plan.id, plan.oldContent, plan.oldTimelineJson);
+      if (result.changes !== 1) throw new Error(`Canonical Pi timeline projection changed concurrently: ${plan.id}`);
+    }
+    // A temporarily locked/missing JSONL must not permanently suppress a
+    // future repair attempt. Valid rows are still restored idempotently now;
+    // the migration marker is written only after every candidate is readable.
+    if (!unresolvedCanonicalSource) {
+      markMigration(db, 29, "restore canonical Pi timeline projections", () => appliedAt);
+    }
+    db.exec("COMMIT;");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      // Preserve the original migration error if SQLite already rolled back.
+    }
+    throw error;
+  }
 }
 
 function sqlLiteral(value: string): string {

@@ -20,6 +20,7 @@ import type {
   ChatStreamMessage,
   ChatTimelineItem,
   ContextTaxonomy,
+  ReasoningEffort,
   SkillRecord,
   SkillReference,
   WebSearchResult
@@ -222,7 +223,8 @@ export function registerChatIpc(context: IpcContext): void {
         memoryUsed: turn.memoryUsed,
         skillsUsed: turn.skillsUsed,
         pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+        reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
       return {
@@ -327,7 +329,8 @@ export function registerChatIpc(context: IpcContext): void {
           memoryUsed: turn.memoryUsed,
           skillsUsed: turn.skillsUsed,
           pluginsUsed: lastUserMessage.pluginsUsed ?? [],
-          webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+          webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+          reasoningEffort: request.reasoningEffort
         });
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
@@ -457,7 +460,8 @@ export function registerChatIpc(context: IpcContext): void {
         memoryUsed: turn.memoryUsed,
         skillsUsed: turn.skillsUsed,
         pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed)
+        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+        reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
       return {
@@ -666,6 +670,7 @@ function persistRuntimeGeneratedMessages(
     skillsUsed: SkillReference[];
     pluginsUsed: PluginReference[];
     webSearchUsed: WebSearchResult[];
+    reasoningEffort?: ReasoningEffort;
   }
 ): ChatMessage {
   const generated = input.reply.generatedMessages?.length
@@ -693,9 +698,10 @@ function persistRuntimeGeneratedMessages(
         continue;
       }
 
+      const baseTimeline = withRunMetadata(message.timeline ?? [], input.reply.model, input.reasoningEffort);
       const timeline = taxonomyAttached
-        ? message.timeline ?? []
-        : withContextTaxonomy(message.timeline ?? [], input.reply.contextTaxonomy);
+        ? baseTimeline
+        : withContextTaxonomy(baseTimeline, input.reply.contextTaxonomy);
       taxonomyAttached = true;
       lastAssistantMessage = db.addMessage({
         threadId: input.threadId,
@@ -725,11 +731,22 @@ function persistRuntimeGeneratedMessages(
         skillsUsed: input.skillsUsed,
         pluginsUsed: input.pluginsUsed,
         webSearchUsed: input.webSearchUsed,
-        timeline: withContextTaxonomy(input.fallbackTimeline, input.reply.contextTaxonomy)
+        timeline: withContextTaxonomy(withRunMetadata(input.fallbackTimeline, input.reply.model, input.reasoningEffort), input.reply.contextTaxonomy)
       });
     }
     return lastAssistantMessage;
   });
+}
+
+function withRunMetadata(timeline: ChatTimelineItem[], model: string, reasoningEffort?: ReasoningEffort): ChatTimelineItem[] {
+  const metadata: ChatTimelineItem[] = [];
+  if (!timeline.some((item) => item.kind === "system" && item.title === "Model")) {
+    metadata.push({ id: `run-model-${crypto.randomUUID()}`, kind: "system", title: "Model", text: model });
+  }
+  if (reasoningEffort && !timeline.some((item) => item.kind === "system" && item.title === "Thinking level")) {
+    metadata.push({ id: `run-thinking-${crypto.randomUUID()}`, kind: "system", title: "Thinking level", text: reasoningEffort });
+  }
+  return metadata.length > 0 ? [...metadata, ...timeline] : timeline;
 }
 
 function sessionEntryLinker(db: JasmineDatabase, threadId: string) {

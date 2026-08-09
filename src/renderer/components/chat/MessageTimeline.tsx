@@ -20,9 +20,12 @@ function rememberExpansion(itemId: string, expanded: boolean) {
   expansionStateCache.set(itemId, expanded);
 }
 
-export function MessageTimeline(props: { items: ChatTimelineItem[]; onCopyCode(code: string): void; live?: boolean }) {
+export function MessageTimeline(props: { items: ChatTimelineItem[]; onCopyCode(code: string): void; live?: boolean; modelId?: string | null }) {
   const { t } = useI18n();
-  const displayItems = useMemo(() => compactTimelineItems(props.items, Boolean(props.live)), [props.items, props.live]);
+  const displayItems = useMemo(
+    () => compactTimelineItems(props.items, Boolean(props.live), props.modelId),
+    [props.items, props.live, props.modelId]
+  );
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const isExpanded = (item: TimelineDisplayItem) => expandedItems[item.id] ?? expansionStateCache.get(item.id) ?? item.defaultExpanded;
   const toggleItem = (item: TimelineDisplayItem, expanded: boolean) => {
@@ -38,6 +41,19 @@ export function MessageTimeline(props: { items: ChatTimelineItem[]; onCopyCode(c
           return (
             <section key={item.id} className={`timeline-item thinking-item ${expanded ? "" : "collapsed"}`} aria-label={t("message.thinking")}>
               <TimelineToggle label={t("message.thinking")} expanded={expanded} onToggle={() => toggleItem(item, expanded)} icon={<BrainIcon />} />
+              {expanded && (
+                <div className="thinking-markdown">
+                  <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} />
+                </div>
+              )}
+            </section>
+          );
+        }
+        if (item.kind === "tool_preamble") {
+          const expanded = isExpanded(item);
+          return (
+            <section key={item.id} className={`timeline-item thinking-item tool-preamble-item ${expanded ? "" : "collapsed"}`} aria-label={t("message.toolPreamble")}>
+              <TimelineToggle label={t("message.toolPreamble")} expanded={expanded} onToggle={() => toggleItem(item, expanded)} icon={<WrenchIcon />} />
               {expanded && (
                 <div className="thinking-markdown">
                   <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} />
@@ -72,6 +88,7 @@ export function MessageTimeline(props: { items: ChatTimelineItem[]; onCopyCode(c
 
 type TimelineDisplayItem =
   | { id: string; kind: "thinking"; text: string; defaultExpanded: boolean }
+  | { id: string; kind: "tool_preamble"; text: string; defaultExpanded: boolean }
   | { id: string; kind: "tool"; toolName: string; call?: Extract<ChatTimelineItem, { kind: "tool_call" }>; result?: Extract<ChatTimelineItem, { kind: "tool_result" }>; summary: ToolSummary; defaultExpanded: boolean }
   | { id: string; kind: "assistant_text"; text: string; defaultExpanded: boolean }
   | { id: string; kind: "system"; title: string; text: string; defaultExpanded: boolean };
@@ -86,7 +103,7 @@ type ToolSummary = {
 
 type ToolDetail = { label: string; content: string; tone?: "error" | "code" };
 
-function compactTimelineItems(items: ChatTimelineItem[], live = false): TimelineDisplayItem[] {
+function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?: string | null): TimelineDisplayItem[] {
   const result: TimelineDisplayItem[] = [];
   const pendingTools = new Map<string, Array<{ displayIndex: number; timelineIndex: number }>>();
   for (let index = 0; index < items.length; index += 1) {
@@ -118,7 +135,11 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false): Timeline
       continue;
     }
     if (item.kind === "assistant_text") {
-      result.push({ id: item.id, kind: "assistant_text", text: item.text, defaultExpanded: true });
+      if (isDeepSeekToolPreamble(items, index, modelId)) {
+        result.push({ id: item.id, kind: "tool_preamble", text: item.text, defaultExpanded: live });
+      } else {
+        result.push({ id: item.id, kind: "assistant_text", text: item.text, defaultExpanded: true });
+      }
       continue;
     }
     result.push({ id: item.id, kind: "system", title: item.title, text: item.text, defaultExpanded: true });
@@ -133,6 +154,24 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false): Timeline
     }
   }
   return result;
+}
+
+function isDeepSeekToolPreamble(items: ChatTimelineItem[], textIndex: number, modelId?: string | null): boolean {
+  if (!modelId?.toLowerCase().includes("deepseek-v4")) return false;
+
+  let segmentStart = textIndex - 1;
+  while (segmentStart >= 0 && items[segmentStart].kind !== "tool_result") segmentStart -= 1;
+  const hasNativeThinking = items
+    .slice(segmentStart + 1, textIndex)
+    .some((item) => item.kind === "thinking" && item.text.trim().length > 0);
+  if (hasNativeThinking) return false;
+
+  for (let index = textIndex + 1; index < items.length; index += 1) {
+    const item = items[index];
+    if (item.kind === "tool_call") return true;
+    if (item.kind === "assistant_text" || item.kind === "thinking" || item.kind === "tool_result") return false;
+  }
+  return false;
 }
 
 function toToolDisplayItem(

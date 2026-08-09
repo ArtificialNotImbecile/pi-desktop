@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -254,8 +254,134 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 25").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 26").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 27").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 28").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_threads)").all().some((row) => row.name === "session_file"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "session_entry_id"), true);
+
+    const canonicalSessionFile = path.join(dir, "legacy-canonical-session.jsonl");
+    await writeFile(canonicalSessionFile, [
+      { type: "session", version: 3, id: "legacy-thread", timestamp, cwd: projectRoot },
+      { type: "message", id: "legacy-user-entry", parentId: null, timestamp, message: { role: "user", content: "inspect" } },
+      {
+        type: "message",
+        id: "legacy-assistant-tool-entry",
+        parentId: "legacy-user-entry",
+        timestamp,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "The provider returned a visible tool preamble." },
+            { type: "toolCall", id: "legacy-tool-call", name: "read", arguments: {} }
+          ],
+          api: "openai-completions",
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+          stopReason: "toolUse"
+        }
+      },
+      { type: "message", id: "legacy-tool-result", parentId: "legacy-assistant-tool-entry", timestamp, message: { role: "toolResult", toolCallId: "legacy-tool-call", toolName: "read", content: [{ type: "text", text: "fixture" }], isError: false } },
+      { type: "message", id: "legacy-final-entry", parentId: "legacy-tool-result", timestamp, message: { role: "assistant", content: [{ type: "text", text: "Final answer." }], api: "openai-completions", provider: "deepseek", model: "deepseek-v4-flash", stopReason: "stop" } }
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    legacyDb.prepare("UPDATE chat_threads SET session_id = ?, session_file = ?, session_format_version = 3 WHERE id = 'legacy-thread'")
+      .run("legacy-thread", canonicalSessionFile);
+
+    const malformedDeepSeekTimeline = [
+      {
+        id: "legacy-context-taxonomy",
+        kind: "system",
+        title: "Context taxonomy",
+        text: "captured",
+        customType: "context-taxonomy",
+        data: {
+          items: [{ kind: "provider_options", text: JSON.stringify({ thinking: { type: "enabled" }, reasoning_effort: "high" }) }]
+        }
+      },
+      { id: "deepseek-thinking-level-repair", kind: "system", title: "Thinking level", text: "high" },
+      { id: "legacy-assistant-tool-entry-0", kind: "thinking", text: "The provider returned a visible tool preamble." },
+      { id: "legacy-tool-call", kind: "tool_call", toolName: "read", title: "read", argumentsJson: "{}" },
+      { id: "legacy-tool-result", kind: "tool_result", toolName: "read", title: "read", content: "fixture" },
+      { id: "legacy-final-entry-0", kind: "assistant_text", text: "Final answer." }
+    ];
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at, model_id, timeline_json, session_entry_id)
+      VALUES (?, ?, 'assistant', ?, ?, 'deepseek-v4-flash', ?, ?)
+    `).run(
+      "legacy-deepseek-thinking",
+      "legacy-thread",
+      "Final answer.",
+      timestamp,
+      JSON.stringify(malformedDeepSeekTimeline),
+      "legacy-assistant-tool-entry"
+    );
+    const pendingCanonicalSessionFile = path.join(dir, "pending-canonical-session.jsonl");
+    legacyDb.prepare(`
+      INSERT INTO chat_threads (id, title, created_at, updated_at, session_id, session_file, session_format_version)
+      VALUES (?, ?, ?, ?, ?, ?, 3)
+    `).run(
+      "legacy-pending-thread",
+      "Pending canonical source",
+      timestamp,
+      timestamp,
+      "legacy-pending-thread",
+      pendingCanonicalSessionFile
+    );
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at, model_id, timeline_json, session_entry_id)
+      VALUES (?, ?, 'assistant', '', ?, 'deepseek-v4-flash', ?, ?)
+    `).run(
+      "legacy-pending-assistant",
+      "legacy-pending-thread",
+      timestamp,
+      JSON.stringify([{ id: "pending-assistant-entry-0", kind: "thinking", text: "Pending visible text." }]),
+      "pending-assistant-entry"
+    );
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at, model_id, timeline_json, session_entry_id)
+      VALUES (?, ?, 'assistant', '', ?, 'deepseek-v4-flash', ?, ?)
+    `).run(
+      "legacy-stale-anchor-assistant",
+      "legacy-thread",
+      timestamp,
+      JSON.stringify([
+        { id: "deepseek-thinking-level-repair", kind: "system", title: "Thinking level", text: "high" },
+        { id: "legacy-assistant-tool-entry-0", kind: "thinking", text: "The provider returned a visible tool preamble." }
+      ]),
+      "legacy-user-entry"
+    );
+    legacyDb.prepare("DELETE FROM schema_migrations WHERE version = 29").run();
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    const repairedDeepSeek = legacyDb.prepare("SELECT content, timeline_json FROM chat_messages WHERE id = 'legacy-deepseek-thinking'").get();
+    const repairedDeepSeekTimeline = JSON.parse(repairedDeepSeek.timeline_json);
+    assert.equal(repairedDeepSeek.content, "The provider returned a visible tool preamble.\nFinal answer.");
+    assert.deepEqual(
+      repairedDeepSeekTimeline.filter((item) => item.kind !== "system").map((item) => item.kind),
+      ["assistant_text", "tool_call", "tool_result", "assistant_text"]
+    );
+    assert.equal(repairedDeepSeekTimeline.some((item) => item.id === "deepseek-thinking-level-repair"), false);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get(), undefined);
+
+    await writeFile(pendingCanonicalSessionFile, [
+      { type: "session", version: 3, id: "legacy-pending-thread", timestamp, cwd: projectRoot },
+      { type: "message", id: "pending-user-entry", parentId: null, timestamp, message: { role: "user", content: "pending" } },
+      { type: "message", id: "pending-assistant-entry", parentId: "pending-user-entry", timestamp, message: { role: "assistant", content: [{ type: "text", text: "Pending visible text." }], api: "openai-completions", provider: "deepseek", model: "deepseek-v4-flash", stopReason: "stop" } }
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get(), undefined);
+    const repairedPending = legacyDb.prepare("SELECT content, timeline_json FROM chat_messages WHERE id = 'legacy-pending-assistant'").get();
+    assert.equal(repairedPending.content, "Pending visible text.");
+    assert.equal(JSON.parse(repairedPending.timeline_json)[0].kind, "assistant_text");
+    const unresolvedStale = legacyDb.prepare("SELECT content, timeline_json FROM chat_messages WHERE id = 'legacy-stale-anchor-assistant'").get();
+    assert.equal(unresolvedStale.content, "");
+    assert.deepEqual(JSON.parse(unresolvedStale.timeline_json).map((item) => item.kind), ["system", "thinking"]);
+
+    legacyDb.prepare("UPDATE chat_messages SET session_entry_id = ? WHERE id = 'legacy-stale-anchor-assistant'")
+      .run("legacy-assistant-tool-entry");
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get().exists_flag, 1);
+    const repairedStale = legacyDb.prepare("SELECT content, timeline_json FROM chat_messages WHERE id = 'legacy-stale-anchor-assistant'").get();
+    assert.equal(repairedStale.content, "The provider returned a visible tool preamble.");
+    assert.deepEqual(JSON.parse(repairedStale.timeline_json).map((item) => item.kind), ["assistant_text"]);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     assert.equal(mcpServers.listMcpServers(legacyDb).length, 1);
   } finally {

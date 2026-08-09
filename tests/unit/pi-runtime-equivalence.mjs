@@ -14,6 +14,7 @@ const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
 
 const { buildSystemPrompt, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
 const { createAskUserQuestionTool, createWebSearchTool, runPiCodingAgentChat } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
+const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { classifyTextSegments, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
 const { nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
@@ -385,6 +386,93 @@ const server = createServer(async (request, response) => {
   captures.push(body);
 
   const requestText = JSON.stringify(body.messages ?? body.input ?? []);
+  if (requestText.includes("foreign reasoning history regression")) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-foreign-reasoning-history",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "native deepseek reasoning remains separate" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-foreign-reasoning-history",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { content: "foreign reasoning history passed" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-foreign-reasoning-history",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28, completion_tokens_details: { reasoning_tokens: 4 } }
+    })}\n\n`);
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
+  if (requestText.includes("deepseek content-only thinking fallback")) {
+    const toolResultPresent = (body.messages ?? []).some((message) => message.role === "tool");
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    if (!toolResultPresent) {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-content-only-thinking",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "The user asked me to inspect the fixture first, so I need to read it before I can produce the final answer." }, finish_reason: null }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-content-only-thinking",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{
+          index: 0,
+          delta: { tool_calls: [{ index: 0, id: "content-only-tool-call", type: "function", function: { name: "read", arguments: JSON.stringify({ path: path.join(tempDir, "reasoning-replay.txt") }) } }] },
+          finish_reason: null
+        }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-content-only-thinking",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 }
+      })}\n\n`);
+    } else {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-content-only-thinking",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "content-only fallback passed" }, finish_reason: null }]
+      })}\n\n`);
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-content-only-thinking",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 }
+      })}\n\n`);
+    }
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
   if (requestText.includes("reasoning replay regression")) {
     const toolResultPresent = (body.messages ?? []).some((message) => message.role === "tool");
     response.writeHead(200, {
@@ -885,6 +973,171 @@ try {
     assert.equal(replayPayloads[1].messages.some((message) => message.role === "tool" && message.tool_call_id === "replay-tool-call"), true);
     assert.equal(replayPayloads[1].temperature, undefined);
   }
+
+  const foreignHistorySession = SessionManager.inMemory(tempDir);
+  foreignHistorySession.appendMessage({
+    role: "user",
+    content: "Inspect the fixture with the old model.",
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "FOREIGN_GLM_PRIVATE_REASONING_MUST_NOT_BECOME_CONTENT", thinkingSignature: "reasoning_content" },
+      { type: "text", text: "Visible GLM tool preamble remains available." },
+      { type: "toolCall", id: "foreign-glm-tool-call", name: "read", arguments: { path: path.join(tempDir, "reasoning-replay.txt") } }
+    ],
+    api: "openai-completions",
+    provider: "aliyun-bailian",
+    model: "glm-5-2",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "toolResult",
+    toolCallId: "foreign-glm-tool-call",
+    toolName: "read",
+    content: [{ type: "text", text: "foreign tool result" }],
+    isError: false,
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "Visible GLM final answer remains available." }],
+    api: "openai-completions",
+    provider: "aliyun-bailian",
+    model: "glm-5-2",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "stop",
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "user",
+    content: "Inspect the fixture again with DeepSeek Pro.",
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "DEEPSEEK_PRO_SIGNED_REASONING", thinkingSignature: "reasoning_content" },
+      { type: "text", text: "Visible DeepSeek Pro tool preamble." },
+      { type: "toolCall", id: "deepseek-pro-tool-call", name: "read", arguments: { path: path.join(tempDir, "reasoning-replay.txt") } }
+    ],
+    api: "openai-completions",
+    provider: "deepseek",
+    model: "deepseek-v4-pro",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now()
+  });
+  foreignHistorySession.appendMessage({
+    role: "toolResult",
+    toolCallId: "deepseek-pro-tool-call",
+    toolName: "read",
+    content: [{ type: "text", text: "deepseek pro tool result" }],
+    isError: false,
+    timestamp: Date.now()
+  });
+  const foreignHistoryCaptureStart = captures.length;
+  const foreignHistoryReply = await runPiCodingAgentChat({
+    provider: {
+      providerName: "deepseek",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "deepseek-v4-flash",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: true,
+        embedding: false
+      }
+    },
+    messages: [{ role: "user", content: "foreign reasoning history regression" }],
+    content: "foreign reasoning history regression",
+    attachments: [],
+    systemPrompt: "Answer the regression prompt.",
+    cwd: tempDir,
+    agentDir,
+    toolsEnabled: true,
+    reasoningEffort: "high",
+    sessionManager: foreignHistorySession
+  });
+  assert.equal(foreignHistoryReply.content, "foreign reasoning history passed");
+  assert.equal(foreignHistoryReply.timeline.some((item) => item.kind === "thinking" && item.text === "native deepseek reasoning remains separate"), true);
+  const foreignHistoryPayloads = captures.slice(foreignHistoryCaptureStart);
+  assert.equal(foreignHistoryPayloads.length, 1);
+  const foreignHistoryPayloadText = JSON.stringify(foreignHistoryPayloads[0].messages);
+  // Jasmine deliberately delegates cross-model history conversion to Pi.
+  // Pi converts foreign thinking to assistant content and preserves the
+  // associated tool protocol instead of applying an app-specific filter.
+  assert.match(foreignHistoryPayloadText, /FOREIGN_GLM_PRIVATE_REASONING_MUST_NOT_BECOME_CONTENT/);
+  assert.match(foreignHistoryPayloadText, /Visible GLM tool preamble remains available/);
+  assert.match(foreignHistoryPayloadText, /foreign-glm-tool-call|foreign tool result/);
+  assert.match(foreignHistoryPayloadText, /Visible GLM final answer remains available/);
+  const crossModelDeepSeekAssistant = foreignHistoryPayloads[0].messages.find((message) => message.role === "assistant" && message.tool_calls?.[0]?.id === "deepseek-pro-tool-call");
+  assert.match(crossModelDeepSeekAssistant.content, /DEEPSEEK_PRO_SIGNED_REASONING/);
+  assert.equal(crossModelDeepSeekAssistant.reasoning_content, "");
+  assert.equal(foreignHistoryPayloads[0].messages.some((message) => message.role === "tool" && message.tool_call_id === "deepseek-pro-tool-call"), true);
+  const canonicalForeignAssistant = foreignHistorySession.getEntries().find((entry) => entry.type === "message" && entry.message?.role === "assistant" && entry.message?.model === "glm-5-2");
+  assert.equal(canonicalForeignAssistant.message.content.some((block) => block.type === "thinking" && block.thinking === "FOREIGN_GLM_PRIVATE_REASONING_MUST_NOT_BECOME_CONTENT"), true);
+  const canonicalDeepSeekProAssistant = foreignHistorySession.getEntries().find((entry) => entry.type === "message" && entry.message?.role === "assistant" && entry.message?.model === "deepseek-v4-pro");
+  assert.equal(canonicalDeepSeekProAssistant.message.content.some((block) => block.type === "thinking" && block.thinking === "DEEPSEEK_PRO_SIGNED_REASONING"), true);
+
+  const contentOnlyCaptureStart = captures.length;
+  const contentOnlyReply = await runPiCodingAgentChat({
+    provider: {
+      providerName: "deepseek",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "deepseek-v4-flash",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: true,
+        embedding: false
+      }
+    },
+    messages: [{ role: "user", content: "deepseek content-only thinking fallback" }],
+    content: "deepseek content-only thinking fallback",
+    attachments: [],
+    systemPrompt: "Use the read tool and then answer.",
+    cwd: tempDir,
+    agentDir,
+    toolsEnabled: true,
+    reasoningEffort: "high"
+  });
+  assert.equal(contentOnlyReply.content, "The user asked me to inspect the fixture first, so I need to read it before I can produce the final answer.\ncontent-only fallback passed");
+  assert.equal(contentOnlyReply.timeline.some((item) => item.kind === "thinking" && item.text.includes("need to read it")), false);
+  assert.equal(contentOnlyReply.timeline.some((item) => item.kind === "assistant_text" && item.text.includes("need to read it")), true);
+  const contentOnlyPayloads = captures.slice(contentOnlyCaptureStart);
+  assert.equal(contentOnlyPayloads.length, 2);
+  const contentOnlyAssistant = contentOnlyPayloads[1].messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls));
+  assert.match(contentOnlyAssistant.content, /need to read it/);
+  assert.equal(contentOnlyAssistant.reasoning_content, "");
 
   const totallyEmptyReply = await generateAssistantReply({
     threadId: "totally-empty-thread",
