@@ -20,7 +20,7 @@ Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generate
 
 Use `npm.cmd` and `npx.cmd` on Windows.
 
-Normal E2E commands create transparent, non-focusable Electron windows outside the visible desktop and keep them out of the taskbar. This includes the secondary Spotlight window, so the suite can run without covering apps or stealing keyboard focus. Use `test:e2e:headed` only when a visible interactive run is intentional. `harness:accept` remains a headed release-acceptance path.
+Normal E2E commands create transparent, non-focusable Electron windows outside the visible desktop and keep them out of the taskbar. This includes direct targeted commands that use `tests/playwright.config.ts`, `harness:inspect`, `harness:visual`, and the secondary Spotlight window, so the suite can run without covering apps or stealing keyboard focus. The test launchers default `JASMINE_E2E_OFFSCREEN=1`; `test:e2e:headed` explicitly clears it and should be used only when a visible interactive run is intentional. `harness:accept` remains a headed release-acceptance path and explicitly opts out of off-screen mode.
 
 ## E2E map
 

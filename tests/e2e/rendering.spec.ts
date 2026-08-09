@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -92,7 +92,8 @@ test.describe("Jasmine message rendering", () => {
     await page.locator(".message-menu").getByRole("button", { name: "Retry from here" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
 
-    await expect(latestAssistant.locator(".message-timeline")).toBeVisible();
+    await expect(latestAssistant.getByRole("button", { name: "Show work details" })).toBeVisible();
+    await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
     await expect(latestAssistant.getByRole("button", { name: "Open trace" })).toHaveCount(0);
   });
 
@@ -103,8 +104,13 @@ test.describe("Jasmine message rendering", () => {
     await page.locator(".rich-composer-editor").fill("show timeline tool call");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const latestAssistant = page.locator(".assistant-block").last();
-    await expect(latestAssistant.locator(".message-timeline")).toBeVisible();
+    const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
+    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
+    await expect(latestAssistant.getByLabel("Assistant output")).toContainText("Mock reply from Jasmine.");
+    await recapToggle.click();
+    await expect(latestAssistant.locator(".run-recap-details")).toBeVisible();
     await expect(latestAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
     await expect(latestAssistant.locator(".message-timeline")).not.toContainText("Thinking level");
     await expect(latestAssistant.locator(".thinking-item")).not.toContainText("Need to inspect");
@@ -112,7 +118,6 @@ test.describe("Jasmine message rendering", () => {
     await expect(readTool).toContainText("read");
     await expect(readTool).toContainText("read - 1 line");
     await expect(readTool).not.toContainText("Project instructions loaded.");
-    await expect(latestAssistant.getByLabel("Assistant output")).toContainText("Mock reply from Jasmine.");
 
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
@@ -153,6 +158,9 @@ test.describe("Jasmine message rendering", () => {
     const repairedAssistant = harness.page.locator(".assistant-block").last();
     await expect(repairedAssistant.getByLabel("Assistant output")).toContainText("Visible final answer.");
     await expect(repairedAssistant.getByLabel("Assistant output")).not.toContainText("Mock reply from Jasmine.");
+    await expect(repairedAssistant.locator(".run-recap-label")).toHaveText("Worked for 3m 49s");
+    await expect(repairedAssistant.getByRole("button", { name: "Show work details" })).toHaveAttribute("aria-expanded", "false");
+    await repairedAssistant.getByRole("button", { name: "Show work details" }).click();
     await expect(repairedAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
     await expect(repairedAssistant.locator(".message-run-line")).toContainText("high");
     const preambleToggle = repairedAssistant.getByRole("button", { name: "Tool preamble", exact: true });
@@ -161,6 +169,14 @@ test.describe("Jasmine message rendering", () => {
     await preambleToggle.click();
     await expect(preambleToggle).toHaveAttribute("aria-expanded", "true");
     await expect(repairedAssistant.locator(".tool-preamble-item")).toContainText("Mock reply from Jasmine.");
+
+    await repairedAssistant.getByRole("button", { name: "Copy message" }).click();
+    await expect.poll(() => harness.app.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe("Visible final answer.");
+    await repairedAssistant.getByRole("button", { name: "Message actions" }).click();
+    await harness.page.locator(".message-menu").getByRole("button", { name: "Remember this" }).click();
+    await expect(harness.page.getByRole("textbox", { name: "Memory content" })).toHaveValue("Visible final answer.");
+    await harness.page.locator(".memory-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
 
     const stored = await harness.page.evaluate(async (id) => {
       const assistant = (await window.jasmine.listMessages(id)).find((message) => message.role === "assistant");
@@ -202,6 +218,7 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expandWorkDetails(latestAssistant);
     await latestAssistant.getByRole("button", { name: "Thinking", exact: true }).click();
     const thinkingMarkdown = latestAssistant.locator(".thinking-markdown .markdown-message");
     await expect(thinkingMarkdown).toContainText("fenced yaml blocks");
@@ -248,6 +265,7 @@ test.describe("Jasmine message rendering", () => {
     // message re-renders on stream completion and can detach the measured row,
     // which makes getComputedStyle return empty values.
     await expect(page.locator(".assistant-block.live-message")).toHaveCount(0, { timeout: 10_000 });
+    await expandWorkDetails(writeMessage);
     const compactTypography = await writeTool.locator(".tool-run-toggle").evaluate((row) => {
       const target = row.querySelector(".tool-run-target");
       const label = row.querySelector(".tool-run-main b");
@@ -301,13 +319,17 @@ test.describe("Jasmine message rendering", () => {
 
     await page.locator(".rich-composer-editor").fill("show edit timeline");
     await page.getByRole("button", { name: "Send" }).click();
-    const editTool = page.locator(".assistant-block").last().locator(".tool-run-item", { hasText: "src/example.ts" });
+    const editMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expandWorkDetails(editMessage);
+    const editTool = editMessage.locator(".tool-run-item", { hasText: "src/example.ts" });
     await expect(editTool).toContainText("edit");
     await expect(editTool).toContainText("edited - +1 -1");
 
     await page.locator(".rich-composer-editor").fill("show bash timeline");
     await page.getByRole("button", { name: "Send" }).click();
-    const bashTool = page.locator(".assistant-block").last().locator(".tool-run-item", { hasText: "ls src/renderer/components/chat" });
+    const bashMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expandWorkDetails(bashMessage);
+    const bashTool = bashMessage.locator(".tool-run-item", { hasText: "ls src/renderer/components/chat" });
     await expect(bashTool).toContainText("bash");
     await expect(bashTool).toContainText("done - 3 lines");
     await expect(bashTool).not.toContainText("MessageTimeline.tsx");
@@ -320,7 +342,9 @@ test.describe("Jasmine message rendering", () => {
 
     await page.locator(".rich-composer-editor").fill("show bash error timeline");
     await page.getByRole("button", { name: "Send" }).click();
-    const errorTool = page.locator(".assistant-block").last().locator(".tool-run-item.error");
+    const errorMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expandWorkDetails(errorMessage);
+    const errorTool = errorMessage.locator(".tool-run-item.error");
     await expect(errorTool).toContainText("exit 1");
     await expect(errorTool).toContainText("Output encoding could not be decoded.");
     const errorToggle = errorTool.locator(".tool-run-toggle");
@@ -484,3 +508,9 @@ test.describe("Jasmine message rendering", () => {
     await expect(page.locator(".assistant-block")).toContainText("Mock reply received 1 image attachment.");
   });
 });
+
+async function expandWorkDetails(assistant: Locator): Promise<void> {
+  const toggle = assistant.getByRole("button", { name: "Show work details" });
+  if (await toggle.isVisible()) await toggle.click();
+  await expect(assistant.locator(".run-recap-details")).toBeVisible();
+}

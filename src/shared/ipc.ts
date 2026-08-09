@@ -41,6 +41,7 @@ export type ChatTimelineItem =
 export type ChatMessage = {
   id: string;
   threadId: string;
+  runId?: string;
   role: ChatRole;
   content: string;
   attachments?: PickedPath[];

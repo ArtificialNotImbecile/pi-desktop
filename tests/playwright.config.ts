@@ -1,5 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
+// Targeted Playwright commands are easy to run directly while developing.
+// Keep those runs off-screen by default too; the explicit headed npm script
+// supplies an empty value, which intentionally opts out of this default.
+if (process.env.JASMINE_E2E_OFFSCREEN === undefined) {
+  process.env.JASMINE_E2E_OFFSCREEN = "1";
+}
+
 // Each test launches its own Electron instance against an isolated user data
 // dir (single-instance lock is disabled under JASMINE_E2E_HARNESS), so tests
 // are safe to run in parallel. Override with JASMINE_E2E_WORKERS=1 when

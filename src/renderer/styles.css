@@ -3829,6 +3829,72 @@ body:has(.settings-panel) .message-jump-rail {
   font-size: 12px;
 }
 
+.run-recap {
+  display: grid;
+  max-width: 720px;
+}
+
+.run-recap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  color: var(--faint);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-recap-toggle::after {
+  min-width: 24px;
+  height: 1px;
+  margin-left: 6px;
+  background: var(--line);
+  content: "";
+  flex: 1;
+}
+
+.run-recap-toggle:hover {
+  color: var(--ink);
+}
+
+.run-recap.stopped .run-recap-toggle {
+  color: color-mix(in srgb, var(--accent) 68%, var(--muted));
+}
+
+.run-recap.error .run-recap-toggle {
+  color: var(--danger);
+}
+
+.run-recap-toggle .icon {
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.run-recap-toggle[aria-expanded="true"] .icon {
+  transform: rotate(180deg);
+}
+
+.run-recap-details {
+  display: grid;
+  gap: 12px;
+  padding: 10px 0 2px;
+}
+
+.run-recap-details[hidden] {
+  display: none;
+}
+
+.final-answer {
+  max-width: 720px;
+}
+
 .message-timeline {
   display: grid;
   gap: 12px;

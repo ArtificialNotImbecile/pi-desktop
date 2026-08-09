@@ -5,6 +5,7 @@ import type { SqlDatabase } from "./types.js";
 type MessageRow = {
   id: string;
   thread_id: string;
+  run_id: string | null;
   role: ChatRole;
   content: string;
   attachments_json?: string | null;
@@ -27,7 +28,7 @@ export type MessageListOptions = {
   };
 };
 
-const MESSAGE_COLUMNS = "id, thread_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json";
+const MESSAGE_COLUMNS = "id, thread_id, run_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json";
 
 export function listMessages(db: SqlDatabase, threadId: string, options: MessageListOptions = {}): ChatMessage[] {
   const limit = options.limit ? Math.max(1, Math.min(500, options.limit)) : undefined;
@@ -114,6 +115,7 @@ export function addMessage(
   db: SqlDatabase,
   input: {
     threadId: string;
+    runId?: string;
     role: ChatRole;
     content: string;
     attachments?: PickedPath[];
@@ -132,6 +134,7 @@ export function addMessage(
   const message: ChatMessage = {
     id: randomUUID(),
     threadId: input.threadId,
+    runId: input.runId,
     role: input.role,
     content: input.content,
     attachments: input.attachments,
@@ -147,10 +150,11 @@ export function addMessage(
   };
 
   db.prepare(
-    "INSERT INTO chat_messages (id, thread_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json, session_entry_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO chat_messages (id, thread_id, run_id, role, content, attachments_json, created_at, elapsed_ms, model_id, status, memory_used_json, skills_used_json, plugins_used_json, web_search_used_json, timeline_json, session_entry_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     message.id,
     message.threadId,
+    message.runId ?? null,
     message.role,
     message.content,
     JSON.stringify(input.attachments ?? []),
@@ -173,6 +177,7 @@ function mapMessage(row: MessageRow): ChatMessage {
   return {
     id: row.id,
     threadId: row.thread_id,
+    runId: row.run_id ?? undefined,
     role: row.role,
     content: row.content,
     attachments: parseAttachments(row.attachments_json),

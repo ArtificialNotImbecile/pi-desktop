@@ -75,8 +75,12 @@ test.describe("Jasmine chat runtime", () => {
     await expect(liveAssistant.locator(".timeline-output")).toContainText("Slow", { timeout: 2000 });
     await expect(page.locator(".message-actions")).toHaveCount(0);
 
-    await expect(page.locator(".assistant-block").last()).toContainText("wrote - 4 lines, 44 bytes", { timeout: 7000 });
-    await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
+    const settledAssistant = await waitForStableAssistant(page, "Slow response complete.");
+    await expect(settledAssistant.getByLabel("Assistant output")).toContainText("Slow response complete.");
+    await expect(settledAssistant.getByRole("button", { name: "Show work details" })).toHaveAttribute("aria-expanded", "false");
+    await expect(settledAssistant.locator(".run-recap-details")).toBeHidden();
+    await settledAssistant.getByRole("button", { name: "Show work details" }).click();
+    await expect(settledAssistant).toContainText("wrote - 4 lines, 44 bytes");
   });
 
   test("window destroyed mid-stream does not crash the main process", async () => {
@@ -212,6 +216,12 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".queue-item")).toHaveCount(1);
     await expect(page.locator(".assistant-block").last()).toContainText("Queued follow-up complete: edited queued follow up request", { timeout: 30000 });
     await expect(page.locator(".queue-item")).toHaveCount(0);
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0, { timeout: 30000 });
+
+    await expect.poll(async () => page.evaluate(async () => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("slow response slow timeline queue base"));
+      return thread ? (await window.jasmine.listMessages(thread.id)).length : 0;
+    }), { timeout: 10000 }).toBe(6);
 
     const persisted = await page.evaluate(async () => {
       const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("slow response slow timeline queue base"));
@@ -221,7 +231,10 @@ test.describe("Jasmine chat runtime", () => {
         messages: (await window.jasmine.listMessages(thread.id)).map((message) => ({
           role: message.role,
           content: message.content
-        }))
+        })),
+        assistantRuns: (await window.jasmine.listMessages(thread.id))
+          .filter((message) => message.role === "assistant")
+          .map((message) => ({ runId: message.runId ?? null, elapsedMs: message.elapsedMs ?? null }))
       };
     });
     expect(persisted.messages).toEqual([
@@ -232,6 +245,10 @@ test.describe("Jasmine chat runtime", () => {
       { role: "user", content: "edited queued follow up request" },
       { role: "assistant", content: "Queued follow-up complete: edited queued follow up request" }
     ]);
+    expect(new Set(persisted.assistantRuns.map((message) => message.runId)).size).toBe(1);
+    expect(persisted.assistantRuns.every((message) => Boolean(message.runId))).toBe(true);
+    expect(persisted.assistantRuns.slice(0, -1).every((message) => message.elapsedMs === null)).toBe(true);
+    expect(Number(persisted.assistantRuns.at(-1)?.elapsedMs)).toBeGreaterThan(0);
     const piSession = await readThreadPiSession(userDataDir, persisted.threadId);
     expect(piSession.sessionId).toBe(persisted.threadId);
     expect(piSession.formatVersion).toBeGreaterThan(0);
@@ -277,6 +294,8 @@ test.describe("Jasmine chat runtime", () => {
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
     await expect(activeAssistant.locator(".tool-run-item")).toContainText("find / -name node");
     await page.getByRole("button", { name: "Stop response" }).click();
+    await expect(activeAssistant.getByRole("button", { name: "Hide work details" })).toHaveAttribute("aria-expanded", "true");
+    await expect(activeAssistant.locator(".run-recap-label")).toContainText("Stopped after");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Stopped");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("The response was stopped by the user.");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
@@ -293,6 +312,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(stoppedThreadRow).toBeVisible();
     await stoppedThreadRow.click();
     const reopenedAssistant = reopenedPage.locator(".assistant-block").last();
+    await expect(reopenedAssistant.getByRole("button", { name: "Hide work details" })).toHaveAttribute("aria-expanded", "true");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Thinking");
     await expect(reopenedAssistant.locator(".tool-run-item")).toContainText("find / -name node");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Stopped");

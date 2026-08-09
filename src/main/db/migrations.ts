@@ -54,7 +54,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       plugins_used_json TEXT NOT NULL DEFAULT '[]',
       web_search_used_json TEXT NOT NULL DEFAULT '[]',
       timeline_json TEXT NOT NULL DEFAULT '[]',
-      session_entry_id TEXT
+      session_entry_id TEXT,
+      run_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS thread_drafts (
@@ -251,9 +252,11 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "chat_threads", "session_file", "TEXT");
   addColumnIfMissing(db, "chat_threads", "session_format_version", "INTEGER");
   addColumnIfMissing(db, "chat_messages", "session_entry_id", "TEXT");
+  addColumnIfMissing(db, "chat_messages", "run_id", "TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chat_threads_project_updated_at ON chat_threads(project_id, updated_at);");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_session_id ON chat_threads(session_id) WHERE session_id IS NOT NULL;");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_entry_id ON chat_messages(session_entry_id) WHERE session_entry_id IS NOT NULL;");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_run_id ON chat_messages(run_id) WHERE run_id IS NOT NULL;");
   markMigration(db, 1, "initial schema", now);
   markMigration(db, 2, "chat message attachments and model metadata", now);
   markMigration(db, 3, "trace memory activity and thread drafts", now);
@@ -344,6 +347,7 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   markMigration(db, 27, "refresh bundled DeepSeek and Kimi model catalogs", now);
   markMigration(db, 28, "reserve legacy DeepSeek projection repair", now);
   if (!hasMigration(db, 29)) restoreCanonicalPiTimelineRows(db, now());
+  markMigration(db, 30, "agent run message linkage", now);
 }
 
 function markMigration(db: SqlDatabase, version: number, name: string, now: Clock): void {

@@ -20,6 +20,7 @@ try {
   app = await launchHarnessApp({
     userDataDir,
     env: {
+      JASMINE_E2E_OFFSCREEN: "",
       JASMINE_E2E_MOCK_AI: "1",
       JASMINE_E2E_PICK_FILE: redSquarePath,
       DEEPSEEK_API_KEY: "acceptance-mock-key",

@@ -55,7 +55,7 @@ export function seedLegacyDeepSeekContentProjection(userDataDir: string): string
     ];
     db.prepare(`
       UPDATE chat_messages
-      SET content = ?, model_id = 'deepseek-v4-flash', timeline_json = ?
+      SET content = ?, elapsed_ms = 229000, model_id = 'deepseek-v4-flash', timeline_json = ?
       WHERE id = ?
     `).run(
       "Visible final answer.",

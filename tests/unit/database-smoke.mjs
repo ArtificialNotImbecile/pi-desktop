@@ -62,7 +62,8 @@ try {
       plugins_used_json TEXT NOT NULL DEFAULT '[]',
       web_search_used_json TEXT NOT NULL DEFAULT '[]',
       timeline_json TEXT NOT NULL DEFAULT '[]',
-      session_entry_id TEXT
+      session_entry_id TEXT,
+      run_id TEXT
     );
     CREATE TABLE thread_drafts (
       thread_id TEXT PRIMARY KEY REFERENCES chat_threads(id) ON DELETE CASCADE,
@@ -256,8 +257,10 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 27").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 28").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 29").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 30").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_threads)").all().some((row) => row.name === "session_file"), true);
     assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "session_entry_id"), true);
+    assert.equal(legacyDb.prepare("PRAGMA table_info(chat_messages)").all().some((row) => row.name === "run_id"), true);
 
     const canonicalSessionFile = path.join(dir, "legacy-canonical-session.jsonl");
     await writeFile(canonicalSessionFile, [
@@ -580,11 +583,13 @@ try {
   // the count in the same transaction as the row change (database.ts does this).
   const userMessage = messages.addMessage(db, { threadId: thread.id, role: "user", content: "hello", sessionEntryId: "pi-user" }, timestamp);
   threads.adjustThreadMessageCount(db, thread.id, 1);
-  const assistantMessage = messages.addMessage(db, { threadId: thread.id, role: "assistant", content: "hi", modelId: "unit-model" }, timestamp);
+  const assistantMessage = messages.addMessage(db, { threadId: thread.id, runId: "unit-run", role: "assistant", content: "hi", elapsedMs: 229000, modelId: "unit-model" }, timestamp);
   threads.adjustThreadMessageCount(db, thread.id, 1);
   assert.equal(threads.getThreadMessageCount(db, thread.id), 2);
   assert.equal(threads.getThread(db, thread.id).messageCount, 2);
   assert.deepEqual(messages.listMessages(db, thread.id).map((message) => message.id), [userMessage.id, assistantMessage.id]);
+  assert.equal(messages.listMessages(db, thread.id).at(-1).runId, "unit-run");
+  assert.equal(messages.listMessages(db, thread.id).at(-1).elapsedMs, 229000);
   assert.equal(messages.getMessageSessionEntryId(db, thread.id, userMessage.id), "pi-user");
   messages.linkMessageSessionEntry(db, thread.id, assistantMessage.id, "pi-assistant");
   assert.equal(messages.getMessageSessionEntryId(db, thread.id, assistantMessage.id), "pi-assistant");

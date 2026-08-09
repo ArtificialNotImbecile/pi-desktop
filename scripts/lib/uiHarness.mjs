@@ -39,6 +39,7 @@ export async function launchHarnessApp({ userDataDir, env = {}, args = [".", "--
     cwd: rootDir,
     env: {
       ...process.env,
+      JASMINE_E2E_OFFSCREEN: process.env.JASMINE_E2E_OFFSCREEN ?? "1",
       JASMINE_E2E_USER_DATA_DIR: userDataDir,
       DEEPSEEK_API_KEY: "e2e-mock-key",
       KIMI_API_KEY: "e2e-mock-key",

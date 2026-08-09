@@ -218,6 +218,7 @@ export function registerChatIpc(context: IpcContext): void {
 
       const assistantMessage = persistRuntimeGeneratedMessages(db, {
         threadId: request.threadId,
+        runId: trace.id,
         reply,
         fallbackTimeline: reply.timeline,
         memoryUsed: turn.memoryUsed,
@@ -324,6 +325,7 @@ export function registerChatIpc(context: IpcContext): void {
         db.deleteMessagesByIds(request.threadId, retryPlan.deleteMessageIds);
         return persistRuntimeGeneratedMessages(db, {
           threadId: request.threadId,
+          runId: trace.id,
           reply,
           fallbackTimeline: reply.timeline,
           memoryUsed: turn.memoryUsed,
@@ -455,6 +457,7 @@ export function registerChatIpc(context: IpcContext): void {
 
       const assistantMessage = persistRuntimeGeneratedMessages(db, {
         threadId: request.threadId,
+        runId: trace.id,
         reply,
         fallbackTimeline: reply.timeline,
         memoryUsed: turn.memoryUsed,
@@ -664,6 +667,7 @@ function persistRuntimeGeneratedMessages(
   db: JasmineDatabase,
   input: {
     threadId: string;
+    runId: string;
     reply: AssistantReply;
     fallbackTimeline: ChatTimelineItem[];
     memoryUsed: MemoryReference[];
@@ -680,16 +684,18 @@ function persistRuntimeGeneratedMessages(
         content: input.reply.content,
         timeline: input.fallbackTimeline
       }];
+  const lastAssistantIndex = generated.map((message) => message.role).lastIndexOf("assistant");
   // Multi-turn runs persist several rows (queued user turns + assistant turns);
   // commit them atomically so a crash mid-write cannot leave a half-saved run.
   return db.runInTransaction(() => {
     let lastAssistantMessage: ChatMessage | null = null;
     let taxonomyAttached = false;
 
-    for (const message of generated) {
+    for (const [index, message] of generated.entries()) {
       if (message.role === "user") {
         db.addMessage({
           threadId: input.threadId,
+          runId: input.runId,
           role: "user",
           content: message.content,
           attachments: message.attachments ?? [],
@@ -705,9 +711,10 @@ function persistRuntimeGeneratedMessages(
       taxonomyAttached = true;
       lastAssistantMessage = db.addMessage({
         threadId: input.threadId,
+        runId: input.runId,
         role: "assistant",
         content: message.content,
-        elapsedMs: input.reply.elapsedMs,
+        elapsedMs: index === lastAssistantIndex ? input.reply.elapsedMs : undefined,
         modelId: input.reply.model,
         status: "sent",
         memoryUsed: input.memoryUsed,
@@ -722,6 +729,7 @@ function persistRuntimeGeneratedMessages(
     if (!lastAssistantMessage) {
       lastAssistantMessage = db.addMessage({
         threadId: input.threadId,
+        runId: input.runId,
         role: "assistant",
         content: input.reply.content,
         elapsedMs: input.reply.elapsedMs,

@@ -96,8 +96,11 @@ try {
   await capture(page, "04-markdown-message", "Markdown message with table, link, and code copy action");
   await page.getByRole("button", { name: "New chat" }).first().click();
   await sendComposerMessage(page, "show write timeline");
-  await page.waitForSelector(".message-timeline .tool-run-item");
-  await capture(page, "04-agent-timeline", "Assistant chronological timeline with compact tool run summary and output");
+  await page.waitForSelector(".run-recap-toggle");
+  await capture(page, "04-agent-recap", "Completed agent run collapsed to duration recap with final answer visible");
+  await page.getByRole("button", { name: "Show work details" }).last().click();
+  await page.waitForSelector(".run-recap-details:not([hidden]) .tool-run-item");
+  await capture(page, "04-agent-timeline", "Expanded assistant timeline with compact tool run summary and output");
   await sendComposerMessage(page, "show edit timeline");
   await page.waitForSelector(".message-jump-rail");
   await page.getByRole("button", { name: "Open user message navigation" }).click();

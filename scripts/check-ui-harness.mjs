@@ -43,6 +43,16 @@ if ((packageJson.scripts?.["test:e2e:headed"] ?? "").includes("JASMINE_E2E_OFFSC
   throw new Error("test:e2e:headed must remain an explicit visible debugging command.");
 }
 
+const playwrightConfig = readFileSync(new URL("../tests/playwright.config.ts", import.meta.url), "utf8");
+if (!playwrightConfig.includes('process.env.JASMINE_E2E_OFFSCREEN = "1"')) {
+  throw new Error("Targeted Playwright runs must default JASMINE_E2E_OFFSCREEN=1 in tests/playwright.config.ts.");
+}
+
+const harnessLauncher = readFileSync(new URL("./lib/uiHarness.mjs", import.meta.url), "utf8");
+if (!harnessLauncher.includes('JASMINE_E2E_OFFSCREEN: process.env.JASMINE_E2E_OFFSCREEN ?? "1"')) {
+  throw new Error("UI inspect and visual harness launches must default to off-screen mode.");
+}
+
 console.log("UI harness docs are current, reproducible, and free of tracked visual artifacts.");
 
 function checkUniqueIds(label, content, pattern, allowEmpty = false) {

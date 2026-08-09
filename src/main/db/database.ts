@@ -367,6 +367,7 @@ export class JasmineDatabase {
 
   addMessage(input: {
     threadId: string;
+    runId?: string;
     role: ChatRole;
     content: string;
     attachments?: PickedPath[];
