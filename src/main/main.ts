@@ -79,7 +79,7 @@ function createWindow() {
     height: 800,
     minWidth: 840,
     minHeight: 600,
-    title: "Jasmine",
+    title: "Jasmine — The desktop app for Pi",
     titleBarStyle: "hidden",
     resizable: true,
     movable: true,

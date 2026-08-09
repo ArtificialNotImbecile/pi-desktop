@@ -43,6 +43,7 @@ import DEFAULT_BRAND_LOGO_URL from "../../assets/jasmine-logo.png";
 import { Button, Select, TextArea, TextInput } from "../ui";
 import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon } from "../icons/Icons";
 import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
+import packageMetadata from "../../../../package.json";
 
 export function LocalSettingsPage(props: {
   section: Exclude<SettingsSectionKey, "providers" | "remote">;
@@ -260,9 +261,15 @@ export function LocalSettingsPage(props: {
         <section className="settings-group">
           <div className="settings-row">
             <div>
+              <strong>{t("settings.about.positioning")}</strong>
+              <small>{t("settings.about.description")}</small>
+            </div>
+          </div>
+          <div className="settings-row">
+            <div>
               <strong>{t("settings.about.version")}</strong>
             </div>
-            <span className="settings-state-pill">0.1.0</span>
+            <span className="settings-state-pill">{packageMetadata.version}</span>
           </div>
           <div className="settings-row">
             <div>

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
   baseLaunchEnv,
@@ -45,6 +46,9 @@ import {
   waitForChildExit,
   waitForStableAssistant
 } from "./helpers";
+
+const require = createRequire(import.meta.url);
+const packageMetadata = require("../../package.json") as { version: string };
 
 test.describe("Jasmine settings", () => {
   let harness: HarnessApp;
@@ -214,6 +218,7 @@ test.describe("Jasmine settings", () => {
   test("settings nav reaches memory, activity, web search, plugins, and about sections", async () => {
     const { page } = harness;
 
+    await expect(page).toHaveTitle("Jasmine — The desktop app for Pi");
     await openSettings(page, "Memory");
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
     await expect(page.locator(".settings-detail")).toContainText("Saved memories");
@@ -230,6 +235,10 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".settings-detail")).toContainText("Pi Web Access");
     await page.locator(".settings-nav").getByRole("button", { name: "About" }).click();
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
+    await expect(page.locator(".settings-detail")).toContainText("Jasmine — The desktop app for Pi");
+    await expect(page.locator(".settings-detail")).toContainText("independent, open-source desktop GUI for the Pi coding agent");
+    await expect(page.locator(".settings-detail")).toContainText("not affiliated with or endorsed by Pi");
+    await expect(page.locator(".settings-state-pill").first()).toHaveText(packageMetadata.version);
     await expect(page.locator(".settings-detail")).toContainText("Data location");
   });
 
@@ -312,6 +321,10 @@ test.describe("Jasmine settings", () => {
     await page.locator(".settings-nav").getByRole("button", { name: "通用" }).click();
     await expect(page.locator(".settings-detail")).toContainText("终端 Shell");
     await expect(page.locator('.settings-detail select[aria-label="界面语言"]')).toHaveValue("zh");
+    await page.locator(".settings-nav").getByRole("button", { name: "关于" }).click();
+    await expect(page.locator(".settings-detail")).toContainText("Jasmine — Pi 的桌面应用");
+    await expect(page.locator(".settings-detail")).toContainText("面向 Pi coding agent 的独立开源桌面 GUI");
+    await expect(page.locator(".settings-detail")).toContainText("与 Pi 官方无隶属或背书关系");
     await page.locator(".settings-window-control.close").click();
     await expect(page.locator(".settings-panel")).toBeHidden();
     await expect(page.locator(".empty-state h1")).toHaveText("\u8a00\u5df1");

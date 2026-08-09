@@ -1,16 +1,20 @@
 # Jasmine
 
-Jasmine (**Just Another Self Mine**) is a local-first desktop workspace for AI-assisted chat, projects, tools, and personal context. The application is built with Electron, React, TypeScript, Pi, JSONL session files, and SQLite.
+### The desktop app for Pi
+
+Jasmine is an independent, open-source desktop GUI for the Pi coding agent, bringing Pi-compatible sessions, terminal workflows, skills, extensions, and agent interactions into a modern desktop app.
+
+> Jasmine is a community-built project and is not affiliated with or endorsed by Pi.
 
 ![Jasmine main workspace](docs/assets/screenshots/main.png)
 
 ## Features
 
-- Persistent local threads, messages, drafts, projects, TODOs, memories, and activity records.
-- Multiple OpenAI-compatible providers with model discovery and per-model options.
-- Rich chat rendering, attachments, prompt templates, skills, plugins, MCP servers, remote shells, and local project context.
-- Optional Chrome integration for user-directed browser automation.
-- English and Chinese interface copy, appearance settings, Spotlight launcher, and a structured UI test harness.
+- **Pi Sessions** — keep Pi-compatible JSONL as the canonical conversation record, with persistent local threads, drafts, projects, search, and session import.
+- **Desktop GUI for Pi** — use rich chat, attachments, TODOs, memories, activity, and project context without leaving the desktop app.
+- **Pi Skills & Extensions** — work with reusable skills, prompt templates, package plugins, MCP servers, web access, and optional Chrome integration.
+- **Integrated Terminal** — run project terminals and remote shells alongside coding-agent conversations.
+- **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
 
 Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, remote hosts, and browser automation can send data outside the computer. Review each integration before enabling it.
 
@@ -68,11 +72,13 @@ The example above uses two real model turns and opens the captured conversation 
 
 ## Install on Windows
 
-Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/jasmine/releases/latest). The `v0.1.1` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
+Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.1.1` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
 
 ## Run locally
 
 ```powershell
+git clone https://github.com/ArtificialNotImbecile/pi-desktop.git
+cd pi-desktop
 npm.cmd ci
 npm.cmd run build
 npm.cmd start
@@ -114,6 +120,10 @@ Run `npm.cmd run test:e2e` for the full Electron suite in background/off-screen 
 Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
 
 See [docs/harness.md](docs/harness.md) for the test map and verification policy.
+
+## Documentation
+
+Start with the [Jasmine documentation](docs/README.md) for Pi session behavior, storage, reasoning context, and desktop development workflows.
 
 ## Contributing and security
 

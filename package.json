@@ -1,17 +1,17 @@
 {
-  "name": "jasmine",
+  "name": "pi-desktop",
   "version": "0.1.1",
-  "description": "Jasmine desktop app - Just Another Self Mine.",
+  "description": "Jasmine — an independent desktop GUI for the Pi coding agent.",
   "author": "ArtificialNotImbecile",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ArtificialNotImbecile/jasmine.git"
+    "url": "git+https://github.com/ArtificialNotImbecile/pi-desktop.git"
   },
   "bugs": {
-    "url": "https://github.com/ArtificialNotImbecile/jasmine/issues"
+    "url": "https://github.com/ArtificialNotImbecile/pi-desktop/issues"
   },
-  "homepage": "https://github.com/ArtificialNotImbecile/jasmine#readme",
+  "homepage": "https://github.com/ArtificialNotImbecile/pi-desktop#readme",
   "private": true,
   "type": "module",
   "main": "main.cjs",

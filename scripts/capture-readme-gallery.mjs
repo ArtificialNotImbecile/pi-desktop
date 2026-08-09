@@ -12,7 +12,7 @@ await rm(userDataDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nKeep answers concise and cite relevant project files.\n", "utf8");
-await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is a local-first AI workspace.\n", "utf8");
+await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is an independent desktop GUI for the Pi coding agent.\n", "utf8");
 
 const app = await electron.launch({
   executablePath: path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),

@@ -99,7 +99,7 @@ try {
       legacyMcp: mcpServers.find((item) => item.id === "legacy-packaged-mcp") ?? null
     };
   });
-  if (result.title !== "Jasmine" || result.bodyTextLength < 100) {
+  if (result.title !== "Jasmine — The desktop app for Pi" || result.bodyTextLength < 100) {
     throw new Error(`Packaged renderer is blank or mislabeled: ${JSON.stringify(result)}`);
   }
   if (!result.pluginNames.some((name) => /chrome/i.test(name))) throw new Error(`Packaged Chrome plugin was not discovered: ${JSON.stringify(result)}`);
