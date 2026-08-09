@@ -233,6 +233,7 @@ function titleForKind(kind: ContextTaxonomyKind, fallback?: string): string {
     attachment: "Attachment",
     provider_message: "Provider message",
     raw_payload: "Raw payload",
+    unclassified: "Unclassified payload",
     unknown: fallback || "Context text"
   };
   return titles[kind];

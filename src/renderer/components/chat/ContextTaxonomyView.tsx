@@ -10,6 +10,7 @@ type CompositionItem = { kind: string; label: string; tokens: number; percent: n
 export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: string }) {
   const estimatedTotal = useMemo(() => taxonomyEstimatedTokens(props.taxonomy), [props.taxonomy]);
   const composition = useMemo(() => buildComposition(props.taxonomy), [props.taxonomy]);
+  const unclassifiedPaths = useMemo(() => collectUnclassifiedPaths(props.taxonomy), [props.taxonomy]);
   const actualInput = props.taxonomy.cacheMetrics?.inputTokens;
   const request = props.taxonomy.providerRequest;
 
@@ -34,6 +35,7 @@ export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: stri
       </header>
 
       {props.taxonomy.source === "jasmine-assembly" && <AssemblyWarning taxonomy={props.taxonomy} />}
+      {unclassifiedPaths.length > 0 && <UnclassifiedWarning paths={unclassifiedPaths} />}
       {props.taxonomy.reasoningValidation && <ReasoningValidationCard validation={props.taxonomy.reasoningValidation} />}
       {props.taxonomy.cacheMetrics && <CacheMetrics taxonomy={props.taxonomy} />}
       {composition.length > 0 && <Composition items={composition} estimatedTotal={estimatedTotal} />}
@@ -48,6 +50,16 @@ export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: stri
 
       <RawPayload captureId={props.captureId} taxonomy={props.taxonomy} />
     </div>
+  );
+}
+
+function UnclassifiedWarning(props: { paths: string[] }) {
+  return (
+    <section className="taxonomy-unclassified-card" aria-label="Unclassified provider payload warning">
+      <strong>{props.paths.length} unclassified payload {props.paths.length === 1 ? "field" : "fields"}</strong>
+      <span>Retained in provider wire order. Add a classifier rule if these fields carry model context.</span>
+      <code>{props.paths.slice(0, 4).join(" · ")}{props.paths.length > 4 ? ` · +${props.paths.length - 4} more` : ""}</code>
+    </section>
   );
 }
 
@@ -134,10 +146,12 @@ function TaxonomyItemView(props: { item: ContextTaxonomyItem; validation?: Conte
   const parts = item.parts ?? [];
   const segments = item.segments ?? [];
   const useInstructionSegments = (item.role === "system" || item.role === "developer") && segments.length > 1;
-  const open = item.kind === "current_user_prompt" || item.kind === "tool_definition";
+  const initiallyOpen = item.kind === "current_user_prompt" || item.kind === "tool_definition" || item.kind === "unclassified";
+  const [expanded, setExpanded] = useState(initiallyOpen);
+  const unclassifiedParts = parts.filter((part) => part.kind === "unclassified");
   return (
     <article className="taxonomy-item">
-      <details className="taxonomy-item-details" open={open}>
+      <details className="taxonomy-item-details" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary>
           <b title="Wire presentation order">{item.order}</b>
           <span className="taxonomy-item-title"><strong>{itemTitle(item)}</strong><small>{item.role} · {item.payloadPath ?? item.source}</small></span>
@@ -146,11 +160,13 @@ function TaxonomyItemView(props: { item: ContextTaxonomyItem; validation?: Conte
         <div className="taxonomy-item-meta">
           <span>{item.label}</span><span>~{item.tokenEstimate.toLocaleString()} estimated tokens</span>
         </div>
-        {parts.length > 0 && !useInstructionSegments
-          ? <div className="taxonomy-parts">{parts.map((part) => <TaxonomyPartView key={`${part.order}-${part.payloadPath ?? part.title}`} part={part} validation={props.validation} openByDefault={item.kind === "current_user_prompt"} />)}</div>
-          : segments.length > 0
-            ? <LegacySegments segments={segments} />
-            : <RenderedBody text={item.text ?? item.preview} format={looksLikeJson(item.text ?? "") ? "json" : "markdown"} title={item.label} />}
+        {useInstructionSegments
+          ? <><LegacySegments segments={segments} openByDefault={expanded} />{unclassifiedParts.length > 0 && <div className="taxonomy-parts">{unclassifiedParts.map((part) => <TaxonomyPartView key={`${part.order}-${part.payloadPath ?? part.title}`} part={part} validation={props.validation} openByDefault={expanded} />)}</div>}</>
+          : parts.length > 0
+            ? <div className="taxonomy-parts">{parts.map((part) => <TaxonomyPartView key={`${part.order}-${part.payloadPath ?? part.title}`} part={part} validation={props.validation} openByDefault={expanded} />)}</div>
+            : segments.length > 0
+              ? <LegacySegments segments={segments} openByDefault={expanded} />
+              : <RenderedBody text={item.text ?? item.preview} format={looksLikeJson(item.text ?? "") ? "json" : "markdown"} title={item.label} />}
       </details>
     </article>
   );
@@ -160,7 +176,7 @@ function TaxonomyPartView(props: { part: ContextTaxonomyPart; validation?: Conte
   const part = props.part;
   const failedReasoning = part.kind === "reasoning" && props.validation?.status === "fail";
   return (
-    <details className={`taxonomy-part taxonomy-part-${part.kind}`} open={props.openByDefault || failedReasoning || part.kind === "tool_call" || part.kind === "tool_result"}>
+    <details className={`taxonomy-part taxonomy-part-${part.kind}`} open={props.openByDefault || failedReasoning || part.kind === "tool_call" || part.kind === "tool_result" || part.kind === "unclassified"}>
       <summary>
         <span>{part.title}</span>
         <small>
@@ -172,11 +188,11 @@ function TaxonomyPartView(props: { part: ContextTaxonomyPart; validation?: Conte
   );
 }
 
-function LegacySegments(props: { segments: ContextTaxonomySegment[] }) {
+function LegacySegments(props: { segments: ContextTaxonomySegment[]; openByDefault?: boolean }) {
   return (
     <div className="taxonomy-parts">
       {props.segments.map((segment, index) => (
-        <details key={`${segment.kind}-${index}`} className="taxonomy-part" open={segment.kind === "current_user_prompt"}>
+        <details key={`${segment.kind}-${index}`} className="taxonomy-part" open={props.openByDefault || segment.kind === "current_user_prompt"}>
           <summary><span>{segment.title}</span><small>~{segment.tokenEstimate.toLocaleString()} tokens</small></summary>
           <RenderedBody text={segment.text} format={looksLikeJson(segment.text) ? "json" : "markdown"} title={segment.title} />
         </details>
@@ -264,6 +280,17 @@ function taxonomyEstimatedTokens(taxonomy: ContextTaxonomy): number {
   }, 0);
 }
 
+function collectUnclassifiedPaths(taxonomy: ContextTaxonomy): string[] {
+  const paths = new Set<string>();
+  for (const item of taxonomy.items) {
+    if (item.kind === "unclassified") paths.add(item.payloadPath ?? item.source);
+    for (const part of item.parts ?? []) {
+      if (part.kind === "unclassified") paths.add(part.payloadPath ?? `${item.payloadPath ?? item.source}:${part.order}`);
+    }
+  }
+  return Array.from(paths);
+}
+
 function buildComposition(taxonomy: ContextTaxonomy): CompositionItem[] {
   const values = new Map<string, number>();
   for (const item of taxonomy.items) {
@@ -297,13 +324,13 @@ function kindLabel(kind: ContextTaxonomyKind): string {
     system_prompt: "System", developer_instructions: "Developer", project_context: "Project", skill_manifest: "Skills",
     skill_instructions: "Skill instructions", prompt_template: "Template", memory: "Memory", conversation_history: "History",
     current_user_prompt: "Current prompt", tool_definition: "Tool", provider_options: "Options", attachment: "Attachment",
-    provider_message: "Provider message", raw_payload: "Raw", unknown: "Unknown"
+    provider_message: "Provider message", raw_payload: "Raw", unclassified: "Unclassified", unknown: "Unknown"
   };
   return labels[kind];
 }
 
 function partOrKindLabel(kind: string): string {
-  const labels: Record<string, string> = { text: "Text", reasoning: "Reasoning", tool_call: "Tool calls", tool_result: "Tool results", attachment: "Attachments", refusal: "Refusal", metadata: "Metadata" };
+  const labels: Record<string, string> = { text: "Text", reasoning: "Reasoning", tool_call: "Tool calls", tool_result: "Tool results", attachment: "Attachments", refusal: "Refusal", metadata: "Metadata", unclassified: "Unclassified" };
   return labels[kind] ?? kindLabel(kind as ContextTaxonomyKind) ?? kind;
 }
 
@@ -313,6 +340,7 @@ function compositionColor(kind: string): string {
   if (kind === "tool_result") return "var(--success)";
   if (kind === "current_user_prompt") return "var(--accent)";
   if (kind === "attachment") return "var(--danger)";
+  if (kind === "unclassified") return "color-mix(in srgb, var(--danger) 55%, var(--accent))";
   return "var(--muted)";
 }
 

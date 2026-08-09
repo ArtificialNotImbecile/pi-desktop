@@ -1,4 +1,4 @@
-export const CONTEXT_TAXONOMY_SCHEMA_VERSION = 5 as const;
+export const CONTEXT_TAXONOMY_SCHEMA_VERSION = 6 as const;
 
 export type ContextTaxonomyKind =
   | "system_prompt"
@@ -15,6 +15,7 @@ export type ContextTaxonomyKind =
   | "attachment"
   | "provider_message"
   | "raw_payload"
+  | "unclassified"
   | "unknown";
 
 export type ContextTaxonomySegment = {
@@ -32,7 +33,8 @@ export type ContextTaxonomyPartKind =
   | "tool_result"
   | "attachment"
   | "refusal"
-  | "metadata";
+  | "metadata"
+  | "unclassified";
 
 export type ContextTaxonomyPart = {
   order: number;

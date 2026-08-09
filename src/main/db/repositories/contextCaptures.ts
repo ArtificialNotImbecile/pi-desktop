@@ -67,7 +67,7 @@ export function addContextCapture(db: SqlDatabase, input: {
     taxonomy.provider,
     taxonomy.model,
     taxonomy.source,
-    taxonomy.payloadSchemaVersion ?? 5,
+    taxonomy.payloadSchemaVersion ?? 1,
     raw ? gzipSync(Buffer.from(raw, "utf8")) : null,
     rawState,
     rawSha256,

@@ -129,7 +129,7 @@ function taxonomyFromCapture(capture: StoredContextCapture): ContextTaxonomy {
       policy: "task-capture"
     },
     payloadHash: summary.rawSha256 ?? taxonomy.payloadHash,
-    payloadSchemaVersion: summary.schemaVersion,
+    payloadSchemaVersion: taxonomy.payloadSchemaVersion ?? summary.schemaVersion,
     rawState: summary.rawState,
     rawCharCount: summary.rawCharCount,
     rawByteCount: summary.rawByteCount,

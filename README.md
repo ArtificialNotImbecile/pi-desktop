@@ -18,7 +18,7 @@ Pi-compatible JSONL is the canonical model conversation record. SQLite remains t
 
 ## Context inspection
 
-Jasmine exposes each model request as a readable context taxonomy. The latest user task shows every provider subrequest (`1/N`) in wire order, with text, reasoning, tool calls/results, provider options, payload shape, actual usage, estimated composition, and DeepSeek/Kimi reasoning-retention validation. Sanitized raw payloads are gzip-backed and loaded only when expanded.
+Jasmine exposes each model request as a readable context taxonomy. The latest user task appears as soon as it is persisted and shows every provider subrequest (`1/N`) in wire order, with text, reasoning, tool calls/results, provider options, explicit unclassified fields, payload shape, actual usage, estimated composition, and DeepSeek/Kimi reasoning-retention validation. Sanitized raw payloads are gzip-backed and loaded only when expanded.
 
 ![Inspecting a real DeepSeek request in Context Taxonomy](docs/assets/context-taxonomy.gif)
 

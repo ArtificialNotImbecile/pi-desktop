@@ -160,15 +160,22 @@ const classifierTaxonomy = providerPayloadToContextTaxonomy({
   provider: "jasmine-mock",
   model: "jasmine-test"
 });
-assert.equal(classifierTaxonomy.payloadSchemaVersion, 5);
+assert.equal(classifierTaxonomy.payloadSchemaVersion, 6);
 assert.deepEqual(classifierTaxonomy.payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
 assert.equal(classifierTaxonomy.payloadShape.messagesBeforeTools, true);
 assert.equal(classifierTaxonomy.rawPayload.includes(fakeProviderSecret), false);
 assert.match(classifierTaxonomy.rawPayload, /\[redacted\]/);
-assert.equal(classifierTaxonomy.items[0].kind, "system_prompt");
-assert.equal(classifierTaxonomy.items[0].segments.some((segment) => segment.kind === "project_context"), true);
-assert.equal(classifierTaxonomy.items[0].segments.some((segment) => segment.kind === "skill_instructions"), true);
-assert.equal(classifierTaxonomy.items.find((item) => item.kind === "current_user_prompt")?.text, "current turn");
+assert.deepEqual(classifierTaxonomy.items.map((item) => item.payloadPath), [
+  "$.model", "$.apiKey", "$.messages[0]", "$.messages[1]", "$.messages[2]", "$.messages[3]", "$.tools[0]", "$.stream"
+]);
+const classifierSystemItem = classifierTaxonomy.items.find((item) => item.payloadPath === "$.messages[0]");
+assert.equal(classifierSystemItem.kind, "system_prompt");
+assert.equal(classifierSystemItem.segments.some((segment) => segment.kind === "project_context"), true);
+assert.equal(classifierSystemItem.segments.some((segment) => segment.kind === "skill_instructions"), true);
+assert.equal(classifierTaxonomy.items.find((item) => item.kind === "current_user_prompt")?.parts.some((part) => part.kind === "text" && part.text === "current turn"), true);
+assert.equal(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.kind, "unclassified");
+assert.equal(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.parts[0].kind, "unclassified");
+assert.match(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.text, /redacted/);
 assert.equal(classifierTaxonomy.items.at(-2).kind, "tool_definition");
 assert.equal(classifierTaxonomy.items.at(-1).kind, "provider_options");
 const classifierTaxonomyWithCache = withContextCacheMetrics(classifierTaxonomy, {
@@ -241,7 +248,7 @@ const taxonomyWithSyntheticToolImage = providerPayloadToContextTaxonomy({
 });
 const syntheticCurrentItems = taxonomyWithSyntheticToolImage.items.filter((item) => item.kind === "current_user_prompt");
 assert.equal(syntheticCurrentItems.length, 1);
-assert.equal(syntheticCurrentItems[0].text, "Please open the page by URL.");
+assert.equal(syntheticCurrentItems[0].parts.some((part) => part.kind === "text" && part.text === "Please open the page by URL."), true);
 const syntheticImageItem = taxonomyWithSyntheticToolImage.items.find((item) => item.payloadPath === "$.messages[3]");
 assert.equal(syntheticImageItem?.kind, "attachment");
 assert.doesNotMatch(taxonomyWithSyntheticToolImage.rawPayload, /A{64}/);
@@ -263,7 +270,7 @@ const taxonomyWithAttachmentAnchor = providerPayloadToContextTaxonomy({
     "- image file (image/png): C:\\tmp\\image.png"
   ].join("\n")
 });
-assert.equal(taxonomyWithAttachmentAnchor.items.find((item) => item.kind === "current_user_prompt")?.text, "Describe this image.");
+assert.equal(taxonomyWithAttachmentAnchor.items.find((item) => item.kind === "current_user_prompt")?.parts.some((part) => part.kind === "text" && part.text === "Describe this image."), true);
 
 // Regression: the provider payload may put visible text, reasoning, and tool
 // calls on the same assistant object. The old `content ?? item` shortcut hid
@@ -290,21 +297,58 @@ const structuredAssistantTaxonomy = providerPayloadToContextTaxonomy({
   googleMedia: { inlineData: { mimeType: "image/png", data: "B".repeat(96) } }
 }, { provider: "deepseek", model: "deepseek-v4-flash" });
 const richAssistant = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[1]");
-assert.deepEqual(richAssistant.parts.map((part) => part.kind), ["reasoning", "text", "tool_call"]);
+assert.deepEqual(richAssistant.parts.map((part) => part.kind), ["metadata", "reasoning", "text", "tool_call"]);
 assert.equal(richAssistant.parts.find((part) => part.kind === "tool_call")?.toolCallId, "call_1");
 assert.equal(richAssistant.text.includes("I should inspect"), true);
 assert.equal(richAssistant.text.includes("call_1"), true);
 const toolResultItem = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[2]");
-assert.equal(toolResultItem.parts[0].kind, "tool_result");
-assert.equal(toolResultItem.parts[0].toolCallId, "call_1");
+assert.deepEqual(toolResultItem.parts.map((part) => part.kind), ["metadata", "metadata", "metadata", "tool_result"]);
+assert.equal(toolResultItem.parts.find((part) => part.kind === "tool_result")?.toolCallId, "call_1");
 const emptyContentAssistant = structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[3]");
-assert.deepEqual(emptyContentAssistant.parts.map((part) => part.kind), ["tool_call"]);
+assert.deepEqual(emptyContentAssistant.parts.map((part) => part.kind), ["metadata", "tool_call"]);
 assert.equal(structuredAssistantTaxonomy.items.find((item) => item.payloadPath === "$.messages[4]")?.kind, "current_user_prompt");
 assert.doesNotMatch(structuredAssistantTaxonomy.rawPayload, /secret-access-token-value|secret-signature|secret-query-token|A{64}|B{64}/);
 assert.match(structuredAssistantTaxonomy.rawPayload, /redacted/);
 assert.match(structuredAssistantTaxonomy.rawPayload, /"max_tokens": 1024/);
 assert.match(structuredAssistantTaxonomy.rawPayload, /"prompt_tokens": 2048/);
 assert.ok(estimateTokens("这是中文测试") >= 6, "CJK composition estimates should not use chars/4");
+
+// Lossless fallback: unsupported top-level and message fields must remain in
+// their exact wire position instead of being absorbed into an options bucket
+// or silently dropped. Nested structured-content siblings are retained too.
+const taxonomyWithUnclassifiedFields = providerPayloadToContextTaxonomy({
+  model: "future-provider-model",
+  contents: [{ role: "user", parts: [{ text: "Gemini-shaped input" }] }],
+  messages: [{
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "inspect first", signature: "provider-signature" },
+      { type: "text", text: "answer", cache_control: { type: "ephemeral" } }
+    ],
+    vendor_state: { checkpoint: 3 },
+    tool_calls: [{ id: "future-call", function: { name: "read", arguments: "{}" } }]
+  }],
+  stream: true
+}, { provider: "future-provider", model: "future-provider-model" });
+assert.deepEqual(taxonomyWithUnclassifiedFields.items.map((item) => item.payloadPath), [
+  "$.model", "$.contents", "$.messages[0]", "$.stream"
+]);
+assert.equal(taxonomyWithUnclassifiedFields.items[1].kind, "unclassified");
+assert.match(taxonomyWithUnclassifiedFields.items[1].text, /Gemini-shaped input/);
+const futureMessage = taxonomyWithUnclassifiedFields.items[2];
+assert.deepEqual(futureMessage.parts.map((part) => part.kind), [
+  "metadata", "reasoning", "unclassified", "text", "unclassified", "unclassified", "tool_call"
+]);
+assert.deepEqual(futureMessage.parts.map((part) => part.payloadPath), [
+  "$.messages[0].role",
+  "$.messages[0].content[0].thinking",
+  "$.messages[0].content[0].signature",
+  "$.messages[0].content[1].text",
+  "$.messages[0].content[1].cache_control",
+  "$.messages[0].vendor_state",
+  "$.messages[0].tool_calls[0]"
+]);
+assert.equal(futureMessage.parts.find((part) => part.payloadPath.endsWith("vendor_state"))?.text.includes("checkpoint"), true);
 
 const quotedOwnedTags = classifyTextSegments("<project_context>quoted, not trusted</project_context>", "current_user_prompt", "user");
 assert.equal(quotedOwnedTags.length, 1);
@@ -1414,7 +1458,7 @@ try {
   const selectedSkillPayloadText = JSON.stringify(selectedSkillPayload);
   const capturedRawProviderPayload = JSON.parse(taxonomyCaptures[0].rawPayload);
   assert.deepEqual(capturedRawProviderPayload, normalizePayload(selectedSkillPayload));
-  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 5);
+  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 6);
   assert.equal(
     taxonomyCaptures[0].payloadHash,
     createHash("sha256").update(taxonomyCaptures[0].rawPayload).digest("hex")

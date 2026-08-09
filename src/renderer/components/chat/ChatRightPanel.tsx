@@ -598,8 +598,11 @@ function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMes
   const [taxonomy, setTaxonomy] = useState<ContextTaxonomy | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  // See ArtifactsPane: bound the per-stream-tick scan to <= 1 recompute/second.
+  // The final persisted assistant replaces a stable-id streaming placeholder
+  // without changing message count. Include the last id so the panel refreshes
+  // after the capture transaction commits instead of waiting for the next turn.
   const messages = useThrottledValue(props.messages, 1000);
+  const messageRefreshKey = `${messages.length}:${messages.at(-1)?.id ?? ""}`;
 
   useEffect(() => {
     if (!props.threadId) {
@@ -627,7 +630,7 @@ function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMes
     return () => {
       active = false;
     };
-  }, [props.threadId, messages.length]);
+  }, [props.threadId, messageRefreshKey]);
 
   useEffect(() => {
     if (!selectedId) {

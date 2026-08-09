@@ -2355,7 +2355,8 @@ body.resizing-right-panel {
 .taxonomy-cache-card,
 .taxonomy-payload-shape,
 .taxonomy-composition,
-.taxonomy-warning-card {
+.taxonomy-warning-card,
+.taxonomy-unclassified-card {
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -3829,6 +3830,31 @@ body:has(.settings-panel) .message-jump-rail {
   font-size: 12px;
 }
 
+.taxonomy-unclassified-card {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--accent-line));
+  background: color-mix(in srgb, var(--danger-soft) 45%, var(--accent-soft));
+}
+
+.taxonomy-unclassified-card strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.taxonomy-unclassified-card span {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.taxonomy-unclassified-card code {
+  overflow: hidden;
+  color: var(--danger-ink);
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Context Taxonomy v5: one readable body per wire part, with raw JSON loaded
    separately from compressed persistence only when the user opens it. */
 .taxonomy-pane {
@@ -3930,6 +3956,11 @@ body:has(.settings-panel) .message-jump-rail {
   border-radius: 8px;
   background: var(--surface);
   overflow: hidden;
+}
+
+.taxonomy-part-unclassified {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--line));
+  background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface));
 }
 
 .taxonomy-part > summary {

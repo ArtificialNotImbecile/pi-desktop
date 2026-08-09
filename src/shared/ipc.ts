@@ -569,7 +569,7 @@ export type ContextTaxonomyItem = {
   parts?: ContextTaxonomyPart[];
 };
 
-export type ContextTaxonomyPartKind = "text" | "reasoning" | "tool_call" | "tool_result" | "attachment" | "refusal" | "metadata";
+export type ContextTaxonomyPartKind = "text" | "reasoning" | "tool_call" | "tool_result" | "attachment" | "refusal" | "metadata" | "unclassified";
 
 export type ContextTaxonomyPart = {
   order: number;
@@ -598,6 +598,7 @@ export type ContextTaxonomyKind =
   | "attachment"
   | "provider_message"
   | "raw_payload"
+  | "unclassified"
   | "unknown";
 
 export type ContextTaxonomySegment = {

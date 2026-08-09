@@ -402,7 +402,7 @@ test.describe("Jasmine panels and tools", () => {
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
     await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload");
-    await expect(page.locator(".taxonomy-summary")).toContainText("schema v5");
+    await expect(page.locator(".taxonomy-summary")).toContainText("schema v6");
     await expect(page.locator(".taxonomy-summary")).toContainText("full sanitized payload sha256");
     await expect(page.locator(".taxonomy-warning-card")).toHaveCount(0);
     await expect(page.locator(".taxonomy-validation-card")).toContainText("Reasoning retention: Not required");
@@ -439,10 +439,10 @@ test.describe("Jasmine panels and tools", () => {
     await expect(systemTaxonomy.locator(".taxonomy-part", { hasText: "System prompt" })).toBeVisible();
     const projectContext = systemTaxonomy.locator(".taxonomy-part", { hasText: "Project context" });
     await expect(projectContext).toBeVisible();
-    await projectContext.locator("summary").click();
+    await expect(projectContext).toHaveAttribute("open", "");
     await expect(projectContext.locator(".markdown-message")).toContainText("Jasmine Agent Instructions");
     const skillInstructions = systemTaxonomy.locator(".taxonomy-part", { hasText: "Skill instructions" });
-    await skillInstructions.locator("summary").click();
+    await expect(skillInstructions).toHaveAttribute("open", "");
     await expect(skillInstructions.locator(".markdown-message")).toContainText("ui-ux-product-harness");
     const toolTaxonomy = page.locator(".taxonomy-item", { hasText: "Tool definition: read" });
     await expect(toolTaxonomy).toBeVisible();
@@ -452,9 +452,10 @@ test.describe("Jasmine panels and tools", () => {
     await expect(toolTaxonomy.locator(".taxonomy-part", { hasText: "Tool definition" })).toBeVisible();
     await expect(toolTaxonomy.locator("pre")).toContainText("Read file contents.");
     await expect(toolTaxonomy.locator("pre")).toContainText("parameters");
-    const optionsTaxonomy = page.locator(".taxonomy-item", { hasText: "Provider request options" });
+    const optionsTaxonomy = page.locator(".taxonomy-item", { hasText: "Request option: model" });
     await expect(optionsTaxonomy).toBeVisible();
-    await expect(optionsTaxonomy).toContainText("request_options");
+    await expect(optionsTaxonomy).toContainText("request_option");
+    await expect(optionsTaxonomy).toContainText("$.model");
     await expect(page.locator(".message-jump-rail")).toBeVisible();
     const railGutter = await page.evaluate(() => {
       const rail = document.querySelector(".message-jump-rail")?.getBoundingClientRect();
@@ -507,6 +508,44 @@ test.describe("Jasmine panels and tools", () => {
     expect(restored.detail.taxonomy.rawPayload).toBeUndefined();
     expect(restored.raw.text).toContain("\"tools\"");
     expect(restored.raw.sha256).toHaveLength(64);
+  });
+
+  test("context taxonomy refreshes after a slow loop and exposes ordered unclassified fields", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await expect(page.getByRole("complementary", { name: "Context taxonomy" })).toBeVisible();
+    await expect(page.locator(".panel-empty")).toContainText("No captured context taxonomy yet");
+
+    await page.locator(".rich-composer-editor").fill("show structured taxonomy with unclassified taxonomy slow response slow timeline");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".assistant-block.live-message")).toBeVisible();
+    // Let the 1s panel throttle settle on the stable streaming message id. The
+    // final persisted assistant has the same list length but a different id.
+    await page.waitForTimeout(1_250);
+    await waitForStableAssistant(page, "Slow response complete.");
+
+    // Exact regression: the just-finished run must appear without another user
+    // turn, panel reopen, or manual refresh.
+    await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload", { timeout: 5_000 });
+    await expect(page.locator(".taxonomy-summary")).toContainText("schema v6");
+    await expect(page.locator(".taxonomy-unclassified-card")).toContainText("1 unclassified payload field");
+    await expect(page.locator(".taxonomy-unclassified-card")).toContainText("$.future_context_envelope");
+
+    const wirePaths = await page.locator(".taxonomy-item-title small").allTextContents();
+    expect(wirePaths.findIndex((text) => text.includes("$.stream"))).toBeLessThan(wirePaths.findIndex((text) => text.includes("$.future_context_envelope")));
+    expect(wirePaths.findIndex((text) => text.includes("$.future_context_envelope"))).toBeLessThan(wirePaths.findIndex((text) => text.includes("$.tools[0]")));
+    const unclassified = page.locator(".taxonomy-item", { hasText: "Unclassified payload field: future_context_envelope" });
+    await expect(unclassified.locator(".taxonomy-item-details")).toHaveAttribute("open", "");
+    await expect(unclassified.locator(".taxonomy-part-unclassified")).toHaveAttribute("open", "");
+    await expect(unclassified).toContainText("classifier coverage fixture");
+
+    const systemMessage = page.locator(".taxonomy-item", { has: page.locator(".taxonomy-item-title strong", { hasText: "System prompt" }) });
+    const systemDetails = systemMessage.locator(".taxonomy-item-details");
+    await expect(systemDetails).not.toHaveAttribute("open", "");
+    await systemDetails.locator(":scope > summary").click();
+    await expect(systemDetails).toHaveAttribute("open", "");
+    await expect.poll(() => systemMessage.locator(".taxonomy-part").evaluateAll((parts) => parts.length > 0 && parts.every((part) => (part as HTMLDetailsElement).open))).toBe(true);
   });
 
   test("search shows an empty state for no results", async () => {

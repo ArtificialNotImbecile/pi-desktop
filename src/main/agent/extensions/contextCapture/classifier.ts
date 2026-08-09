@@ -17,6 +17,7 @@ type PayloadMessage = {
   index: number;
   role?: unknown;
   text: string;
+  promptText: string;
   payloadPath: string;
   parts: ContextTaxonomyPart[];
   syntheticToolResult: boolean;
@@ -37,73 +38,98 @@ export type ContextCacheUsage = {
   totalTokens?: unknown;
 };
 
+// These fields are provider request controls, not context-bearing structures.
+// Everything else is deliberately surfaced as `unclassified` so a new
+// provider shape can never disappear behind a generic "options" bucket.
+const PROVIDER_OPTION_KEYS = new Set([
+  "model", "stream", "temperature", "top_p", "topP", "max_tokens", "maxTokens",
+  "max_completion_tokens", "stop", "seed", "n", "presence_penalty", "frequency_penalty",
+  "logit_bias", "logprobs", "top_logprobs", "response_format", "tool_choice",
+  "parallel_tool_calls", "user", "service_tier", "stream_options", "reasoning_effort",
+  "reasoning", "thinking", "extra_body", "metadata", "store", "modalities", "prediction", "audio"
+]);
+
 export function providerPayloadToContextTaxonomy(payload: unknown, metadata: ContextCaptureMetadata): ContextTaxonomy {
   const sanitizedPayload = sanitizePayload(payload);
   const rawPayload = safeStringify(sanitizedPayload);
   const messages = extractPayloadMessages(sanitizedPayload);
   const tools = extractPayloadTools(sanitizedPayload);
-  const options = extractPayloadOptions(sanitizedPayload);
   const currentUserMessageIndex = findCurrentUserMessageIndex(messages, metadata.currentUserPromptText);
   const payloadShape = describePayloadShape(sanitizedPayload);
   let order = 1;
   const items: ContextTaxonomyItem[] = [];
 
-  for (const section of orderedPayloadSections(payloadShape, messages.length > 0, tools.length > 0)) {
-    if (section === "messages") {
-      for (const message of messages) {
-        const role = String(message.role ?? "unknown");
-        const { kind, confidence } = classifyMessage(message, currentUserMessageIndex);
-        items.push(taxonomyItem({
-          order: order++,
-          role,
-          source: "provider.payload.messages",
-          label: providerMessageLabel(message, kind),
-          kind,
-          confidence,
-          payloadPath: message.payloadPath,
-          text: message.text,
-          parts: message.parts
-        }));
+  const record = sanitizedPayload && typeof sanitizedPayload === "object" && !Array.isArray(sanitizedPayload)
+    ? sanitizedPayload as Record<string, unknown>
+    : null;
+  const messageKey = record && Array.isArray(record.messages) ? "messages" : record && Array.isArray(record.input) ? "input" : null;
+  const toolKey = record && Array.isArray(record.tools) ? "tools" : record && Array.isArray(record.toolDefinitions) ? "toolDefinitions" : null;
+
+  if (record) {
+    for (const [key, value] of Object.entries(record)) {
+      if (key === messageKey) {
+        for (const message of messages) {
+          const role = String(message.role ?? "unknown");
+          const { kind, confidence } = classifyMessage(message, currentUserMessageIndex);
+          items.push(taxonomyItem({
+            order: order++,
+            role,
+            source: "provider.payload.messages",
+            label: providerMessageLabel(message, kind),
+            kind,
+            confidence,
+            payloadPath: message.payloadPath,
+            text: message.text,
+            parts: message.parts
+          }));
+        }
+        continue;
       }
-      continue;
-    }
-    for (const tool of tools) {
+      if (key === toolKey) {
+        for (const tool of tools) {
+          items.push(taxonomyItem({
+            order: order++,
+            role: "tool_definition",
+            source: "provider.payload.tools",
+            label: tool.name ? `Tool definition: ${tool.name}` : `Tool definition ${tool.index + 1}`,
+            kind: "tool_definition",
+            confidence: 0.98,
+            payloadPath: tool.payloadPath,
+            text: tool.text,
+            parts: [taxonomyPart("metadata", "Tool definition", tool.text, tool.payloadPath)]
+          }));
+        }
+        continue;
+      }
+
+      const payloadPath = propertyPath("$", key);
+      const text = safeStringify(value);
+      const classified = PROVIDER_OPTION_KEYS.has(key);
       items.push(taxonomyItem({
         order: order++,
-        role: "tool_definition",
-        source: "provider.payload.tools",
-        label: tool.name ? `Tool definition: ${tool.name}` : `Tool definition ${tool.index + 1}`,
-        kind: "tool_definition",
-        confidence: 0.98,
-        payloadPath: tool.payloadPath,
-        text: tool.text
+        role: classified ? "request_option" : "unclassified",
+        source: classified ? "provider.payload.options" : "provider.payload.unclassified",
+        label: classified ? `Request option: ${key}` : `Unclassified payload field: ${key}`,
+        kind: classified ? "provider_options" : "unclassified",
+        confidence: classified ? 0.98 : 1,
+        payloadPath,
+        text,
+        parts: [taxonomyPart(classified ? "metadata" : "unclassified", classified ? `Option: ${key}` : `Unclassified: ${key}`, text, payloadPath)]
       }));
     }
-  }
-
-  if (options) {
-    items.push(taxonomyItem({
-      order: order++,
-      role: "request_options",
-      source: "provider.payload.options",
-      label: "Provider request options",
-      kind: "provider_options",
-      confidence: 0.96,
-      payloadPath: options.payloadPath,
-      text: options.text
-    }));
   }
 
   if (items.length === 0) {
     items.push(taxonomyItem({
       order: 1,
-      role: "payload",
-      source: "provider.payload",
-      label: "Provider request payload",
-      kind: "raw_payload",
+      role: "unclassified",
+      source: "provider.payload.unclassified",
+      label: "Unclassified provider payload root",
+      kind: "unclassified",
       confidence: 1,
       payloadPath: "$",
-      text: rawPayload
+      text: rawPayload,
+      parts: [taxonomyPart("unclassified", "Unclassified payload root", rawPayload, "$")]
     }));
   }
 
@@ -228,6 +254,20 @@ export function taxonomyItem(input: {
   };
 }
 
+function taxonomyPart(
+  kind: ContextTaxonomyPart["kind"],
+  title: string,
+  text: string,
+  payloadPath: string,
+  format: ContextTaxonomyPart["format"] = "json"
+): ContextTaxonomyPart {
+  return { order: 1, kind, title, text, format, tokenEstimate: estimateTokens(text), payloadPath };
+}
+
+function propertyPath(base: string, key: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? `${base}.${key}` : `${base}[${JSON.stringify(key)}]`;
+}
+
 export function withMissingContextTaxonomySegments(taxonomy: ContextTaxonomy): ContextTaxonomy {
   let changed = false;
   const items = taxonomy.items.map((item) => {
@@ -241,20 +281,6 @@ export function withMissingContextTaxonomySegments(taxonomy: ContextTaxonomy): C
     };
   });
   return changed ? { ...taxonomy, items } : taxonomy;
-}
-
-function orderedPayloadSections(shape: ContextPayloadShape | undefined, hasMessages: boolean, hasTools: boolean): Array<"messages" | "tools"> {
-  const sections: Array<"messages" | "tools"> = [];
-  const add = (section: "messages" | "tools", exists: boolean) => {
-    if (exists && !sections.includes(section)) sections.push(section);
-  };
-  for (const key of shape?.topLevelOrder ?? []) {
-    if (key === "messages" || key === "input") add("messages", hasMessages);
-    if (key === "tools" || key === "toolDefinitions") add("tools", hasTools);
-  }
-  add("messages", hasMessages);
-  add("tools", hasTools);
-  return sections;
 }
 
 function describePayloadShape(payload: unknown): ContextPayloadShape | undefined {
@@ -281,7 +307,8 @@ function nonNegativeNumber(value: unknown): number {
 
 export function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2);
+    const serialized = JSON.stringify(value, null, 2);
+    return typeof serialized === "string" ? serialized : String(value);
   } catch {
     return String(value);
   }
@@ -348,6 +375,7 @@ function extractPayloadMessages(payload: unknown): PayloadMessage[] {
       index,
       role: message.role,
       text: parts.map((part) => part.text).filter(Boolean).join("\n\n") || messageText(item),
+      promptText: messageText(message.content ?? message.text ?? ""),
       payloadPath,
       parts,
       syntheticToolResult: isStructuredToolResultAttachment(message)
@@ -376,17 +404,6 @@ function extractPayloadTools(payload: unknown): PayloadTool[] {
   });
 }
 
-function extractPayloadOptions(payload: unknown): { text: string; payloadPath: string } | null {
-  const candidate = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
-  if (!candidate) return null;
-  const options: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(candidate)) {
-    if (key === "messages" || key === "input" || key === "tools" || key === "toolDefinitions") continue;
-    options[key] = value;
-  }
-  return Object.keys(options).length > 0 ? { text: safeStringify(options), payloadPath: "$.{provider-options}" } : null;
-}
-
 function messageText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((item) => messageText(item)).filter(Boolean).join("\n");
@@ -406,52 +423,74 @@ function messageParts(message: Record<string, unknown>, payloadPath: string): Co
     parts.push({ ...input, order: parts.length + 1, tokenEstimate: estimateTokens(input.text) });
   };
 
-  const reasoning = typeof message.reasoning_content === "string"
-    ? message.reasoning_content
-    : typeof message.reasoning === "string"
-      ? message.reasoning
-      : "";
-  if (reasoning) {
-    push({ kind: "reasoning", title: "Reasoning", text: reasoning, format: "markdown", payloadPath: `${payloadPath}.reasoning_content` });
-  }
-
-  if (role === "tool") {
-    const text = messageText(message.content ?? message.text ?? "");
-    push({
-      kind: "tool_result",
-      title: "Tool result",
-      text,
-      format: looksLikeJsonText(text) ? "json" : "text",
-      payloadPath: `${payloadPath}.content`,
-      ...(typeof message.name === "string" ? { toolName: message.name } : {}),
-      ...(typeof message.tool_call_id === "string" ? { toolCallId: message.tool_call_id } : {})
-    });
-  } else {
-    appendContentParts(message.content ?? message.text, `${payloadPath}.content`, push);
-  }
-
-  if (typeof message.refusal === "string" && message.refusal) {
-    push({ kind: "refusal", title: "Refusal", text: message.refusal, format: "markdown", payloadPath: `${payloadPath}.refusal` });
-  }
-
-  if (Array.isArray(message.tool_calls)) {
-    message.tool_calls.forEach((call, index) => {
-      const record = call && typeof call === "object" ? call as Record<string, unknown> : {};
-      const fn = record.function && typeof record.function === "object" ? record.function as Record<string, unknown> : {};
-      push({
-        kind: "tool_call",
-        title: typeof fn.name === "string" ? `Tool call: ${fn.name}` : "Tool call",
-        text: safeStringify(call),
-        format: "json",
-        payloadPath: `${payloadPath}.tool_calls[${index}]`,
-        ...(typeof fn.name === "string" ? { toolName: fn.name } : {}),
-        ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
-      });
-    });
+  for (const [key, value] of Object.entries(message)) {
+    const path = propertyPath(payloadPath, key);
+    if (key === "role") {
+      push({ kind: "metadata", title: "Role", text: safeStringify(value), format: "json", payloadPath: path });
+      continue;
+    }
+    if (key === "reasoning_content" || key === "reasoning") {
+      if (typeof value === "string") {
+        if (value) push({ kind: "reasoning", title: "Reasoning", text: value, format: "markdown", payloadPath: path });
+      } else {
+        pushUnclassified(push, key, value, path);
+      }
+      continue;
+    }
+    if (key === "content" || key === "text") {
+      if (role === "tool") {
+        const text = messageText(value);
+        push({
+          kind: "tool_result",
+          title: "Tool result",
+          text,
+          format: looksLikeJsonText(text) ? "json" : "text",
+          payloadPath: path,
+          ...(typeof message.name === "string" ? { toolName: message.name } : {}),
+          ...(typeof message.tool_call_id === "string" ? { toolCallId: message.tool_call_id } : {})
+        });
+      } else {
+        appendContentParts(value, path, push);
+      }
+      continue;
+    }
+    if (key === "refusal") {
+      if (typeof value === "string") {
+        if (value) push({ kind: "refusal", title: "Refusal", text: value, format: "markdown", payloadPath: path });
+      } else {
+        pushUnclassified(push, key, value, path);
+      }
+      continue;
+    }
+    if (key === "tool_calls") {
+      if (Array.isArray(value)) {
+        value.forEach((call, index) => {
+          const record = call && typeof call === "object" ? call as Record<string, unknown> : {};
+          const fn = record.function && typeof record.function === "object" ? record.function as Record<string, unknown> : {};
+          push({
+            kind: "tool_call",
+            title: typeof fn.name === "string" ? `Tool call: ${fn.name}` : "Tool call",
+            text: safeStringify(call),
+            format: "json",
+            payloadPath: `${path}[${index}]`,
+            ...(typeof fn.name === "string" ? { toolName: fn.name } : {}),
+            ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
+          });
+        });
+      } else {
+        pushUnclassified(push, key, value, path);
+      }
+      continue;
+    }
+    if (key === "name" || key === "tool_call_id") {
+      push({ kind: "metadata", title: key === "name" ? "Tool name" : "Tool call id", text: safeStringify(value), format: "json", payloadPath: path });
+      continue;
+    }
+    pushUnclassified(push, key, value, path);
   }
 
   if (parts.length === 0) {
-    push({ kind: "metadata", title: "Message metadata", text: safeStringify(message), format: "json", payloadPath });
+    push({ kind: "unclassified", title: "Unclassified empty message", text: safeStringify(message), format: "json", payloadPath });
   }
   return parts;
 }
@@ -466,54 +505,104 @@ function appendContentParts(
     return;
   }
   if (!Array.isArray(content)) {
-    if (content !== undefined && content !== null) push({ kind: "metadata", title: "Content", text: safeStringify(content), format: "json", payloadPath });
+    appendContentEntry(content, payloadPath, push);
     return;
   }
   content.forEach((entry, index) => {
     const path = `${payloadPath}[${index}]`;
-    if (typeof entry === "string") {
-      if (entry) push({ kind: "text", title: "Text", text: entry, format: "markdown", payloadPath: path });
-      return;
-    }
-    const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
-    const type = String(record.type ?? "").toLowerCase();
-    const reasoning = typeof record.thinking === "string" ? record.thinking : typeof record.reasoning === "string" ? record.reasoning : "";
-    if ((type === "thinking" || type.includes("reason")) && reasoning) {
-      push({ kind: "reasoning", title: "Reasoning", text: reasoning, format: "markdown", payloadPath: path });
-      return;
-    }
-    if (type === "tool_use" || type === "toolcall" || type === "tool_call") {
+    appendContentEntry(entry, path, push);
+  });
+}
+
+function appendContentEntry(
+  entry: unknown,
+  payloadPath: string,
+  push: (input: Omit<ContextTaxonomyPart, "order" | "tokenEstimate">) => void
+): void {
+  if (typeof entry === "string") {
+    if (entry) push({ kind: "text", title: "Text", text: entry, format: "markdown", payloadPath });
+    return;
+  }
+  if (entry === undefined || entry === null) {
+    pushUnclassified(push, "content", entry, payloadPath);
+    return;
+  }
+  if (typeof entry !== "object" || Array.isArray(entry)) {
+    pushUnclassified(push, "content", entry, payloadPath);
+    return;
+  }
+
+  const record = entry as Record<string, unknown>;
+  const type = String(record.type ?? "").toLowerCase();
+  if (type === "tool_use" || type === "toolcall" || type === "tool_call") {
+    push({
+      kind: "tool_call",
+      title: typeof record.name === "string" ? `Tool call: ${record.name}` : "Tool call",
+      text: safeStringify(record),
+      format: "json",
+      payloadPath,
+      ...(typeof record.name === "string" ? { toolName: record.name } : {}),
+      ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
+    });
+    return;
+  }
+  if (type === "tool_result" || type === "toolresult") {
+    push({
+      kind: "tool_result",
+      title: "Tool result",
+      text: safeStringify(record),
+      format: "json",
+      payloadPath,
+      ...(typeof record.tool_use_id === "string" ? { toolCallId: record.tool_use_id } : {})
+    });
+    return;
+  }
+  if (isAttachmentBlock(record)) {
+    push({ kind: "attachment", title: "Attachment", text: safeStringify(record), format: "json", payloadPath });
+    return;
+  }
+
+  const reasoningBlock = type === "thinking" || type.includes("reason");
+  const textField = reasoningBlock
+    ? (typeof record.thinking === "string" ? "thinking" : typeof record.reasoning === "string" ? "reasoning" : typeof record.text === "string" ? "text" : null)
+    : typeof record.text === "string" ? "text" : null;
+  if (!textField) {
+    pushUnclassified(push, type || "content", record, payloadPath);
+    return;
+  }
+
+  // Preserve the object's own field order. `type` is represented by the
+  // classified part title; every other sibling is either classified or shown
+  // explicitly as unclassified (for example an Anthropic thinking signature).
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "type") continue;
+    const path = propertyPath(payloadPath, key);
+    if (key === textField && typeof value === "string") {
       push({
-        kind: "tool_call",
-        title: typeof record.name === "string" ? `Tool call: ${record.name}` : "Tool call",
-        text: safeStringify(record),
-        format: "json",
-        payloadPath: path,
-        ...(typeof record.name === "string" ? { toolName: record.name } : {}),
-        ...(typeof record.id === "string" ? { toolCallId: record.id } : {})
+        kind: reasoningBlock ? "reasoning" : "text",
+        title: reasoningBlock ? "Reasoning" : "Text",
+        text: value,
+        format: "markdown",
+        payloadPath: path
       });
-      return;
+    } else {
+      pushUnclassified(push, key, value, path);
     }
-    if (type === "tool_result" || type === "toolresult") {
-      push({
-        kind: "tool_result",
-        title: "Tool result",
-        text: safeStringify(record),
-        format: "json",
-        payloadPath: path,
-        ...(typeof record.tool_use_id === "string" ? { toolCallId: record.tool_use_id } : {})
-      });
-      return;
-    }
-    if (typeof record.text === "string") {
-      push({ kind: type.includes("reason") || type === "thinking" ? "reasoning" : "text", title: type === "thinking" ? "Reasoning" : "Text", text: record.text, format: "markdown", payloadPath: `${path}.text` });
-      return;
-    }
-    if (isAttachmentBlock(record)) {
-      push({ kind: "attachment", title: "Attachment", text: safeStringify(record), format: "json", payloadPath: path });
-      return;
-    }
-    push({ kind: "metadata", title: type ? `Content: ${type}` : "Content", text: safeStringify(record), format: "json", payloadPath: path });
+  }
+}
+
+function pushUnclassified(
+  push: (input: Omit<ContextTaxonomyPart, "order" | "tokenEstimate">) => void,
+  key: string,
+  value: unknown,
+  payloadPath: string
+): void {
+  push({
+    kind: "unclassified",
+    title: `Unclassified: ${key}`,
+    text: safeStringify(value),
+    format: "json",
+    payloadPath
   });
 }
 
@@ -541,7 +630,7 @@ function findCurrentUserMessageIndex(messages: PayloadMessage[], currentUserProm
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (!isRole(message, "user") || isSyntheticToolResultUserMessage(message)) continue;
-      if (messageMatchesCurrentPrompt(message.text, normalizedPrompt)) return message.index;
+      if (messageMatchesCurrentPrompt(message.promptText, normalizedPrompt)) return message.index;
     }
   }
 

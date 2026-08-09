@@ -4,6 +4,7 @@ import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, Cha
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
+import { CONTEXT_TAXONOMY_SCHEMA_VERSION } from "./extensions/contextCapture/schema.js";
 import { findGitBashPath, isWindowsBashLauncherPath } from "../utils/shellPaths.js";
 import { abortError, isAbortError, throwIfAborted } from "../utils/abort.js";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -176,7 +177,9 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }]
       };
     }
-    const structuredTaxonomy = lastUserText.toLowerCase().includes("structured taxonomy") ? mockStructuredTaxonomy(provider) : null;
+    const structuredTaxonomy = lastUserText.toLowerCase().includes("structured taxonomy")
+      ? mockStructuredTaxonomy(provider, lastUserText.toLowerCase().includes("unclassified taxonomy"))
+      : null;
     const mockTaxonomy = structuredTaxonomy ?? buildAssemblyTaxonomy({
       provider,
       systemPrompt,
@@ -639,6 +642,7 @@ function buildAssemblyTaxonomy(input: {
     model: input.provider.modelId,
     source: "jasmine-assembly",
     assemblyReason: input.reason,
+    payloadSchemaVersion: CONTEXT_TAXONOMY_SCHEMA_VERSION,
     items
   };
 }
@@ -687,7 +691,7 @@ function assemblyMessageKind(role: string): ContextTaxonomyKind {
   return role === "system" ? "system_prompt" : "conversation_history";
 }
 
-function mockStructuredTaxonomy(provider: RuntimeProviderConfig): ContextTaxonomy {
+function mockStructuredTaxonomy(provider: RuntimeProviderConfig, includeUnclassified = false): ContextTaxonomy {
   const systemText = [
     "You are Jasmine, a calm local-first personal AI assistant.",
     "<project_context>",
@@ -714,6 +718,7 @@ function mockStructuredTaxonomy(provider: RuntimeProviderConfig): ContextTaxonom
       { role: "user", content: "show structured taxonomy" }
     ],
     stream: true,
+    ...(includeUnclassified ? { future_context_envelope: { checkpoint: 3, note: "classifier coverage fixture" } } : {}),
     tools: [toolDefinition]
   };
   const taxonomy = withContextCacheMetrics(providerPayloadToContextTaxonomy(payload, {

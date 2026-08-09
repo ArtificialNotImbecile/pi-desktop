@@ -32,7 +32,7 @@ for (const target of [
 }
 
 const extensionModule = await import(pathToFileURL(path.join(packageDir, "dist", "index.js")).href);
-assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 5);
+assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 6);
 assert.equal(typeof extensionModule.createContextCaptureExtension, "function");
 assert.equal(typeof extensionModule.classifyTextSegments, "function");
 assert.equal(typeof extensionModule.default, "function");
@@ -73,7 +73,7 @@ sdkBus.emit("message_end", {
 });
 
 assert.equal(captured.length, 1);
-assert.equal(captured[0].payloadSchemaVersion, 5);
+assert.equal(captured[0].payloadSchemaVersion, 6);
 assert.equal(captured[0].provider, "deepseek");
 assert.equal(captured[0].model, "deepseek-v4-flash");
 assert.deepEqual(captured[0].payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
