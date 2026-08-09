@@ -57,6 +57,7 @@ import type {
   TodoAddRequest,
   TodoOpenFileRequest,
   ThreadActivePluginsUpdateRequest,
+  ThreadContextUsageRequest,
   ThreadDraftUpdateRequest,
   ThreadRenameRequest,
   WindowState,
@@ -89,6 +90,9 @@ const api: JasmineApi = {
   },
   updateThreadActivePlugins(request: ThreadActivePluginsUpdateRequest) {
     return ipcRenderer.invoke("threads:plugins:update", request);
+  },
+  getThreadContextUsage(request: ThreadContextUsageRequest) {
+    return ipcRenderer.invoke("threads:contextUsage:get", request);
   },
   listProjects() {
     return ipcRenderer.invoke("projects:list");

@@ -25,6 +25,12 @@ export const threadActivePluginsUpdateSchema = z.object({
   pluginIds: z.array(z.string().min(1)).max(6)
 });
 
+export const threadContextUsageRequestSchema = z.object({
+  threadId: z.string().min(1),
+  providerId: z.string().min(1).optional(),
+  modelId: z.string().min(1).optional()
+});
+
 export const projectCreateFromPathSchema = z.object({
   path: z.string().trim().min(1).max(1000)
 });

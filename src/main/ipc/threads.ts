@@ -1,8 +1,9 @@
 import { app, ipcMain } from "electron";
-import type { ChatMessage, ChatThread, MessageListRequest, ThreadActivePluginsUpdateRequest, ThreadCreateRequest, ThreadDraftUpdateRequest, ThreadRenameRequest } from "../../shared/ipc.js";
-import { messageListRequestSchema, threadActivePluginsUpdateSchema, threadCreateSchema, threadDraftUpdateSchema, threadIdSchema, threadIdsSchema, threadRenameSchema } from "../../shared/schemas.js";
+import type { ChatMessage, ChatThread, MessageListRequest, ThreadActivePluginsUpdateRequest, ThreadContextUsage, ThreadContextUsageRequest, ThreadCreateRequest, ThreadDraftUpdateRequest, ThreadRenameRequest } from "../../shared/ipc.js";
+import { messageListRequestSchema, threadActivePluginsUpdateSchema, threadContextUsageRequestSchema, threadCreateSchema, threadDraftUpdateSchema, threadIdSchema, threadIdsSchema, threadRenameSchema } from "../../shared/schemas.js";
 import type { IpcContext } from "./context.js";
 import { appendThreadSessionName, deleteOwnedPiSessionFile } from "../services/piSessions.js";
+import { getThreadPiContextUsage } from "../services/piContextUsage.js";
 
 export function registerThreadIpc(context: IpcContext): void {
   ipcMain.handle("threads:list", (): ChatThread[] => {
@@ -48,6 +49,10 @@ export function registerThreadIpc(context: IpcContext): void {
 
   ipcMain.handle("threads:plugins:update", (_event, request: ThreadActivePluginsUpdateRequest): ChatThread => {
     return context.getDatabase().updateThreadActivePlugins(threadActivePluginsUpdateSchema.parse(request));
+  });
+
+  ipcMain.handle("threads:contextUsage:get", (_event, request: ThreadContextUsageRequest): ThreadContextUsage => {
+    return getThreadPiContextUsage(context.getDatabase(), threadContextUsageRequestSchema.parse(request));
   });
 
   ipcMain.handle("messages:list", (_event, request: string | MessageListRequest): ChatMessage[] => {

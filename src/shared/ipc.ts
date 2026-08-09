@@ -1060,6 +1060,18 @@ export type MessageListRequest = {
   };
 };
 
+export type ThreadContextUsageRequest = {
+  threadId: string;
+  providerId?: string;
+  modelId?: string;
+};
+
+export type ThreadContextUsage = {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+};
+
 export type WindowState = {
   maximized: boolean;
 };
@@ -1102,6 +1114,7 @@ export type JasmineApi = {
   getThreadDraft(threadId: string): Promise<string>;
   updateThreadDraft(request: ThreadDraftUpdateRequest): Promise<void>;
   updateThreadActivePlugins(request: ThreadActivePluginsUpdateRequest): Promise<ChatThread>;
+  getThreadContextUsage(request: ThreadContextUsageRequest): Promise<ThreadContextUsage>;
   listProjects(): Promise<WorkspaceProject[]>;
   openProjectFolder(): Promise<WorkspaceProject | null>;
   createProjectFromPath(request: ProjectCreateFromPathRequest): Promise<WorkspaceProject>;

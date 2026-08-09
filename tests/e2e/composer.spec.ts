@@ -4,6 +4,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   RED_SQUARE_BASE64,
+  appendThreadPiCompaction,
   baseLaunchEnv,
   clickCenter,
   createExternalSkillFixture,
@@ -38,6 +39,7 @@ import {
   seedLargeThreadMessages,
   seedMarkdownThreadMessages,
   seedPiAgentPackageSettings,
+  seedThreadPiContextUsage,
   stableChatLayoutSnapshot,
   startEmptyThread,
   testProvider,
@@ -144,8 +146,8 @@ test.describe("Jasmine composer", () => {
   });
 
   test("composer toolbar stays compact and shows actual context usage", async () => {
-    const { page } = harness;
-    await page.evaluate(async () => {
+    const { page, userDataDir } = harness;
+    const thread = await page.evaluate(async () => {
       const provider = (await window.jasmine.listProviders())[0];
       await window.jasmine.updateProviderModel({
         providerId: provider.id,
@@ -153,25 +155,29 @@ test.describe("Jasmine composer", () => {
         contextWindow: 1000
       });
       await window.jasmine.updateActivitySettings({ enabled: true, paused: true });
+      return window.jasmine.createThread({ title: "Pi context usage" });
     });
+    await seedThreadPiContextUsage(userDataDir, thread.id, 420);
     await page.reload();
     await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Pi context usage/ }).click();
 
     await expect(page.locator(".thread-row.active").first()).toHaveClass(/active/);
     await expect(page.locator(".composer").getByRole("button", { name: "Tools" })).toBeEnabled();
-    await expect(page.locator(".composer .run-meter")).toContainText("/1k");
-    await expect(page.locator(".composer .run-meter")).not.toHaveText("0.2%");
+    await expect(page.locator(".composer .run-meter")).toHaveText("42.0%/1.0k");
+    await expect(page.locator(".composer .run-meter")).toHaveAttribute("title", "Pi context: 420 / 1,000 tokens");
     await expect(page.locator(".composer .activity-status-pill")).toHaveCount(0);
     await expectToolbarHasNoOverlap(page);
 
-    await startEmptyThread(page);
-    await expect(page.locator(".empty-state")).toBeVisible();
-    await expect(page.locator(".thread-row.active").first()).toHaveClass(/active/);
+    await page.locator(".rich-composer-editor").fill("context ".repeat(700));
+    await expect(page.locator(".composer .run-meter")).toHaveText("42.0%/1.0k");
     await expectToolbarHasNoOverlap(page);
 
-    await page.locator(".rich-composer-editor").fill("context ".repeat(700));
-    await expect(page.locator(".composer .run-meter")).toContainText("100%/1k");
-    await expectToolbarHasNoOverlap(page);
+    appendThreadPiCompaction(userDataDir, thread.id);
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Pi context usage/ }).click();
+    await expect(page.locator(".composer .run-meter")).toHaveText("?/1.0k");
   });
 
   test("typing a draft does not repaint loaded markdown history", async () => {

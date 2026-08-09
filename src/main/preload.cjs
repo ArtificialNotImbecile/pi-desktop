@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   updateThreadActivePlugins(request) {
     return ipcRenderer.invoke("threads:plugins:update", request);
   },
+  getThreadContextUsage(request) {
+    return ipcRenderer.invoke("threads:contextUsage:get", request);
+  },
   listProjects() {
     return ipcRenderer.invoke("projects:list");
   },

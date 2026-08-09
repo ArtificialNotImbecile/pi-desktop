@@ -25,6 +25,8 @@ import type {
 import type { RunState } from "../../types";
 import type { RightPanelMode, RightPanelTab } from "../../navigation/routes";
 import { useStableCallbacks } from "../../hooks/useStableCallbacks";
+import { useThreadContextUsage } from "../../hooks/useThreadContextUsage";
+import { useI18n } from "../../i18n";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -151,6 +153,7 @@ export function ChatPage(props: {
   onCloseRightPanel(tabId: string): void;
   onCollapseRightPanel(): void;
 }) {
+  const { language, t } = useI18n();
   const panelExpanded = props.rightPanelTabs.length > 0 && props.activeRightPanelTabId !== null && !props.collapsedRightPanel;
   // App recreates handler closures every render (each stream tick included);
   // these identity-stable wrappers keep the memoized Composer from reconciling.
@@ -162,16 +165,16 @@ export function ChatPage(props: {
     () => `${totalMessageCount} ${totalMessageCount === 1 ? "message" : "messages"}`,
     [totalMessageCount]
   );
-  // The live message grows every stream tick; quantizing its length keeps the
-  // context-meter estimate (and the memoized Composer receiving its strings)
-  // from recomputing per tick. 2048 chars ~= 512 tokens per step.
-  const lastMessageLengthStep = Math.ceil((props.messages.at(-1)?.content.length ?? 0) / 2048);
-  const contextUsage = useMemo(
-    () => estimateContextUsage(props.messages, totalMessageCount, props.draft, props.attachments, props.provider),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- props.messages is intentionally
-    // represented by (length, quantized last-message length) to bound stream-tick recompute.
-    [props.messages.length, lastMessageLengthStep, totalMessageCount, props.draft, props.attachments, props.provider]
-  );
+  const activeModel = props.provider?.models.find((model) => model.id === props.provider?.defaultModel);
+  const contextUsage = useThreadContextUsage({
+    threadId: props.activeThread?.id ?? null,
+    providerId: props.provider?.id ?? null,
+    modelId: activeModel?.id ?? null,
+    fallbackContextWindow: activeModel?.contextWindow ?? 128_000,
+    refreshKey: `${props.activeThread?.updatedAt ?? ""}:${props.messages.length}`,
+    runState: props.runState
+  });
+  const contextUsageDisplay = formatContextUsage(contextUsage, language, t);
   const queuedMessageCount = props.queueState.followUp.length + props.queueState.steering.length;
 
   useEffect(() => {
@@ -289,8 +292,8 @@ export function ChatPage(props: {
         activeRemoteConnection={props.activeRemoteConnection}
         toolsEnabled={props.toolsEnabled}
         reasoningEffort={props.reasoningEffort}
-        contextUsageLabel={contextUsage.label}
-        contextUsageTitle={contextUsage.title}
+        contextUsageLabel={contextUsageDisplay.label}
+        contextUsageTitle={contextUsageDisplay.title}
         skills={props.skills}
         inlineSkillChoices={props.inlineSkillChoices}
         selectedSkillIds={props.selectedSkillIds}
@@ -342,31 +345,24 @@ function clampRightPanelWidth(width: number, pageWidth: number) {
   return Math.round(Math.min(Math.max(240, pageWidth - 360), 720, Math.max(240, width)));
 }
 
-function estimateContextUsage(messages: ChatMessage[], totalMessageCount: number, draft: string, attachments: PickedPath[], provider: AiProvider | null): { label: string; title: string } {
-  const activeModel = provider?.models.find((model) => model.id === provider.defaultModel);
-  const contextWindow = activeModel?.contextWindow ?? 128_000;
-  const loadedMessageChars = messages.reduce((total, message) => total + message.content.length, 0);
-  const unloadedMessageCount = Math.max(0, totalMessageCount - messages.length);
-  const averageLoadedChars = messages.length > 0 ? loadedMessageChars / messages.length : 0;
-  const messageChars = loadedMessageChars + Math.round(averageLoadedChars * unloadedMessageCount);
-  const draftChars = draft.trim().length;
-  const attachmentTokens = attachments.reduce((total, attachment) => total + (attachment.isImage ? 768 : 64), 0);
-  const estimatedTokens = Math.ceil((messageChars + draftChars) / 4) + attachmentTokens;
-  const percent = contextWindow > 0 ? (estimatedTokens / contextWindow) * 100 : 0;
-  const windowLabel = formatContextWindow(contextWindow);
-  const label = estimatedTokens === 0
-    ? `0%/${windowLabel}`
-    : percent < 0.1
-      ? `<0.1%/${windowLabel}`
-      : `${Math.min(percent, 100).toFixed(percent < 10 ? 1 : 0)}%/${windowLabel}`;
+function formatContextUsage(
+  usage: { tokens: number | null; contextWindow: number; percent: number | null },
+  language: "en" | "zh",
+  t: (key: "composer.contextTitle", variables: { used: string; total: string }) => string
+): { label: string; title: string } {
+  const used = usage.tokens === null ? "?" : usage.tokens.toLocaleString(language === "zh" ? "zh-CN" : "en-US");
+  const total = usage.contextWindow.toLocaleString(language === "zh" ? "zh-CN" : "en-US");
+  const percent = usage.percent === null ? "?" : `${usage.percent.toFixed(1)}%`;
   return {
-    label,
-    title: `Estimated context: ${estimatedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
+    label: `${percent}/${formatPiTokens(usage.contextWindow)}`,
+    title: t("composer.contextTitle", { used, total })
   };
 }
 
-function formatContextWindow(contextWindow: number): string {
-  if (contextWindow >= 1_000_000) return `${Math.round(contextWindow / 1_000_000)}M`;
-  if (contextWindow >= 1000) return `${Math.round(contextWindow / 1000)}k`;
-  return String(contextWindow);
+function formatPiTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(count / 1_000_000)}M`;
 }

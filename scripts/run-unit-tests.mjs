@@ -18,6 +18,7 @@ const tasks = [
   { name: "database-smoke", steps: [["node", "--no-warnings", "tests/unit/database-smoke.mjs"]] },
   { name: "stream-delta", steps: [["node", "--no-warnings", "tests/unit/stream-delta.mjs"]] },
   { name: "pi-runtime-equivalence", steps: [["node", "--no-warnings", "tests/unit/pi-runtime-equivalence.mjs"]] },
+  { name: "pi-context-usage", steps: [["node", "--no-warnings", "tests/unit/pi-context-usage.mjs"]] },
   { name: "pi-session-import", steps: [["node", "--no-warnings", "tests/unit/pi-session-import.mjs"]] },
   { name: "chrome-cdp", steps: [["node", "--no-warnings", "tests/unit/chrome-cdp.mjs"]] },
   { name: "chrome-bridge", steps: [["node", "--no-warnings", "tests/unit/chrome-bridge.mjs"]] },

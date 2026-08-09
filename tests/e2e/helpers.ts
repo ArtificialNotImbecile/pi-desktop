@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -101,6 +102,65 @@ export async function readThreadPiSession(userDataDir: string, threadId: string)
   } finally {
     db.close();
   }
+}
+
+export async function seedThreadPiContextUsage(
+  userDataDir: string,
+  threadId: string,
+  totalTokens: number
+): Promise<void> {
+  const cwd = path.join(userDataDir, "scratch", "chats");
+  const sessionDir = path.join(userDataDir, "pi-agent", "sessions", "--e2e-context--");
+  await mkdir(cwd, { recursive: true });
+  await mkdir(sessionDir, { recursive: true });
+  const manager = SessionManager.create(cwd, sessionDir, { id: threadId });
+  manager.appendMessage({ role: "user", content: "context fixture prompt", timestamp: Date.now() });
+  manager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "context fixture response" }],
+    api: "openai-completions",
+    provider: "deepseek",
+    model: "deepseek-v4-flash",
+    usage: {
+      input: totalTokens,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    },
+    stopReason: "stop",
+    timestamp: Date.now()
+  });
+  const sessionFile = manager.getSessionFile();
+  if (!sessionFile) throw new Error("Context fixture session did not persist.");
+
+  const db = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"));
+  try {
+    db.prepare(`
+      UPDATE chat_threads
+      SET session_id = ?, session_file = ?, session_format_version = 3
+      WHERE id = ?
+    `).run(manager.getSessionId(), sessionFile, threadId);
+  } finally {
+    db.close();
+  }
+}
+
+export function appendThreadPiCompaction(userDataDir: string, threadId: string): void {
+  const db = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"), { readOnly: true });
+  let sessionFile = "";
+  try {
+    const row = db.prepare("SELECT session_file FROM chat_threads WHERE id = ?").get(threadId);
+    sessionFile = String(row?.session_file ?? "");
+  } finally {
+    db.close();
+  }
+  if (!sessionFile) throw new Error("Context fixture session binding is unavailable.");
+  const manager = SessionManager.open(sessionFile, path.dirname(sessionFile));
+  const firstEntry = manager.getBranch()[0];
+  if (!firstEntry) throw new Error("Context fixture session is empty.");
+  manager.appendCompaction("context fixture summary", firstEntry.id, 420);
 }
 
 export async function expectComposerDraft(page: Page, expected: string): Promise<void> {
