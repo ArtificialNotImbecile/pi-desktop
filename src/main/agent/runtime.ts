@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
+import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
@@ -12,6 +12,7 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import type { PermissionMode } from "../../shared/permissions.js";
 import type { PermissionApprovalRequest } from "./extensions/permissionGate/index.js";
+import type { FileChange, FileChangeCapture as PiFileChangeCapture, FileVersionMetadata } from "./extensions/fileChanges/index.js";
 
 export type AssistantReply = {
   content: string;
@@ -21,6 +22,7 @@ export type AssistantReply = {
   webSearchUsed: WebSearchResult[];
   contextTaxonomy?: ContextTaxonomy;
   contextTaxonomies?: ContextTaxonomy[];
+  fileChangeCaptures?: FileChangeCaptureInput[];
   generatedMessages?: RuntimeGeneratedMessage[];
 };
 
@@ -104,6 +106,7 @@ export type RuntimeOptions = {
   onUpdate?(update: RuntimeUpdate): void;
   onQueueReady?(controls: RuntimeQueueControls): void;
   onQueueUpdate?(queue: ChatQueueState): void;
+  onFileChangeCapture?(capture: FileChangeCaptureInput): void;
 };
 
 export async function generateAssistantReply(request: RuntimeChatRequest, provider: RuntimeProviderConfig, options: RuntimeOptions = {}): Promise<AssistantReply> {
@@ -121,6 +124,10 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     const mockQueue = createMockQueueControls(options);
     const imageCount = countModelVisibleImages(parsed.messages, request.attachments ?? [], parsed.content);
     const lastUserText = parsed.content || parsed.messages.at(-1)?.content || "";
+    const fileChangeCaptures = request.remoteConnection?.active
+      ? [unsupportedRemoteFileChangeCapture(request.remoteConnection.remotePath?.trim() || cwd, startedAt)]
+      : mockFileChangeCaptures(lastUserText, cwd, startedAt);
+    for (const capture of fileChangeCaptures) options.onFileChangeCapture?.(capture);
     const inlineSkillNames = (request.skillContext ?? [])
       .filter((skill) => (parsed.inlineSkillIds ?? []).includes(skill.id))
       .map((skill) => skill.name);
@@ -237,12 +244,18 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       webSearchUsed: request.webSearchContext ?? [],
       contextTaxonomy: mockTaxonomies.at(-1),
       contextTaxonomies: mockTaxonomies,
+      fileChangeCaptures,
       generatedMessages: mockQueue.generatedMessages
     };
   }
 
   const { runPiCodingAgentChat } = await import("./providers/piCodingAgent.js");
   const capturedTaxonomies: ContextTaxonomy[] = [];
+  const capturedFileChanges: FileChangeCaptureInput[] = [];
+  const remoteFileChangeCapture = request.remoteConnection?.active
+    ? unsupportedRemoteFileChangeCapture(request.remoteConnection.remotePath?.trim() || cwd, startedAt)
+    : null;
+  if (remoteFileChangeCapture) options.onFileChangeCapture?.(remoteFileChangeCapture);
   const result = await runPiCodingAgentChat({
     provider,
     messages: request.messages,
@@ -279,6 +292,14 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     onSessionEntriesLinked: request.onSessionEntriesLinked,
     onContextTaxonomy: (taxonomy) => {
       capturedTaxonomies.push(taxonomy);
+    },
+    fileChangeRoots: request.permissionProjectRoot
+      ? [request.permissionProjectRoot]
+      : [cwd],
+    onFileChanges: (capture) => {
+      const mapped = fileChangeCaptureFromPackage(capture, cwd);
+      capturedFileChanges.push(mapped);
+      options.onFileChangeCapture?.(mapped);
     }
   });
 
@@ -299,6 +320,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       })
     : undefined;
 
+  const fileChangeCaptures = remoteFileChangeCapture ? [remoteFileChangeCapture] : capturedFileChanges;
+
   return {
     content: normalizedResult.content,
     model: provider.modelId,
@@ -307,8 +330,191 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     webSearchUsed: mergeWebSearchResults(request.webSearchContext ?? [], result.webSearchUsed),
     contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
     contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
+    fileChangeCaptures,
     generatedMessages: result.generatedMessages
   };
+}
+
+function fileChangeCaptureFromPackage(capture: PiFileChangeCapture, cwd: string): FileChangeCaptureInput {
+  return {
+    producerCaptureId: capture.captureId,
+    schemaVersion: capture.schemaVersion,
+    startedAt: capture.startedAt,
+    completedAt: capture.capturedAt,
+    capturedAt: capture.capturedAt,
+    cwd,
+    roots: capture.coverage.roots.map((root) => root.path),
+    excludes: [...capture.coverage.excludes],
+    warnings: [...capture.coverage.warnings],
+    coverage: {
+      status: capture.coverage.status,
+      target: "local",
+      ...(capture.coverage.reason ? { reason: capture.coverage.reason } : {}),
+      bashCoverage: capture.coverage.bashCoverage,
+      bashInvoked: capture.coverage.bashInvoked,
+      omittedWarningCount: capture.coverage.omittedWarningCount,
+      omittedIssueCount: capture.coverage.omittedIssueCount,
+      rootDetails: capture.coverage.roots.map((root) => ({ ...root })),
+      issues: capture.coverage.issues.map((issue) => ({ ...issue })),
+      limits: { ...capture.coverage.limits }
+    },
+    changes: capture.changes.map(fileChangeFromPackage)
+  };
+}
+
+function fileChangeFromPackage(change: FileChange): FileChangeInput {
+  const before = packageRevision(change, change.before, "before");
+  const after = packageRevision(change, change.after, "after");
+  return {
+    status: change.status,
+    kind: change.kind === "text" || change.kind === "image" ? change.kind : "other",
+    path: change.absolutePath,
+    root: change.root,
+    relativePath: change.path,
+    ...(before ? { before } : {}),
+    ...(after ? { after } : {}),
+    ...(change.text?.unifiedDiff.text ? { unifiedDiff: change.text.unifiedDiff.text } : {}),
+    ...(change.text?.unifiedDiff.truncated ? { diffTruncated: true } : {}),
+    provenance: "observed-between-checkpoints"
+  };
+}
+
+function packageRevision(
+  change: FileChange,
+  metadata: FileVersionMetadata | null,
+  side: "before" | "after"
+): FileChangeRevision | undefined {
+  if (!metadata) return undefined;
+  const text = change.text?.[side] ?? null;
+  const image = change.image?.[side] ?? null;
+  return {
+    sha256: metadata.sha256,
+    size: metadata.size,
+    mode: metadata.mode,
+    ...(change.redacted ? { redacted: true } : {}),
+    ...(change.contentOmitted ? { contentTruncated: true } : {}),
+    ...(text ? {
+      encoding: "utf8" as const,
+      content: text.text,
+      ...(text.truncated ? { contentTruncated: true } : {})
+    } : {}),
+    ...(image ? {
+      encoding: "base64" as const,
+      content: image.base64,
+      mediaType: image.mediaType
+    } : {})
+  };
+}
+
+function unsupportedRemoteFileChangeCapture(cwd: string, startedAtMs: number): FileChangeCaptureInput {
+  const completedAt = new Date().toISOString();
+  return {
+    producerCaptureId: crypto.randomUUID(),
+    schemaVersion: 1,
+    startedAt: new Date(startedAtMs).toISOString(),
+    completedAt,
+    capturedAt: completedAt,
+    cwd,
+    roots: [],
+    excludes: [],
+    warnings: [],
+    coverage: {
+      status: "unsupported",
+      target: "remote",
+      reason: "Remote SSH filesystem snapshots are not supported in this release; no local paths were treated as remote evidence."
+    },
+    changes: []
+  };
+}
+
+function mockFileChangeCaptures(lastUserText: string, cwd: string, startedAtMs: number): FileChangeCaptureInput[] {
+  if (!lastUserText.toLowerCase().includes("show file changes")) return [];
+  const startedAt = new Date(startedAtMs).toISOString();
+  const completedAt = new Date().toISOString();
+  const root = path.resolve(cwd);
+  const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+3MxZ5wAAAABJRU5ErkJggg==";
+  return [{
+    schemaVersion: 1,
+    startedAt,
+    completedAt,
+    capturedAt: completedAt,
+    cwd: root,
+    roots: [root],
+    excludes: ["**/.git/**", "**/node_modules/**", "**/.pi/file-changes/**"],
+    warnings: [],
+    coverage: { status: "complete", target: "local", scannedFiles: 3, scannedBytes: 92 },
+    changes: [
+      {
+        status: "added",
+        kind: "text",
+        path: path.join(root, "src", "example.ts"),
+        root,
+        relativePath: "src/example.ts",
+        after: {
+          sha256: "a".repeat(64),
+          size: 23,
+          mode: "100644",
+          encoding: "utf8",
+          content: "export const ready = true;\n"
+        },
+        unifiedDiff: [
+          "diff --git a/src/example.ts b/src/example.ts",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/src/example.ts",
+          "@@ -0,0 +1 @@",
+          "+export const ready = true;"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      },
+      {
+        status: "modified",
+        kind: "text",
+        path: path.join(root, "src", "config.ts"),
+        root,
+        relativePath: "src/config.ts",
+        before: {
+          sha256: "b".repeat(64),
+          size: 26,
+          mode: "100644",
+          encoding: "utf8",
+          content: "export const mode = 'old';\n"
+        },
+        after: {
+          sha256: "c".repeat(64),
+          size: 26,
+          mode: "100755",
+          encoding: "utf8",
+          content: "export const mode = 'new';\n"
+        },
+        unifiedDiff: [
+          "diff --git a/src/config.ts b/src/config.ts",
+          "--- a/src/config.ts",
+          "+++ b/src/config.ts",
+          "@@ -1 +1 @@",
+          "-export const mode = 'old';",
+          "+export const mode = 'new';"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      },
+      {
+        status: "deleted",
+        kind: "image",
+        path: path.join(root, "assets", "old.png"),
+        root,
+        relativePath: "assets/old.png",
+        before: {
+          sha256: "d".repeat(64),
+          size: 70,
+          mode: "100644",
+          mediaType: "image/png",
+          encoding: "base64",
+          content: pngBase64
+        },
+        provenance: "observed-between-checkpoints"
+      }
+    ]
+  }];
 }
 
 function applyChromeTakeoverRuntimeEnv(chromeTakeover: RuntimeChatRequest["chromeTakeover"]): void {

@@ -371,16 +371,36 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Terminal", exact: true })).toBeVisible();
     await expect(page.locator(".right-panel-tab", { hasText: "Artifacts" })).toBeVisible();
-    await expect(page.locator(".panel-empty")).toContainText("No artifacts");
+    await expect(page.locator(".panel-empty")).toContainText("No file changes");
     await page.getByRole("tab", { name: "Terminal", exact: true }).click();
     await expect(page.getByRole("complementary", { name: "Terminal" })).toBeVisible();
     await page.getByRole("tab", { name: /Artifacts/ }).click();
     await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
 
-    await page.locator(".rich-composer-editor").fill("show write timeline");
+    await page.locator(".rich-composer-editor").fill("show file changes");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".right-panel-row", { hasText: "src/example.ts" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open added file src/example.ts" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open modified file src/config.ts" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open deleted file assets/old.png" })).toBeVisible();
+    await expect(page.locator(".artifact-status--added")).toContainText("A");
+    await expect(page.locator(".artifact-status--modified")).toContainText("M");
+    await expect(page.locator(".artifact-status--deleted")).toContainText("D");
+
+    await page.getByRole("button", { name: "Open modified file src/config.ts" }).click();
+    const textChangeDialog = page.getByRole("dialog", { name: "config.ts" });
+    await expect(textChangeDialog).toBeVisible();
+    await expect(textChangeDialog.getByRole("table", { name: "File revision metadata" })).toContainText("100644");
+    await expect(textChangeDialog.getByRole("table", { name: "File revision metadata" })).toContainText("100755");
+    await expect(textChangeDialog.getByRole("table", { name: "Unified file diff" })).toContainText("export const mode = 'old';");
+    await expect(textChangeDialog.getByRole("table", { name: "Unified file diff" })).toContainText("export const mode = 'new';");
+    await textChangeDialog.getByRole("button", { name: "Close" }).click();
+
+    await page.getByRole("button", { name: "Open deleted file assets/old.png" }).click();
+    const imageChangeDialog = page.getByRole("dialog", { name: "old.png" });
+    await expect(imageChangeDialog.getByRole("img", { name: "Before file snapshot" })).toBeVisible();
+    await expect(imageChangeDialog).toContainText("Before");
+    await imageChangeDialog.getByRole("button", { name: "Close" }).click();
 
     await page.getByRole("button", { name: "Open Context taxonomy" }).click();
     await expect(page.getByRole("complementary", { name: "Context taxonomy" })).toBeVisible();
@@ -523,6 +543,84 @@ test.describe("Jasmine panels and tools", () => {
     expect(restored.detail.taxonomy.rawPayload).toBeUndefined();
     expect(restored.raw.text).toContain("\"tools\"");
     expect(restored.raw.sha256).toHaveLength(64);
+  });
+
+  test("file change artifacts and lazy details restore after restart", async ({}, testInfo) => {
+    let { page } = harness;
+    const userDataDir = harness.userDataDir;
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("show file changes");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    const threadId = await page.evaluate(async () => (await window.jasmine.listThreads())[0]?.id ?? "");
+    const beforeRestart = await page.evaluate(async (id) => window.jasmine.listThreadArtifacts(id), threadId);
+    expect(beforeRestart.captures).toHaveLength(1);
+    expect(beforeRestart.captures[0].changes).toHaveLength(3);
+
+    await quitElectron(harness.app);
+    harness = await launchJasmine(`${testInfo.title.replace(/\W+/g, "-")}-restart`, userDataDir);
+    page = harness.page;
+    const restored = await page.evaluate(async (id) => {
+      const artifacts = await window.jasmine.listThreadArtifacts(id);
+      const change = artifacts.captures[0]?.changes.find((item) => item.relativePath === "src/config.ts");
+      if (!change) throw new Error("Restored file change missing.");
+      return {
+        artifacts,
+        detail: await window.jasmine.getThreadArtifactDetail(id, change.id)
+      };
+    }, threadId);
+    expect(restored.artifacts.captures).toHaveLength(1);
+    expect(restored.detail.change.unifiedDiff).toContain("export const mode = 'new';");
+
+    const artifactsPanel = page.getByRole("complementary", { name: "Artifacts" });
+    if (!(await artifactsPanel.isVisible())) await page.getByRole("button", { name: "Open Artifacts" }).click();
+    await expect(artifactsPanel).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open modified file src/config.ts" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Open modified file src/config.ts" }).click();
+    await expect(page.getByRole("dialog", { name: "config.ts" })).toBeVisible();
+    // Trigger the real New chat action while the modal is open. DOM activation
+    // mirrors a route change from another app surface without pointer events
+    // being intercepted by the dialog backdrop.
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>('.side-top button[aria-label="New chat"]');
+      if (!button) throw new Error("New chat action is unavailable.");
+      button.click();
+    });
+    await expect(page.getByRole("dialog", { name: "config.ts" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Open modified file src/config.ts" })).toHaveCount(0);
+    await expect(artifactsPanel.locator(".panel-empty")).toContainText("No file changes");
+    const isolationThread = await page.evaluate(async (firstThreadId) => {
+      const thread = (await window.jasmine.listThreads()).find((candidate) => candidate.id !== firstThreadId);
+      if (!thread) throw new Error("Artifact isolation thread was not created.");
+      return thread;
+    }, threadId);
+
+    const isolatedScratch = await page.evaluate(async ({ firstThreadId, secondThreadId }) => {
+      await window.jasmine.sendChatMessage({
+        threadId: secondThreadId,
+        content: "show file changes",
+        messages: [],
+        providerId: "deepseek",
+        modelId: "deepseek-v4-flash",
+        toolsEnabled: true
+      });
+      const [first, second, terminal] = await Promise.all([
+        window.jasmine.listThreadArtifacts(firstThreadId),
+        window.jasmine.listThreadArtifacts(secondThreadId),
+        window.jasmine.startTerminal({ threadId: secondThreadId })
+      ]);
+      await window.jasmine.stopTerminal({ sessionId: terminal.id });
+      return {
+        firstRoot: first.captures[0]?.roots[0],
+        secondRoot: second.captures[0]?.roots[0],
+        terminalCwd: terminal.cwd
+      };
+    }, { firstThreadId: threadId, secondThreadId: isolationThread.id });
+    expect(isolatedScratch.firstRoot).toBeTruthy();
+    expect(isolatedScratch.secondRoot).toBeTruthy();
+    expect(path.resolve(isolatedScratch.firstRoot)).not.toBe(path.resolve(isolatedScratch.secondRoot));
+    expect(path.resolve(isolatedScratch.terminalCwd)).toBe(path.resolve(isolatedScratch.secondRoot));
   });
 
   test("context taxonomy refreshes after a slow loop and exposes source-ordered taxonomy sections", async () => {

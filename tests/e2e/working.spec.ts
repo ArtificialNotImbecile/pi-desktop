@@ -28,7 +28,7 @@ test.describe("Working task center", () => {
         "working long response alpha",
         "working long response beta",
         "working wait for user gamma",
-        "working failure delta",
+        "show file changes working failure delta",
         "working long response epsilon"
       ];
       const projectIds = [projects[0].id, projects[0].id, projects[1].id, projects[1].id, projects[2].id];
@@ -58,6 +58,16 @@ test.describe("Working task center", () => {
     await expect(page.locator(".working-group.attention .working-task")).toHaveCount(2);
     await expect(page.locator(".working-task.status-waiting_user")).toContainText("Waiting for your answer");
     await expect(page.locator(".working-task.status-failed")).toContainText("Failed");
+    await expect.poll(() => page.evaluate(async (threadId) => (
+      await window.jasmine.listThreadArtifacts(threadId)
+    ).captures.length, setup.threads[3].id)).toBe(1);
+    const failedRunEvidence = await page.evaluate(async (threadId) => ({
+      artifacts: await window.jasmine.listThreadArtifacts(threadId),
+      messages: await window.jasmine.listMessages(threadId)
+    }), setup.threads[3].id);
+    expect(failedRunEvidence.artifacts.captures[0].changes.map((change) => change.status).sort()).toEqual(["added", "deleted", "modified"]);
+    expect(failedRunEvidence.artifacts.captures[0].messageId).toBeUndefined();
+    expect(failedRunEvidence.messages.some((message) => message.content.includes("filesystem changes were captured"))).toBe(false);
     await expect(page.locator(".working-group:not(.attention) .working-task.status-running")).toHaveCount(3);
     await expect(page.locator(".sidebar-feature-row").filter({ hasText: "Working" })).toContainText("4");
 

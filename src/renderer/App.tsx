@@ -388,12 +388,16 @@ function App(props: { initialAppSettings: AppSettings }) {
   }
 
   async function copyMessage(message: ChatMessage) {
-    await navigator.clipboard?.writeText(message.content).catch(() => undefined);
+    await getBridge().writeClipboardText(message.content).catch(async () => {
+      await navigator.clipboard?.writeText(message.content).catch(() => undefined);
+    });
     showToast(t("toast.copied"));
   }
 
   async function copyCode(code: string) {
-    await navigator.clipboard?.writeText(code).catch(() => undefined);
+    await getBridge().writeClipboardText(code).catch(async () => {
+      await navigator.clipboard?.writeText(code).catch(() => undefined);
+    });
     showToast(t("toast.codeCopied"));
   }
 

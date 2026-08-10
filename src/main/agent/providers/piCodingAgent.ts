@@ -1,6 +1,8 @@
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { createAgentSessionFromServices, createAgentSessionServices, defineTool, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ExtensionFactory, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory, LoadExtensionsResult, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, ThinkingContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, PermissionMode, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
@@ -9,6 +11,7 @@ import type { RuntimeGeneratedMessage, RuntimeQueueControls } from "../runtime.j
 import type { RuntimeSkillManifest } from "../../services/skillManifests.js";
 import { createSshCodingTools } from "../tools/sshCodingTools.js";
 import { createContextCaptureExtension } from "../extensions/contextCapture/index.js";
+import { createFileChangeExtension, type FileChangeCapture } from "../extensions/fileChanges/index.js";
 import { createJasminePermissionGateExtension, type PermissionApprovalRequest } from "../extensions/permissionGate/index.js";
 import { remoteLabel, sshExec, testRemoteConnection } from "../../services/remoteConnections.js";
 import { abortError } from "../../utils/abort.js";
@@ -48,6 +51,8 @@ type PiCodingAgentChatInput = {
   onQueueReady?(controls: RuntimeQueueControls): void;
   onQueueUpdate?(queue: ChatQueueState): void;
   onContextTaxonomy?(taxonomy: ContextTaxonomy): void;
+  fileChangeRoots?: string[];
+  onFileChanges?(capture: FileChangeCapture): void;
   sessionManager?: SessionManager;
   sessionMessageIds?: string[];
   currentMessageId?: string;
@@ -67,6 +72,102 @@ export type PiCodingAgentChatResult = {
   generatedMessages?: RuntimeGeneratedMessage[];
   liveMessages?: RuntimeGeneratedMessage[];
 };
+
+const JASMINE_FILE_CHANGES_PACKAGE_NAME = "@jasmine-ai/pi-file-changes";
+
+type FileChangesPackageManifest = {
+  packageRoot: string;
+  extensionPaths: string[];
+};
+
+/**
+ * Returns true only for an extension entry declared by the Jasmine file-change
+ * package that owns the candidate path. Package identity comes from the nearest
+ * package.json, never from a coincidental directory or file basename.
+ */
+export function isJasmineFileChangesPackageExtensionPath(
+  candidatePath: string,
+  baseDirectories: readonly string[] = [process.cwd()]
+): boolean {
+  return candidateFilesystemPaths(candidatePath, baseDirectories).some((candidate) => {
+    const manifest = findOwningFileChangesPackageManifest(candidate);
+    if (!manifest) return false;
+    const candidateKey = canonicalPathKey(candidate);
+    return manifest.extensionPaths.some((extensionPath) => canonicalPathKey(extensionPath) === candidateKey);
+  });
+}
+
+/**
+ * Accepts either the exact declared extension entry or its exact package root.
+ * The latter is the form Jasmine's temporary-package picker passes to Pi.
+ */
+export function isJasmineFileChangesPackageSourcePath(
+  candidatePath: string,
+  baseDirectories: readonly string[] = [process.cwd()]
+): boolean {
+  return candidateFilesystemPaths(candidatePath, baseDirectories).some((candidate) => {
+    const manifest = findOwningFileChangesPackageManifest(candidate);
+    if (!manifest || manifest.extensionPaths.length === 0) return false;
+    const candidateKey = canonicalPathKey(candidate);
+    return canonicalPathKey(manifest.packageRoot) === candidateKey
+      || manifest.extensionPaths.some((extensionPath) => canonicalPathKey(extensionPath) === candidateKey);
+  });
+}
+
+function candidateFilesystemPaths(candidatePath: string, baseDirectories: readonly string[]): string[] {
+  const value = candidatePath.trim();
+  if (!value || value.includes("\0")) return [];
+  const candidates = path.isAbsolute(value)
+    ? [path.resolve(value)]
+    : baseDirectories.map((baseDirectory) => path.resolve(baseDirectory, value));
+  return Array.from(new Set(candidates.map((candidate) => canonicalPathKey(candidate))))
+    .filter((candidate) => existsSync(candidate));
+}
+
+function findOwningFileChangesPackageManifest(candidatePath: string): FileChangesPackageManifest | null {
+  let directory: string;
+  try {
+    directory = statSync(candidatePath).isDirectory() ? candidatePath : path.dirname(candidatePath);
+  } catch {
+    return null;
+  }
+
+  while (true) {
+    const packageJsonPath = path.join(directory, "package.json");
+    if (existsSync(packageJsonPath)) {
+      let packageJson: Record<string, unknown>;
+      try {
+        packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+      if (packageJson.name !== JASMINE_FILE_CHANGES_PACKAGE_NAME) return null;
+      const pi = packageJson.pi && typeof packageJson.pi === "object"
+        ? packageJson.pi as Record<string, unknown>
+        : null;
+      const extensions = Array.isArray(pi?.extensions)
+        ? pi.extensions.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
+        : [];
+      return {
+        packageRoot: directory,
+        extensionPaths: extensions.map((entry) => path.resolve(directory, entry))
+      };
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+function canonicalPathKey(candidatePath: string): string {
+  let resolved = path.resolve(candidatePath);
+  try {
+    resolved = realpathSync.native(resolved);
+  } catch {
+    // Missing paths retain their normalized absolute spelling for comparison.
+  }
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
 
 export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promise<PiCodingAgentChatResult> {
   const historyMessages = historyBeforePrompt(input.messages, input.content, input.attachments);
@@ -185,14 +286,39 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       } : {})
     }));
   }
+  const suppressStandaloneFileChangesPackage = Boolean(input.onFileChanges);
+  const usesJasmineFileChanges = !remote && suppressStandaloneFileChangesPackage;
+  if (usesJasmineFileChanges && input.onFileChanges) {
+    extensionFactories.push(createFileChangeExtension({
+      roots: input.fileChangeRoots?.length
+        ? input.fileChangeRoots
+        : [input.permissionProjectRoot ?? cwd],
+      onCapture: input.onFileChanges,
+      persistManifest: false,
+      appendEntry: false
+    }));
+  }
+
+  const additionalExtensionPaths = Array.from(new Set(input.packageExtensionPaths ?? []))
+    .filter((extensionPath) => !suppressStandaloneFileChangesPackage
+      || !isJasmineFileChangesPackageSourcePath(extensionPath, [cwd, input.agentDir ?? cwd]));
 
   const resourceLoaderOptions = {
     appendSystemPromptOverride: (base: string[]) => [...promptAppends, ...base],
     noSkills: true,
-    ...(input.packageExtensionPaths?.length ? { additionalExtensionPaths: Array.from(new Set(input.packageExtensionPaths)) } : {}),
+    ...(additionalExtensionPaths.length ? { additionalExtensionPaths } : {}),
     ...(additionalSkillPaths.length ? { additionalSkillPaths } : {}),
     ...(input.promptTemplatePaths?.length ? { additionalPromptTemplatePaths: input.promptTemplatePaths } : {}),
-    ...(extensionFactories.length ? { extensionFactories } : {})
+    ...(extensionFactories.length ? { extensionFactories } : {}),
+    ...(suppressStandaloneFileChangesPackage ? {
+      extensionsOverride: (base: LoadExtensionsResult): LoadExtensionsResult => ({
+        ...base,
+        extensions: base.extensions.filter((extension) =>
+          extension.path.startsWith("<inline:")
+          || !isJasmineFileChangesPackageExtensionPath(extension.resolvedPath, [cwd, input.agentDir ?? cwd])
+        )
+      })
+    } : {})
   };
   const services = await createAgentSessionServices({
     cwd,

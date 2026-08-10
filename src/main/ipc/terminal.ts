@@ -22,7 +22,9 @@ export function registerTerminalIpc(context: IpcContext): void {
     const { resolveTerminalShell, startTerminalProcess } = await import("../services/terminal.js");
     const parsed = terminalStartSchema.parse(request);
     const shell = await resolveTerminalShell(context.getDatabase().getAppSettings().terminalShellPath);
-    const cwd = parsed?.projectId === undefined
+    const cwd = parsed?.threadId
+      ? context.getDatabase().getThreadCwd(parsed.threadId)
+      : parsed?.projectId === undefined
       ? parsed?.cwd
       : parsed.projectId === null
         ? context.getDatabase().getNeutralScratchCwd()

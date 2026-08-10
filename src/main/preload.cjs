@@ -327,6 +327,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   listThreadArtifacts(threadId) {
     return ipcRenderer.invoke("thread:artifacts:list", threadId);
   },
+  getThreadArtifactDetail(threadId, changeId) {
+    return ipcRenderer.invoke("thread:artifacts:detail", threadId, changeId);
+  },
   listThreadContextTaxonomy(threadId) {
     return ipcRenderer.invoke("thread:contextTaxonomy:list", threadId);
   },

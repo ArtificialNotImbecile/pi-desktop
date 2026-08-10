@@ -583,6 +583,7 @@ export type TerminalSession = {
 export type TerminalStartRequest = {
   cwd?: string;
   projectId?: string | null;
+  threadId?: string;
   cols?: number;
   rows?: number;
 };
@@ -738,18 +739,146 @@ export type ContextTaxonomy = {
   items: ContextTaxonomyItem[];
 };
 
+export type FileChangeStatus = "added" | "modified" | "deleted";
+export type FileChangeKind = "text" | "image" | "binary" | "other";
+export type FileChangeProvenance = "observed-between-checkpoints";
+
+export type FileChangeCoverageRoot = {
+  id: string;
+  path: string;
+  physicalPath: string;
+  source: "cwd" | "configured" | "write-target";
+  scope: "recursive" | "file";
+  filePath?: string;
+  requestedPath?: string;
+  requestedFilePath?: string;
+  bashCovered: boolean;
+};
+
+export type FileChangeCoverageIssue = {
+  code: string;
+  stage: "baseline" | "final";
+  rootId: string;
+  root: string;
+  path?: string;
+  message: string;
+};
+
+export type FileChangeCoverage = {
+  status: "complete" | "partial" | "failed" | "unsupported";
+  target: "local" | "remote";
+  reason?: string;
+  scannedFiles?: number;
+  scannedBytes?: number;
+  bashCoverage?: "agent-start-roots-only";
+  bashInvoked?: boolean;
+  omittedWarningCount?: number;
+  omittedIssueCount?: number;
+  rootDetails?: FileChangeCoverageRoot[];
+  issues?: FileChangeCoverageIssue[];
+  limits?: {
+    maxFiles: number;
+    maxTotalBytes: number;
+    maxContentBytes: number;
+    maxCapturedContentBytes: number;
+    maxRunCapturedContentBytes?: number;
+    maxRoots?: number;
+    maxManagedTargets?: number;
+    maxChanges?: number;
+    appliesPerRootSnapshot: true;
+  };
+};
+
+export type FileChangeRevision = {
+  sha256: string;
+  size: number;
+  mediaType?: string;
+  encoding?: "utf8" | "base64";
+  mode?: string;
+  content?: string;
+  contentTruncated?: boolean;
+  redacted?: boolean;
+};
+
+export type FileChangeInput = {
+  status: FileChangeStatus;
+  kind: FileChangeKind;
+  path: string;
+  root: string;
+  relativePath: string;
+  before?: FileChangeRevision;
+  after?: FileChangeRevision;
+  unifiedDiff?: string;
+  diffTruncated?: boolean;
+  provenance: FileChangeProvenance;
+};
+
+/** Host-neutral payload produced by the Pi file-change package. */
+export type FileChangeCaptureInput = {
+  producerCaptureId?: string;
+  schemaVersion: number;
+  startedAt: string;
+  completedAt: string;
+  /** Alias retained for package/protocol consumers that use a single timestamp. */
+  capturedAt?: string;
+  cwd: string;
+  roots: string[];
+  excludes: string[];
+  warnings: string[];
+  coverage: FileChangeCoverage;
+  changes: FileChangeInput[];
+};
+
+export type FileChangeRevisionSummary = Omit<FileChangeRevision, "content"> & {
+  contentAvailable: boolean;
+};
+
+export type FileChangeSummary = {
+  id: string;
+  captureId: string;
+  status: FileChangeStatus;
+  kind: FileChangeKind;
+  path: string;
+  root: string;
+  relativePath: string;
+  before?: FileChangeRevisionSummary;
+  after?: FileChangeRevisionSummary;
+  hasUnifiedDiff: boolean;
+  diffTruncated: boolean;
+  provenance: FileChangeProvenance;
+};
+
+export type FileChangeCaptureSummary = {
+  id: string;
+  producerCaptureId?: string;
+  threadId: string;
+  messageId?: string;
+  runId: string;
+  schemaVersion: number;
+  startedAt: string;
+  completedAt: string;
+  capturedAt: string;
+  cwd: string;
+  roots: string[];
+  excludes: string[];
+  warnings: string[];
+  coverage: FileChangeCoverage;
+  changes: FileChangeSummary[];
+};
+
+export type FileChangeDetail = Omit<FileChangeSummary, "before" | "after" | "hasUnifiedDiff"> & {
+  before?: FileChangeRevision;
+  after?: FileChangeRevision;
+  unifiedDiff?: string;
+};
+
 export type ThreadArtifactsResponse = {
   threadId: string;
-  artifacts: Array<{
-    id: string;
-    messageId: string;
-    kind: "file" | "image" | "web" | "code" | "other";
-    title: string;
-    description: string;
-    path?: string;
-    url?: string;
-    createdAt: string;
-  }>;
+  captures: FileChangeCaptureSummary[];
+};
+
+export type ThreadArtifactDetailResponse = {
+  change: FileChangeDetail;
 };
 
 export type ThreadContextTaxonomyResponse = {
@@ -1343,6 +1472,7 @@ export type JasmineApi = {
   readClipboardText(): Promise<string>;
   writeClipboardText(text: string): Promise<void>;
   listThreadArtifacts(threadId: string): Promise<ThreadArtifactsResponse>;
+  getThreadArtifactDetail(threadId: string, changeId: string): Promise<ThreadArtifactDetailResponse>;
   listThreadContextTaxonomy(threadId: string): Promise<ThreadContextTaxonomyResponse>;
   getContextTaxonomy(captureId: string): Promise<ContextTaxonomyDetailResponse>;
   getContextTaxonomyRaw(request: ContextTaxonomyRawRequest): Promise<ContextTaxonomyRawResponse>;

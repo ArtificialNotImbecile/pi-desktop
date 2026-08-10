@@ -394,6 +394,9 @@ const api: JasmineApi = {
   listThreadArtifacts(threadId: string) {
     return ipcRenderer.invoke("thread:artifacts:list", threadId);
   },
+  getThreadArtifactDetail(threadId: string, changeId: string) {
+    return ipcRenderer.invoke("thread:artifacts:detail", threadId, changeId);
+  },
   listThreadContextTaxonomy(threadId: string) {
     return ipcRenderer.invoke("thread:contextTaxonomy:list", threadId);
   },

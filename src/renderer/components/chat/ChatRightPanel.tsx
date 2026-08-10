@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import type { ChatMessage, ChatThread, ContextTaxonomy, TerminalSession, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../../shared/ipc";
+import type { ChatMessage, ChatThread, ContextTaxonomy, TerminalSession, ThreadContextTaxonomyResponse } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { ClipboardIcon, CopyIcon, CutIcon, FolderIcon, MinimizeIcon, PlusIcon, SelectAllIcon, SlidersIcon, TerminalIcon } from "../icons/Icons";
 import { Button, MenuItem, MenuSurface } from "../ui";
@@ -10,6 +10,7 @@ import { TaxonomyView } from "./ContextTaxonomyView";
 import { useI18n } from "../../i18n";
 import { useThrottledValue } from "../../hooks/useThrottledValue";
 import { rightPanelModeLabel, rightPanelModes, type RightPanelMode, type RightPanelTab } from "../../navigation/routes";
+import { ArtifactsPane } from "./ArtifactsPane";
 export type { RightPanelMode } from "../../navigation/routes";
 
 export function availableToAdd(openTabs: RightPanelTab[]): RightPanelMode[] {
@@ -137,7 +138,12 @@ export function ChatRightPanel(props: {
           {props.openTabs.map((tab) => (
             <section key={tab.id} className={`right-panel-pane ${props.activeTabId === tab.id ? "active" : ""}`} aria-hidden={props.activeTabId !== tab.id}>
               {tab.mode === "terminal" ? (
-                <TerminalPane active={props.activeTabId === tab.id && !props.collapsed} activeProjectId={props.activeProjectId} />
+                <TerminalPane
+                  key={`${tab.id}:${props.activeThread?.id ?? "no-thread"}`}
+                  active={props.activeTabId === tab.id && !props.collapsed}
+                  activeProjectId={props.activeProjectId}
+                  activeThreadId={props.activeThread?.id ?? null}
+                />
               ) : tab.mode === "artifacts" ? (
                 <ArtifactsPane threadId={props.activeThread?.id ?? null} messages={props.messages} />
               ) : (
@@ -214,7 +220,7 @@ function PanelButton(props: { mode: RightPanelMode; active: boolean; open: boole
   );
 }
 
-function TerminalPane(props: { active: boolean; activeProjectId: string | null }) {
+function TerminalPane(props: { active: boolean; activeProjectId: string | null; activeThreadId: string | null }) {
   const { t } = useI18n();
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [status, setStatus] = useState("Starting...");
@@ -331,7 +337,11 @@ function TerminalPane(props: { active: boolean; activeProjectId: string | null }
     setStatus("Starting...");
     try {
       const proposed = fitRef.current?.proposeDimensions();
-      const next = await getBridge().startTerminal({ projectId: props.activeProjectId, cols: proposed?.cols ?? 80, rows: proposed?.rows ?? 24 });
+      const next = await getBridge().startTerminal({
+        ...(props.activeThreadId ? { threadId: props.activeThreadId } : { projectId: props.activeProjectId }),
+        cols: proposed?.cols ?? 80,
+        rows: proposed?.rows ?? 24
+      });
       sessionRef.current = next;
       setSession(next);
       setStatus(next.shell.label);
@@ -494,102 +504,6 @@ function TerminalPane(props: { active: boolean; activeProjectId: string | null }
       </MenuSurface>
     </div>
   );
-}
-
-function ArtifactsPane(props: { threadId: string | null; messages: ChatMessage[] }) {
-  const [data, setData] = useState<ThreadArtifactsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  // Stream ticks replace the messages array ~22x/s; throttling the scan input
-  // keeps this pane at <= 1 recompute per second while a response runs.
-  const messages = useThrottledValue(props.messages, 1000);
-
-  useEffect(() => {
-    if (!props.threadId) {
-      setData(null);
-      return;
-    }
-    setLoading(true);
-    getBridge().listThreadArtifacts(props.threadId)
-      .then(setData)
-      .catch(() => setData({ threadId: props.threadId ?? "", artifacts: [] }))
-      .finally(() => setLoading(false));
-  }, [props.threadId, messages.length]);
-
-  const artifacts = useMemo(() => mergeArtifacts(data?.artifacts ?? [], artifactsFromMessages(messages)), [data, messages]);
-  return (
-    <div className="right-panel-list">
-      {loading ? <p className="panel-empty">Loading artifacts...</p> : artifacts.length === 0 ? (
-        <p className="panel-empty">No artifacts for this chat yet.</p>
-      ) : artifacts.map((artifact) => (
-        <article key={artifact.id} className="right-panel-row">
-          <strong>{artifact.title}</strong>
-          <span>{artifact.description}</span>
-          {(artifact.path || artifact.url) && <code>{artifact.path ?? artifact.url}</code>}
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function artifactsFromMessages(messages: ChatMessage[]): ThreadArtifactsResponse["artifacts"] {
-  return messages.flatMap((message) => {
-    const attachments = (message.attachments ?? []).map((attachment) => ({
-      id: `${message.id}:attachment:${attachment.path}`,
-      messageId: message.id,
-      kind: attachment.isImage ? "image" as const : "file" as const,
-      title: attachment.name,
-      description: attachment.path,
-      path: attachment.path,
-      createdAt: message.createdAt
-    }));
-    const web = (message.webSearchUsed ?? []).map((result) => ({
-      id: `${message.id}:web:${result.url}`,
-      messageId: message.id,
-      kind: "web" as const,
-      title: result.title,
-      description: result.snippet || result.url,
-      url: result.url,
-      createdAt: message.createdAt
-    }));
-    const files = (message.timeline ?? []).flatMap((item) => {
-      if (item.kind !== "tool_call" || !["write", "edit"].includes(item.toolName)) return [];
-      const artifactPath = pathFromArguments(item.argumentsJson);
-      if (!artifactPath) return [];
-      return [{
-        id: `${message.id}:tool:${item.id}`,
-        messageId: message.id,
-        kind: "file" as const,
-        title: artifactPath.split(/[\\/]/).pop() || artifactPath,
-        description: `${item.toolName} ${artifactPath}`,
-        path: artifactPath,
-        createdAt: message.createdAt
-      }];
-    });
-    return [...attachments, ...web, ...files];
-  });
-}
-
-function pathFromArguments(argumentsJson: string): string | null {
-  try {
-    const parsed = JSON.parse(argumentsJson) as Record<string, unknown>;
-    const value = parsed.path ?? parsed.filePath ?? parsed.targetPath ?? parsed.filename;
-    return typeof value === "string" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function mergeArtifacts(
-  left: ThreadArtifactsResponse["artifacts"],
-  right: ThreadArtifactsResponse["artifacts"]
-): ThreadArtifactsResponse["artifacts"] {
-  const seen = new Set<string>();
-  return [...left, ...right].filter((artifact) => {
-    const key = artifact.path ?? artifact.url ?? artifact.id;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMessage[] }) {

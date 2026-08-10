@@ -1,0 +1,72 @@
+{
+  "name": "@jasmine-ai/pi-file-changes",
+  "version": "0.1.0",
+  "description": "Deterministic filesystem change captures for Pi coding-agent runs.",
+  "keywords": [
+    "pi-package"
+  ],
+  "author": "ArtificialNotImbecile",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArtificialNotImbecile/pi-desktop.git",
+    "directory": "src/main/agent/extensions/fileChanges"
+  },
+  "bugs": {
+    "url": "https://github.com/ArtificialNotImbecile/pi-desktop/issues"
+  },
+  "homepage": "https://github.com/ArtificialNotImbecile/pi-desktop#readme",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./redaction": {
+      "types": "./dist/redaction.d.ts",
+      "import": "./dist/redaction.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT",
+  "sideEffects": false
+}

@@ -39,6 +39,12 @@ const tasks = [
     steps: [
       [npmCommand, "--prefix", "src/main/agent/extensions/permissionGate", "test"]
     ]
+  },
+  {
+    name: "file-changes",
+    steps: [
+      [npmCommand, "--prefix", "src/main/agent/extensions/fileChanges", "test"]
+    ]
   }
 ];
 

@@ -13,7 +13,15 @@ const rootDir = path.resolve(__dirname, "../..");
 const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
 
 const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
-const { buildTurnContext, createAskUserQuestionTool, createWebSearchTool, replaceWorkingDirectory, runPiCodingAgentChat } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
+const {
+  buildTurnContext,
+  createAskUserQuestionTool,
+  createWebSearchTool,
+  isJasmineFileChangesPackageExtensionPath,
+  isJasmineFileChangesPackageSourcePath,
+  replaceWorkingDirectory,
+  runPiCodingAgentChat
+} = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
 const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
@@ -1790,6 +1798,48 @@ try {
     "",
     "Mention the fixture package when it is relevant."
   ].join("\n"));
+
+  const fileChangesPackageDir = path.join(tempDir, "file-changes-pi-package");
+  const fileChangesExtensionPath = path.join(fileChangesPackageDir, "extension.js");
+  const undeclaredFileChangesPath = path.join(fileChangesPackageDir, "undeclared.js");
+  await mkdir(fileChangesPackageDir, { recursive: true });
+  await writeFile(path.join(fileChangesPackageDir, "package.json"), JSON.stringify({
+    name: "@jasmine-ai/pi-file-changes",
+    version: "1.0.0",
+    type: "module",
+    pi: { extensions: ["./extension.js"] }
+  }, null, 2));
+  await writeFile(fileChangesExtensionPath, [
+    "import { Type } from '@earendil-works/pi-ai';",
+    "export default function duplicateFileChangesPackage(pi) {",
+    "  pi.registerTool({",
+    "    name: 'duplicate_file_changes_marker',",
+    "    label: 'Duplicate file changes marker',",
+    "    description: 'Must be absent when Jasmine owns file-change tracking.',",
+    "    parameters: Type.Object({}),",
+    "    async execute() { return { content: [{ type: 'text', text: 'duplicate tracker loaded' }] }; }",
+    "  });",
+    "}"
+  ].join("\n"));
+  await writeFile(undeclaredFileChangesPath, "export default function undeclared() {}\n");
+
+  const lookalikeFileChangesPackageDir = path.join(tempDir, "file-changes-lookalike-package");
+  const lookalikeFileChangesExtensionPath = path.join(lookalikeFileChangesPackageDir, "extension.js");
+  await mkdir(lookalikeFileChangesPackageDir, { recursive: true });
+  await writeFile(path.join(lookalikeFileChangesPackageDir, "package.json"), JSON.stringify({
+    name: "@jasmine-ai/pi-file-changes-extra",
+    version: "1.0.0",
+    type: "module",
+    pi: { extensions: ["./extension.js"] }
+  }, null, 2));
+  await writeFile(lookalikeFileChangesExtensionPath, "export default function lookalike() {}\n");
+
+  assert.equal(isJasmineFileChangesPackageSourcePath(fileChangesPackageDir), true);
+  assert.equal(isJasmineFileChangesPackageExtensionPath(fileChangesExtensionPath), true);
+  assert.equal(isJasmineFileChangesPackageExtensionPath(undeclaredFileChangesPath), false);
+  assert.equal(isJasmineFileChangesPackageSourcePath(lookalikeFileChangesPackageDir), false);
+  assert.equal(isJasmineFileChangesPackageExtensionPath(lookalikeFileChangesExtensionPath), false);
+
   let pluginRecords = await setPluginPackageEnabled({ userDataDir }, fixturePackageDir, true);
   const enabledFixtureRecord = pluginRecords.find((plugin) => samePath(plugin.installedPath ?? plugin.source, fixturePackageDir));
   assert.equal(Boolean(enabledFixtureRecord?.enabled), true);
@@ -1832,6 +1882,129 @@ try {
   assert.equal(captures.length, captureCountBeforeFixturePlugin + 1);
   assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true);
   assert.match(JSON.stringify(captures.at(-1)), /Fixture skill from a plugin package/);
+
+  pluginRecords = await setPluginPackageEnabled({ userDataDir }, fileChangesPackageDir, true);
+  const enabledFileChangesRecord = pluginRecords.find((plugin) => samePath(plugin.installedPath ?? plugin.source, fileChangesPackageDir));
+  assert.equal(Boolean(enabledFileChangesRecord?.enabled), true);
+  const fileChangesDedupeCwd = path.join(tempDir, "file-changes-dedupe-cwd");
+  await mkdir(fileChangesDedupeCwd, { recursive: true });
+  await writeFile(path.join(fileChangesDedupeCwd, "baseline.txt"), "unchanged\n");
+  const settingsFileChangeCaptures = [];
+  const captureCountBeforeSettingsFileChangesDedupe = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "verify settings file-change package dedupe" }],
+    content: "verify settings file-change package dedupe",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    cwd: fileChangesDedupeCwd,
+    agentDir,
+    toolsEnabled: true,
+    onFileChanges: (capture) => settingsFileChangeCaptures.push(capture)
+  });
+  assert.equal(captures.length, captureCountBeforeSettingsFileChangesDedupe + 1);
+  assert.equal(settingsFileChangeCaptures.length, 1, "Jasmine must retain exactly one inline file-change tracker");
+  assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false);
+  assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true, "unrelated packages must remain loaded");
+
+  const remoteFileChangeCaptures = [];
+  const captureCountBeforeRemoteFileChangesDedupe = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "verify remote file-change package suppression" }],
+    content: "verify remote file-change package suppression",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    cwd: fileChangesDedupeCwd,
+    agentDir,
+    toolsEnabled: true,
+    remoteConnection: {
+      id: "remote-file-changes-dedupe",
+      name: "File changes dedupe remote",
+      host: "example.internal",
+      user: "tester",
+      remotePath: "/srv/jasmine",
+      source: "manual",
+      active: true,
+      status: "connected",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    onFileChanges: (capture) => remoteFileChangeCaptures.push(capture)
+  });
+  assert.equal(captures.length, captureCountBeforeRemoteFileChangesDedupe + 1);
+  assert.equal(remoteFileChangeCaptures.length, 0, "remote runs must not start a local filesystem tracker");
+  assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false, "remote runs must suppress the standalone local tracker package");
+  assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true);
+
+  pluginRecords = await setPluginPackageEnabled({ userDataDir }, fileChangesPackageDir, false);
+  const disabledFileChangesRecord = pluginRecords.find((plugin) => samePath(plugin.installedPath ?? plugin.source, fileChangesPackageDir));
+  assert.equal(Boolean(disabledFileChangesRecord && !disabledFileChangesRecord.enabled), true);
+  const temporaryFileChangesSources = await resolvePluginPackageRuntimeSources({ userDataDir }, [disabledFileChangesRecord.id]);
+  assert.equal(temporaryFileChangesSources.some((source) => samePackageSourcePath(source, fileChangesPackageDir, agentDir)), true);
+  const temporaryFileChangeCaptures = [];
+  const captureCountBeforeTemporaryFileChangesDedupe = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "verify temporary file-change package dedupe" }],
+    content: "verify temporary file-change package dedupe",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    cwd: fileChangesDedupeCwd,
+    agentDir,
+    toolsEnabled: true,
+    packageExtensionPaths: temporaryFileChangesSources,
+    onFileChanges: (capture) => temporaryFileChangeCaptures.push(capture)
+  });
+  assert.equal(captures.length, captureCountBeforeTemporaryFileChangesDedupe + 1);
+  assert.equal(temporaryFileChangeCaptures.length, 1);
+  assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false);
+  assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true);
 
   pluginRecords = await setPluginPackageEnabled({ userDataDir }, fixturePackageDir, false);
   const disabledFixtureRecord = pluginRecords.find((plugin) => samePath(plugin.installedPath ?? plugin.source, fixturePackageDir));
@@ -2266,6 +2439,51 @@ try {
     const systemPromptItem = mockReply.contextTaxonomy.items.find((item) => item.source === "jasmine.systemPrompt");
     assert.match(String(systemPromptItem?.text ?? ""), new RegExp(escapeRegExp(`Current working directory: ${scopedCwd.replace(/\\/g, "/")}`)));
     assert.equal((String(systemPromptItem?.text ?? "").match(/Current working directory:/g) ?? []).length, 1);
+
+    const mockProvider = {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    };
+    const successfulCaptures = [];
+    const artifactReply = await generateAssistantReply({
+      threadId: "artifact-callback-thread",
+      messages: [{ role: "user", content: "show file changes" }],
+      content: "show file changes",
+      attachments: [],
+      cwd: scopedCwd,
+      toolsEnabled: true
+    }, mockProvider, {
+      onFileChangeCapture: (capture) => successfulCaptures.push(capture)
+    });
+    assert.equal(successfulCaptures.length, 1);
+    assert.equal(successfulCaptures[0], artifactReply.fileChangeCaptures[0]);
+    assert.deepEqual(successfulCaptures[0].changes.map((change) => change.status), ["added", "modified", "deleted"]);
+
+    const failedCaptures = [];
+    await assert.rejects(generateAssistantReply({
+      threadId: "artifact-failure-callback-thread",
+      messages: [{ role: "user", content: "show file changes working failure" }],
+      content: "show file changes working failure",
+      attachments: [],
+      cwd: scopedCwd,
+      toolsEnabled: true
+    }, mockProvider, {
+      onFileChangeCapture: (capture) => failedCaptures.push(capture)
+    }), /Mock Working failure/);
+    assert.equal(failedCaptures.length, 1, "file evidence must escape a failed run through the callback");
+    assert.equal(failedCaptures[0].changes.length, 3);
   } finally {
     if (previousMockFlag === undefined) delete process.env.JASMINE_E2E_MOCK_AI;
     else process.env.JASMINE_E2E_MOCK_AI = previousMockFlag;

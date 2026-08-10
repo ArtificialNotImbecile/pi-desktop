@@ -14,6 +14,7 @@ Jasmine is an independent, open-source desktop GUI for the Pi coding agent, brin
 - **Desktop GUI for Pi** — use rich chat, attachments, Working tasks, memories, activity, and project context without leaving the desktop app.
 - **Pi Skills & Extensions** — work with reusable skills, prompt templates, Pi packages, MCP servers, and web access.
 - **Integrated Terminal** — run project terminals and remote shells alongside coding-agent conversations.
+- **Deterministic file changes** — inspect added, modified, and deleted files with unified text diffs and before/after image snapshots, including workspaces that are not Git repositories.
 - **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
 
 Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, remote hosts, and browser automation can send data outside the computer. Review each integration before enabling it.
@@ -27,6 +28,12 @@ Jasmine exposes each model request as a readable context taxonomy. The latest us
 ![Inspecting a real DeepSeek request in Context Taxonomy](docs/assets/context-taxonomy.gif)
 
 The example above uses two real model turns and opens the captured conversation context and provider request. See [reasoning context retention](docs/reasoning_context_retention.md) for the provider-specific DeepSeek and Kimi rules that determine which historical thinking blocks must be replayed.
+
+## File change artifacts
+
+Jasmine consumes the standalone [`@jasmine-ai/pi-file-changes`](src/main/agent/extensions/fileChanges/README.md) package through its host factory. The package compares explicit filesystem roots at the start and settled end of each Pi run, then emits a versioned record of net additions, modifications, and deletions. It never infers changes from model prose or shell command text, and it represents moves as delete plus add instead of guessing renames.
+
+The Artifacts panel stores each capture as a run-level observation ledger and lazily opens GitHub-style unified text diffs or bounded before/after image snapshots. Editing or retrying conversation messages does not erase earlier captures because it also does not roll back the filesystem. Files selected by sensitive-path or high-confidence-content rules retain their path, status, hash, size, and mode, while preview bytes and diffs are redacted. Failed runs keep any evidence already captured. Remote SSH snapshots are reported as unsupported in this release instead of treating local paths as remote evidence.
 
 ## Product tour
 
@@ -70,7 +77,7 @@ The example above uses two real model turns and opens the captured conversation 
 
 ## Install on Windows
 
-Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.2.0` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
+Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.3.0` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
 
 After installation, open **About** to check GitHub Releases, download an available update with visible progress, and restart Jasmine into the installer.
 

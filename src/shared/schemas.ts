@@ -10,6 +10,7 @@ export const threadCreateSchema = z.object({
 export const threadIdSchema = z.string().min(1);
 
 export const contextCaptureIdSchema = z.string().uuid();
+export const fileChangeIdSchema = z.string().uuid();
 
 export const contextTaxonomyRawRequestSchema = z.object({
   captureId: contextCaptureIdSchema,
@@ -446,6 +447,7 @@ export const workingViewUpdateSchema = z.object({
 export const terminalStartSchema = z.object({
   cwd: z.string().trim().max(1000).optional(),
   projectId: z.union([z.string().min(1), z.null()]).optional(),
+  threadId: threadIdSchema.optional(),
   cols: z.number().int().min(20).max(500).optional(),
   rows: z.number().int().min(4).max(200).optional()
 }).optional();

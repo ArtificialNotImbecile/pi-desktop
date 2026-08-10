@@ -1,21 +1,25 @@
 import { ipcMain } from "electron";
-import type { ChatMessage, ContextTaxonomy, ContextTaxonomyDetailResponse, ContextTaxonomyRawRequest, ContextTaxonomyRawResponse, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../shared/ipc.js";
+import type { ContextTaxonomy, ContextTaxonomyDetailResponse, ContextTaxonomyRawRequest, ContextTaxonomyRawResponse, ThreadArtifactDetailResponse, ThreadArtifactsResponse, ThreadContextTaxonomyResponse } from "../../shared/ipc.js";
 import { providerPayloadToContextTaxonomy, withMissingContextTaxonomySegments } from "../agent/extensions/contextCapture/classifier.js";
-import { contextCaptureIdSchema, contextTaxonomyRawRequestSchema, threadIdSchema } from "../../shared/schemas.js";
+import { contextCaptureIdSchema, contextTaxonomyRawRequestSchema, fileChangeIdSchema, threadIdSchema } from "../../shared/schemas.js";
 import type { StoredContextCapture } from "../db/repositories/contextCaptures.js";
 import type { IpcContext } from "./context.js";
-
-// Artifact data is derived from a bounded message window. Context captures live
-// in their own compressed table and are fetched independently/lazily.
-const RIGHT_PANEL_MESSAGE_WINDOW = 500;
 
 export function registerRightPanelIpc(context: IpcContext): void {
   ipcMain.handle("thread:artifacts:list", (_event, threadId: string): ThreadArtifactsResponse => {
     threadId = threadIdSchema.parse(threadId);
     return {
       threadId,
-      artifacts: collectArtifacts(context.getDatabase().listMessagesPage({ threadId, limit: RIGHT_PANEL_MESSAGE_WINDOW }))
+      captures: context.getDatabase().listFileChangeCaptures(threadId)
     };
+  });
+
+  ipcMain.handle("thread:artifacts:detail", (_event, threadId: string, changeId: string): ThreadArtifactDetailResponse => {
+    threadId = threadIdSchema.parse(threadId);
+    changeId = fileChangeIdSchema.parse(changeId);
+    const change = context.getDatabase().getFileChangeDetail(threadId, changeId);
+    if (!change) throw new Error("File change not found.");
+    return { change };
   });
 
   ipcMain.handle("thread:contextTaxonomy:list", (_event, threadId: string): ThreadContextTaxonomyResponse => {
@@ -52,50 +56,6 @@ export function registerRightPanelIpc(context: IpcContext): void {
     };
   });
 }
-
-function collectArtifacts(messages: ChatMessage[]): ThreadArtifactsResponse["artifacts"] {
-  const artifacts: ThreadArtifactsResponse["artifacts"] = [];
-  for (const message of messages) {
-    for (const attachment of message.attachments ?? []) {
-      artifacts.push({
-        id: `${message.id}:attachment:${attachment.path}`,
-        messageId: message.id,
-        kind: attachment.isImage ? "image" : "file",
-        title: attachment.name,
-        description: attachment.path,
-        path: attachment.path,
-        createdAt: message.createdAt
-      });
-    }
-    for (const result of message.webSearchUsed ?? []) {
-      artifacts.push({
-        id: `${message.id}:web:${result.url}`,
-        messageId: message.id,
-        kind: "web",
-        title: result.title,
-        description: result.snippet || result.url,
-        url: result.url,
-        createdAt: message.createdAt
-      });
-    }
-    for (const item of message.timeline ?? []) {
-      if (item.kind !== "tool_call") continue;
-      const path = pathFromArguments(item.argumentsJson);
-      if (!path || !["write", "edit"].includes(item.toolName)) continue;
-      artifacts.push({
-        id: `${message.id}:tool:${item.id}`,
-        messageId: message.id,
-        kind: "file",
-        title: path.split(/[\\/]/).pop() || path,
-        description: `${item.toolName} ${path}`,
-        path,
-        createdAt: message.createdAt
-      });
-    }
-  }
-  return dedupeArtifacts(artifacts);
-}
-
 function taxonomyFromCapture(capture: StoredContextCapture): ContextTaxonomy {
   const summary = capture.summary;
   let taxonomy: ContextTaxonomy | null = null;
@@ -136,24 +96,4 @@ function taxonomyFromCapture(capture: StoredContextCapture): ContextTaxonomy {
     ...(capture.metadata.cacheMetrics ? { cacheMetrics: capture.metadata.cacheMetrics } : {}),
     ...(summary.reasoningValidation ? { reasoningValidation: summary.reasoningValidation } : {})
   };
-}
-
-function pathFromArguments(argumentsJson: string): string | undefined {
-  try {
-    const parsed = JSON.parse(argumentsJson) as Record<string, unknown>;
-    const value = parsed.path ?? parsed.filePath ?? parsed.targetPath ?? parsed.filename;
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function dedupeArtifacts(artifacts: ThreadArtifactsResponse["artifacts"]): ThreadArtifactsResponse["artifacts"] {
-  const seen = new Set<string>();
-  return artifacts.filter((artifact) => {
-    const key = artifact.path ?? artifact.url ?? artifact.id;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }

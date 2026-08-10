@@ -17,7 +17,9 @@ try {
   const projects = await import("../../dist/main/main/db/repositories/projects.js");
   const messages = await import("../../dist/main/main/db/repositories/messages.js");
   const contextCaptures = await import("../../dist/main/main/db/repositories/contextCaptures.js");
+  const fileChanges = await import("../../dist/main/main/db/repositories/fileChanges.js");
   const migrations = await import("../../dist/main/main/db/migrations.js");
+  const schemas = await import("../../dist/main/shared/schemas.js");
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
   const workingTasks = await import("../../dist/main/main/db/repositories/workingTasks.js");
   const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
@@ -267,6 +269,9 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 32").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 33").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 34").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 35").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_change_captures'").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT permission_mode FROM app_settings WHERE id = 'default'").get().permission_mode, "ask");
     assert.equal(legacyDb.prepare("PRAGMA table_info(app_settings)").all().some((row) => row.name === "working_notification_mode"), true);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'working_tasks'").get().exists_flag, 1);
@@ -437,6 +442,283 @@ try {
     assert.ok(compressedBytes < Buffer.byteLength(completeRaw, "utf8") / 4, "repeated raw payload should be gzip compressed");
     legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'complete-capture-message'").run();
     assert.equal(contextCaptures.getContextCapture(legacyDb, completeCaptureId), null, "capture should cascade with its message");
+
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, run_id, role, content, created_at, timeline_json)
+      VALUES ('file-change-message', 'legacy-thread', 'file-change-run', 'assistant', 'changed files', ?, '[]')
+    `).run(timestamp);
+    const fileCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "file-change-run",
+      capture: {
+        producerCaptureId: "producer-capture-1",
+        schemaVersion: 1,
+        startedAt: "2026-08-10T01:02:03.000Z",
+        completedAt: "2026-08-10T01:02:04.000Z",
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: ["**/.git/**"],
+        warnings: ["A test warning."],
+        coverage: { status: "partial", target: "local", reason: "Fixture coverage.", scannedFiles: 3, bashCoverage: "agent-start-roots-only" },
+        changes: [
+          {
+            status: "modified",
+            kind: "text",
+            path: path.join(projectRoot, "z.txt"),
+            root: projectRoot,
+            relativePath: "z.txt",
+            before: { sha256: "a".repeat(64), size: 13, mediaType: "text/plain", encoding: "utf8", mode: "100644", content: "secret-before", redacted: true },
+            after: { sha256: "b".repeat(64), size: 12, mediaType: "text/plain", encoding: "utf8", mode: "100755", content: "secret-after" },
+            unifiedDiff: "secret-unified-diff",
+            provenance: "observed-between-checkpoints"
+          },
+          {
+            status: "deleted",
+            kind: "image",
+            path: path.join(projectRoot, "image.png"),
+            root: projectRoot,
+            relativePath: "image.png",
+            before: { sha256: "c".repeat(64), size: 3, mediaType: "image/png", encoding: "base64", content: "YWJj" },
+            provenance: "observed-between-checkpoints"
+          },
+          {
+            status: "added",
+            kind: "text",
+            path: path.join(projectRoot, "a.txt"),
+            root: projectRoot,
+            relativePath: "a.txt",
+            after: { sha256: "d".repeat(64), size: 8, mediaType: "text/plain", encoding: "utf8", mode: "100644", content: "new file" },
+            unifiedDiff: "@@ -0,0 +1 @@\n+new file",
+            provenance: "observed-between-checkpoints"
+          }
+        ]
+      }
+    });
+    assert.equal(fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "file-change-run",
+      capture: {
+        producerCaptureId: "producer-capture-1",
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local" },
+        changes: []
+      }
+    }), fileCaptureId, "producer capture persistence should be idempotent within a run");
+    assert.throws(() => fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "another-run",
+      capture: {
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local" },
+        changes: []
+      }
+    }), /same thread and run/);
+    legacyDb.prepare(`
+      INSERT INTO tool_runs (id, thread_id, kind, title, status, started_at)
+      VALUES ('failed-file-change-run', 'legacy-thread', 'provider_call', 'failed capture', 'error', ?)
+    `).run(timestamp);
+    const failedRunCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      runId: "failed-file-change-run",
+      capture: {
+        producerCaptureId: "failed-producer-capture",
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [],
+        excludes: [],
+        warnings: ["Run stopped after capture."],
+        coverage: { status: "partial", target: "local", reason: "Interrupted run." },
+        changes: []
+      }
+    });
+    const failedRunCapture = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread").find((capture) => capture.id === failedRunCaptureId);
+    assert.equal(failedRunCapture.messageId, undefined, "failed-run evidence must not inject a synthetic assistant message");
+    legacyDb.prepare("DELETE FROM file_change_captures WHERE id = ?").run(failedRunCaptureId);
+    assert.throws(() => fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "unsupported-file-change-run",
+      capture: {
+        schemaVersion: 2,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local" },
+        changes: []
+      }
+    }), /Unsupported file change capture schema version: 2/);
+
+    const ingestOversizedText = "t".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 1);
+    const ingestOversizedBase64 = "A".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 4);
+    const ingestOversizedDiff = "d".repeat(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS + 1);
+    const boundedCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "file-change-run",
+      capture: {
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local" },
+        changes: [{
+          status: "modified",
+          kind: "other",
+          path: path.join(projectRoot, "oversized.dat"),
+          root: projectRoot,
+          relativePath: "oversized.dat",
+          before: { sha256: "f".repeat(64), size: ingestOversizedText.length, encoding: "utf8", content: ingestOversizedText },
+          after: { sha256: "0".repeat(64), size: ingestOversizedBase64.length, encoding: "base64", content: ingestOversizedBase64 },
+          unifiedDiff: ingestOversizedDiff,
+          provenance: "observed-between-checkpoints"
+        }]
+      }
+    });
+    const boundedStored = legacyDb.prepare(`
+      SELECT before_content, before_content_truncated, after_content, after_content_truncated,
+             length(unified_diff) AS diff_chars, diff_truncated
+      FROM file_changes WHERE capture_id = ?
+    `).get(boundedCaptureId);
+    assert.equal(boundedStored.before_content, null);
+    assert.equal(boundedStored.before_content_truncated, 1);
+    assert.equal(boundedStored.after_content, null);
+    assert.equal(boundedStored.after_content_truncated, 1);
+    assert.equal(boundedStored.diff_chars, fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
+    assert.equal(boundedStored.diff_truncated, 1);
+    const boundedStoredChangeId = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread")
+      .find((capture) => capture.id === boundedCaptureId).changes[0].id;
+    const boundedStoredDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", boundedStoredChangeId);
+    assert.equal(Object.hasOwn(boundedStoredDetail.before, "content"), false);
+    assert.equal(boundedStoredDetail.before.contentTruncated, true);
+    assert.equal(Object.hasOwn(boundedStoredDetail.after, "content"), false);
+    assert.equal(boundedStoredDetail.after.contentTruncated, true);
+    assert.equal(boundedStoredDetail.unifiedDiff.length, fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
+    assert.equal(boundedStoredDetail.diffTruncated, true);
+    legacyDb.prepare("DELETE FROM file_change_captures WHERE id = ?").run(boundedCaptureId);
+
+    const captureList = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread");
+    assert.equal(captureList.length, 1);
+    assert.equal(captureList[0].id, fileCaptureId);
+    assert.equal(captureList[0].producerCaptureId, "producer-capture-1");
+    assert.equal(captureList[0].messageId, "file-change-message");
+    assert.equal(captureList[0].runId, "file-change-run");
+    assert.equal(captureList[0].capturedAt, "2026-08-10T01:02:04.000Z");
+    assert.deepEqual(captureList[0].coverage, { status: "partial", target: "local", reason: "Fixture coverage.", scannedFiles: 3, bashCoverage: "agent-start-roots-only" });
+    assert.deepEqual(captureList[0].changes.map((change) => change.relativePath), ["a.txt", "image.png", "z.txt"]);
+    const serializedList = JSON.stringify(captureList);
+    for (const contentValue of ["new file", "YWJj", "secret-before", "secret-after", "secret-unified-diff", "@@ -0,0 +1 @@"]) {
+      assert.equal(serializedList.includes(contentValue), false, "artifact list must never include detail content or diffs");
+    }
+    const [addedSummary, imageSummary, redactedSummary] = captureList[0].changes;
+    assert.equal(addedSummary.after.contentAvailable, true);
+    assert.equal(addedSummary.after.mode, "100644");
+    assert.equal(Object.hasOwn(addedSummary.after, "content"), false);
+    assert.equal(redactedSummary.before.redacted, true);
+    assert.equal(redactedSummary.before.contentAvailable, false);
+    assert.equal(redactedSummary.after.redacted, true);
+    assert.equal(redactedSummary.after.contentAvailable, false);
+    assert.equal(redactedSummary.hasUnifiedDiff, false, "a diff touching redacted content must not be retained");
+
+    schemas.fileChangeIdSchema.parse(addedSummary.id);
+    assert.throws(() => schemas.fileChangeIdSchema.parse(path.join(projectRoot, "a.txt")));
+    const addedDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", addedSummary.id);
+    assert.equal(addedDetail.after.content, "new file");
+    assert.equal(addedDetail.after.mode, "100644");
+    assert.equal(addedDetail.unifiedDiff, "@@ -0,0 +1 @@\n+new file");
+    const redactedDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", redactedSummary.id);
+    assert.equal(redactedDetail.before.redacted, true);
+    assert.equal(redactedDetail.before.mode, "100644");
+    assert.equal(redactedDetail.after.redacted, true);
+    assert.equal(redactedDetail.after.mode, "100755");
+    assert.equal(Object.hasOwn(redactedDetail.before, "content"), false);
+    assert.equal(Object.hasOwn(redactedDetail.after, "content"), false);
+    assert.equal(Object.hasOwn(redactedDetail, "unifiedDiff"), false);
+    const redactedStored = legacyDb.prepare("SELECT before_content, after_content, unified_diff FROM file_changes WHERE id = ?").get(redactedSummary.id);
+    assert.deepEqual({ ...redactedStored }, { before_content: null, after_content: null, unified_diff: null });
+
+    const overlongText = "x".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 1);
+    const overlongDiff = "d".repeat(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS + 1);
+    legacyDb.prepare("UPDATE file_changes SET after_content = ?, unified_diff = ? WHERE id = ?")
+      .run(overlongText, overlongDiff, addedSummary.id);
+    const boundedTextDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", addedSummary.id);
+    assert.equal(boundedTextDetail.after.content.length, fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS);
+    assert.equal(boundedTextDetail.after.contentTruncated, true);
+    assert.equal(boundedTextDetail.unifiedDiff.length, fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
+    assert.equal(boundedTextDetail.diffTruncated, true);
+
+    const overlongBase64 = "A".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 4);
+    legacyDb.prepare("UPDATE file_changes SET before_content = ? WHERE id = ?").run(overlongBase64, imageSummary.id);
+    const boundedImageDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", imageSummary.id);
+    assert.equal(Object.hasOwn(boundedImageDetail.before, "content"), false, "oversized base64 must not be returned as invalid partial data");
+    assert.equal(boundedImageDetail.before.contentTruncated, true);
+    assert.equal(fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", randomUUID()), null);
+    assert.equal(fileChanges.getFileChangeDetail(legacyDb, "another-thread", addedSummary.id), null, "detail must remain scoped to its thread");
+
+    legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'file-change-message'").run();
+    const unanchoredCapture = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread");
+    assert.equal(unanchoredCapture.length, 1, "run-level evidence should survive conversation branch pruning");
+    assert.equal(unanchoredCapture[0].messageId, undefined);
+    assert.ok(fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", addedSummary.id), "run-level detail should survive assistant deletion");
+
+    legacyDb.prepare(`
+      INSERT INTO chat_threads (id, title, created_at, updated_at)
+      VALUES ('file-change-cascade-thread', 'File change cascade', ?, ?)
+    `).run(timestamp, timestamp);
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, run_id, role, content, created_at, timeline_json)
+      VALUES ('file-change-cascade-message', 'file-change-cascade-thread', 'file-change-cascade-run', 'assistant', 'changed', ?, '[]')
+    `).run(timestamp);
+    const cascadeCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "file-change-cascade-thread",
+      messageId: "file-change-cascade-message",
+      runId: "file-change-cascade-run",
+      capture: {
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local" },
+        changes: [{
+          status: "added",
+          kind: "text",
+          path: path.join(projectRoot, "cascade.txt"),
+          root: projectRoot,
+          relativePath: "cascade.txt",
+          after: { sha256: "e".repeat(64), size: 1, encoding: "utf8", content: "x" },
+          provenance: "observed-between-checkpoints"
+        }]
+      }
+    });
+    const cascadeChangeId = fileChanges.listFileChangeCaptures(legacyDb, "file-change-cascade-thread")[0].changes[0].id;
+    legacyDb.prepare("DELETE FROM chat_threads WHERE id = 'file-change-cascade-thread'").run();
+    assert.equal(legacyDb.prepare("SELECT COUNT(*) AS count FROM file_change_captures WHERE id = ?").get(cascadeCaptureId).count, 0);
+    assert.equal(legacyDb.prepare("SELECT COUNT(*) AS count FROM file_changes WHERE id = ?").get(cascadeChangeId).count, 0);
 
     workingTasks.startWorkingTask(legacyDb, { requestId: "working-request", threadId: "legacy-thread", activity: "Preparing response" }, timestamp);
     assert.equal(workingTasks.listWorkingTasks(legacyDb, "2000-01-01T00:00:00.000Z").activeCount, 1);

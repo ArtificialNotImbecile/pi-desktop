@@ -19,6 +19,7 @@ import type {
   ChatSendResponse,
   ChatStreamMessage,
   ChatTimelineItem,
+  FileChangeCaptureInput,
   ReasoningEffort,
   SkillRecord,
   SkillReference,
@@ -775,8 +776,48 @@ function persistRuntimeGeneratedMessages(
       if (!message) continue;
       db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
     }
+    persistFileChangeCaptures(db, {
+      threadId: input.threadId,
+      messageId: lastAssistantMessage.id,
+      runId: input.runId,
+      captures: input.reply.fileChangeCaptures ?? []
+    });
     return lastAssistantMessage;
   });
+}
+
+function persistFileChangeCaptures(
+  db: JasmineDatabase,
+  input: { threadId: string; messageId?: string; runId: string; captures: FileChangeCaptureInput[] }
+): void {
+  for (const capture of input.captures) {
+    if (capture.changes.length === 0 && capture.coverage.status === "complete" && capture.warnings.length === 0) continue;
+    db.addFileChangeCapture({
+      threadId: input.threadId,
+      ...(input.messageId ? { messageId: input.messageId } : {}),
+      runId: input.runId,
+      capture
+    });
+  }
+}
+
+function persistFailedRunFileChanges(
+  db: JasmineDatabase,
+  input: {
+    threadId: string;
+    runId: string;
+    captures: FileChangeCaptureInput[];
+  }
+): void {
+  const captures = input.captures.filter((capture) => (
+    capture.changes.length > 0 || capture.coverage.status !== "complete" || capture.warnings.length > 0
+  ));
+  if (captures.length === 0) return;
+  db.runInTransaction(() => persistFileChangeCaptures(db, {
+    threadId: input.threadId,
+    runId: input.runId,
+    captures
+  }));
 }
 
 function withRunMetadata(timeline: ChatTimelineItem[], model: string, reasoningEffort?: ReasoningEffort): ChatTimelineItem[] {
@@ -966,6 +1007,7 @@ async function runTracedGeneration(
     working: WorkingRegistry;
   }
 ): Promise<AssistantReply> {
+  const observedFileChanges: FileChangeCaptureInput[] = [];
   return generateAssistantReply(input.request, input.runtimeProvider, {
     signal: input.signal,
     onUpdate: (update) => {
@@ -976,13 +1018,19 @@ async function runTracedGeneration(
     onQueueUpdate: (queue) => {
       emitQueueUpdate(input.sender, input.requestId, input.threadId, queue);
       input.working.queue(input.requestId, queueCount(queue));
-    }
+    },
+    onFileChangeCapture: (capture) => observedFileChanges.push(capture)
   }).catch((error: unknown) => {
     db.finishToolRun({
       id: input.traceId,
       status: "error",
       error: nonSecretError(error),
       elapsedMs: Date.now() - input.startedAt
+    });
+    persistFailedRunFileChanges(db, {
+      threadId: input.threadId,
+      runId: input.traceId,
+      captures: observedFileChanges
     });
     throw error;
   });

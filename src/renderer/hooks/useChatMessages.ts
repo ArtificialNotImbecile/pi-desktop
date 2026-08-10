@@ -159,6 +159,7 @@ export function useChatMessages(options: {
       activeThreadIdRef.current = threadId;
     }
     const requestId = crypto.randomUUID();
+    const existingMessageIds = new Set(messagesRef.current.map((message) => message.id));
 
     const requestContent = content.trim();
     const optimisticUser: ChatMessage = {
@@ -219,7 +220,7 @@ export function useChatMessages(options: {
       await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
       if (activeThreadIdRef.current === threadId) {
         const persistedMessages = await getBridge().listMessages({ threadId, limit: MESSAGE_PAGE_SIZE }).catch(() => null);
-        setMessages([...(persistedMessages ?? messages), errorMessageItem]);
+        setMessages(withTransientErrorFallback(persistedMessages, messages, existingMessageIds, errorMessageItem));
         scrollSoon();
       }
       return false;
@@ -230,6 +231,7 @@ export function useChatMessages(options: {
     const threadId = options.activeThread?.id;
     if (!threadId || isBusy(threadRunStates[threadId])) return;
     const requestId = crypto.randomUUID();
+    const existingMessageIds = new Set(messagesRef.current.map((message) => message.id));
 
     setMessages((current) => {
       if (messageId) {
@@ -275,8 +277,15 @@ export function useChatMessages(options: {
       clearThreadQueue(threadId);
       clearThreadRequestId(threadId);
       clearThreadRunModel(threadId);
+      await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
       if (activeThreadIdRef.current === threadId) {
-        setMessages((current) => [...current, createErrorMessage(threadId, message)]);
+        const persistedMessages = await getBridge().listMessages({ threadId, limit: MESSAGE_PAGE_SIZE }).catch(() => null);
+        setMessages(withTransientErrorFallback(
+          persistedMessages,
+          messagesRef.current,
+          existingMessageIds,
+          createErrorMessage(threadId, message)
+        ));
         scrollSoon();
       }
     }
@@ -286,6 +295,7 @@ export function useChatMessages(options: {
     const threadId = options.activeThread?.id;
     if ((!content.trim() && attachments.length === 0) || !threadId || isBusy(threadRunStates[threadId])) return false;
     const requestId = crypto.randomUUID();
+    const existingMessageIds = new Set(messagesRef.current.map((message) => message.id));
 
     setMessages((current) => {
       const targetIndex = current.findIndex((message) => message.id === messageId);
@@ -339,7 +349,12 @@ export function useChatMessages(options: {
       await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
       if (activeThreadIdRef.current === threadId) {
         const persistedMessages = await getBridge().listMessages({ threadId, limit: MESSAGE_PAGE_SIZE }).catch(() => null);
-        setMessages([...(persistedMessages ?? []), createErrorMessage(threadId, message)]);
+        setMessages(withTransientErrorFallback(
+          persistedMessages,
+          messagesRef.current,
+          existingMessageIds,
+          createErrorMessage(threadId, message)
+        ));
         scrollSoon();
       }
       return false;
@@ -723,6 +738,19 @@ function createErrorMessage(threadId: string, message: string): ChatMessage {
     createdAt: new Date().toISOString(),
     status: "error"
   };
+}
+
+function withTransientErrorFallback(
+  persistedMessages: ChatMessage[] | null,
+  fallbackMessages: ChatMessage[],
+  existingMessageIds: ReadonlySet<string>,
+  transientError: ChatMessage
+): ChatMessage[] {
+  const base = persistedMessages ?? fallbackMessages;
+  const persistedFailure = persistedMessages?.some((message) => (
+    !existingMessageIds.has(message.id) && message.role === "assistant" && message.status === "error"
+  ));
+  return persistedFailure ? base : [...base, transientError];
 }
 
 function sameLiveMessage(previous: ChatMessage, next: ChatMessage): boolean {

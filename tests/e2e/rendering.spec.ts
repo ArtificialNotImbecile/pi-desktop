@@ -171,7 +171,7 @@ test.describe("Jasmine message rendering", () => {
     await expect(repairedAssistant.locator(".tool-preamble-item")).toContainText("Mock reply from Jasmine.");
 
     await repairedAssistant.getByRole("button", { name: "Copy message" }).click();
-    await expect.poll(() => harness.app.evaluate(({ clipboard }) => clipboard.readText()))
+    await expect.poll(() => harness.page.evaluate(() => window.jasmine.readClipboardText()))
       .toBe("Visible final answer.");
     await repairedAssistant.getByRole("button", { name: "Message actions" }).click();
     await harness.page.locator(".message-menu").getByRole("button", { name: "Remember this" }).click();

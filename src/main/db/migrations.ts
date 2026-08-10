@@ -401,6 +401,84 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   markMigration(db, 33, "working notification preferences", now);
   addColumnIfMissing(db, "app_settings", "permission_mode", "TEXT NOT NULL DEFAULT 'ask'");
   markMigration(db, 34, "agent permission mode", now);
+  ensureFileChangeTables(db);
+  markMigration(db, 35, "deterministic file change captures", now);
+}
+
+function ensureFileChangeTables(db: SqlDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS file_change_captures (
+      id TEXT PRIMARY KEY,
+      producer_capture_id TEXT,
+      thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      message_id TEXT REFERENCES chat_messages(id) ON DELETE SET NULL,
+      run_id TEXT NOT NULL,
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      roots_json TEXT NOT NULL DEFAULT '[]',
+      excludes_json TEXT NOT NULL DEFAULT '[]',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      coverage_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS file_changes (
+      id TEXT PRIMARY KEY,
+      capture_id TEXT NOT NULL REFERENCES file_change_captures(id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+      status TEXT NOT NULL CHECK (status IN ('added', 'modified', 'deleted')),
+      kind TEXT NOT NULL CHECK (kind IN ('text', 'image', 'binary', 'other')),
+      path TEXT NOT NULL,
+      root TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      before_sha256 TEXT,
+      before_size INTEGER CHECK (before_size IS NULL OR before_size >= 0),
+      before_media_type TEXT,
+      before_encoding TEXT CHECK (before_encoding IS NULL OR before_encoding IN ('utf8', 'base64')),
+      before_mode TEXT,
+      before_content TEXT,
+      before_content_truncated INTEGER NOT NULL DEFAULT 0 CHECK (before_content_truncated IN (0, 1)),
+      before_redacted INTEGER NOT NULL DEFAULT 0 CHECK (before_redacted IN (0, 1)),
+      after_sha256 TEXT,
+      after_size INTEGER CHECK (after_size IS NULL OR after_size >= 0),
+      after_media_type TEXT,
+      after_encoding TEXT CHECK (after_encoding IS NULL OR after_encoding IN ('utf8', 'base64')),
+      after_mode TEXT,
+      after_content TEXT,
+      after_content_truncated INTEGER NOT NULL DEFAULT 0 CHECK (after_content_truncated IN (0, 1)),
+      after_redacted INTEGER NOT NULL DEFAULT 0 CHECK (after_redacted IN (0, 1)),
+      unified_diff TEXT,
+      diff_truncated INTEGER NOT NULL DEFAULT 0 CHECK (diff_truncated IN (0, 1)),
+      provenance TEXT NOT NULL CHECK (provenance = 'observed-between-checkpoints'),
+      UNIQUE(capture_id, ordinal),
+      CHECK (
+        (status = 'added' AND before_sha256 IS NULL AND before_size IS NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
+        OR (status = 'modified' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
+        OR (status = 'deleted' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NULL AND after_size IS NULL)
+      ),
+      CHECK (before_redacted = 0 OR before_content IS NULL),
+      CHECK (after_redacted = 0 OR after_content IS NULL)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_file_change_captures_thread_completed_at
+      ON file_change_captures(thread_id, completed_at);
+    CREATE INDEX IF NOT EXISTS idx_file_change_captures_message_id
+      ON file_change_captures(message_id);
+    CREATE INDEX IF NOT EXISTS idx_file_change_captures_run_id
+      ON file_change_captures(run_id) WHERE run_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_file_changes_capture_ordinal
+      ON file_changes(capture_id, ordinal);
+  `);
+  // Keep development databases usable when a pre-release v35 table shape was
+  // created before the protocol gained producer IDs and file modes.
+  addColumnIfMissing(db, "file_change_captures", "producer_capture_id", "TEXT");
+  addColumnIfMissing(db, "file_changes", "before_mode", "TEXT");
+  addColumnIfMissing(db, "file_changes", "after_mode", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_file_change_captures_run_producer
+      ON file_change_captures(run_id, producer_capture_id) WHERE producer_capture_id IS NOT NULL;
+  `);
 }
 
 function migrateInlineContextCaptures(db: SqlDatabase): void {

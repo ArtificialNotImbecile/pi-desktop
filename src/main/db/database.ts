@@ -13,6 +13,7 @@ import type {
   ChatTimelineItem,
   ChatThread,
   ContextTaxonomy,
+  FileChangeCaptureInput,
   MemoryRecord,
   MemoryReference,
   PickedPath,
@@ -159,6 +160,11 @@ import {
 } from "./repositories/contextCaptures.js";
 import type { StoredContextCapture } from "./repositories/contextCaptures.js";
 import {
+  addFileChangeCapture as addFileChangeCaptureRow,
+  getFileChangeDetail as getFileChangeDetailRow,
+  listFileChangeCaptures as listFileChangeCaptureRows
+} from "./repositories/fileChanges.js";
+import {
   clearCompletedWorking as clearCompletedWorkingRows,
   deleteExpiredWorking as deleteExpiredWorkingRows,
   listWorkingTasks as listWorkingTaskRows,
@@ -290,7 +296,7 @@ export class JasmineDatabase {
   getThreadCwd(threadId: string): string {
     const thread = this.getThread(threadId);
     if (!thread) throw new Error("Thread does not exist.");
-    return thread.projectId ? this.getProjectCwd(thread.projectId) : this.getNeutralScratchCwd();
+    return thread.projectId ? this.getProjectCwd(thread.projectId) : this.getNeutralScratchCwd(threadId);
   }
 
   getProjectCwd(projectId: string): string {
@@ -300,8 +306,10 @@ export class JasmineDatabase {
     return project.rootPath;
   }
 
-  getNeutralScratchCwd(): string {
-    const scratchCwd = path.join(app.getPath("userData"), "scratch", "chats");
+  getNeutralScratchCwd(threadId?: string): string {
+    const scratchRoot = path.join(app.getPath("userData"), "scratch", "chats");
+    const safeThreadId = threadId?.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const scratchCwd = safeThreadId ? path.join(scratchRoot, safeThreadId) : scratchRoot;
     mkdirSync(scratchCwd, { recursive: true });
     return scratchCwd;
   }
@@ -419,6 +427,23 @@ export class JasmineDatabase {
 
   getContextCapture(captureId: string): StoredContextCapture | null {
     return getContextCaptureRow(this.db, captureId);
+  }
+
+  addFileChangeCapture(input: {
+    threadId: string;
+    messageId?: string;
+    runId: string;
+    capture: FileChangeCaptureInput;
+  }): string {
+    return this.runInTransaction(() => addFileChangeCaptureRow(this.db, input));
+  }
+
+  listFileChangeCaptures(threadId: string) {
+    return listFileChangeCaptureRows(this.db, threadId);
+  }
+
+  getFileChangeDetail(threadId: string, changeId: string) {
+    return getFileChangeDetailRow(this.db, threadId, changeId);
   }
 
   getThreadMessageCount(threadId: string): number {
