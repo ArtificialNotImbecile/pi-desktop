@@ -35,6 +35,8 @@ initial crawl. At settlement it reads only paths that emitted events.
 This is fast and useful for Bash, but event evidence is intentionally weaker:
 
 - updates may contain only the after revision;
+- native backends may coalesce create and update events, so watcher-only
+  added/modified status is approximate without an initial crawl;
 - deleted paths may contain status/path only;
 - rename is represented as delete plus add when the backend reports it that
   way;

@@ -88,7 +88,7 @@ git push origin v0.3.2
 - Linux x64：AppImage 和 deb；
 - Apple Silicon macOS：arm64 DMG；
 
-每个任务均执行构建、单元测试、原生打包和 `test:packaged`。Windows 任务另外执行 Harness 检查与 E2E smoke。只有三个平台全部成功，Publish Job 才会继续。
+每个任务均执行构建、单元测试、原生打包和 `test:packaged`。Linux 中涉及 Electron 窗口的测试通过 `xvfb-run` 使用虚拟显示。Windows 任务另外执行 Harness 检查与 E2E smoke。只有三个平台全部成功，Publish Job 才会继续。
 
 Publish Job 会拒绝缺少或重复的目标产物，生成 `SHA256SUMS.txt`，然后创建或幂等更新对应 GitHub Release。不要在工作流仍运行时手工创建同名安装包或覆盖 Release Assets。
 

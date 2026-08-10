@@ -11,13 +11,12 @@ const rootDir = path.resolve(__dirname, "../..");
 const tempDir = path.join(os.tmpdir(), `jasmine-startup-bootstrap-${process.pid}`);
 const entryPath = path.join(tempDir, "dist", "main", "main", "main.js");
 const writerPath = path.join(tempDir, "write-entry.mjs");
-const executablePath = path.join(
-  rootDir,
-  "node_modules",
-  "electron",
-  "dist",
-  process.platform === "win32" ? "electron.exe" : "electron"
-);
+const electronDistribution = path.join(rootDir, "node_modules", "electron", "dist");
+const executablePath = process.platform === "win32"
+  ? path.join(electronDistribution, "electron.exe")
+  : process.platform === "darwin"
+    ? path.join(electronDistribution, "Electron.app", "Contents", "MacOS", "Electron")
+    : path.join(electronDistribution, "electron");
 
 await rm(tempDir, { recursive: true, force: true });
 await mkdir(tempDir, { recursive: true });

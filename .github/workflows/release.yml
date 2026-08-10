@@ -26,6 +26,7 @@ jobs:
             label: Windows x64
             os: windows-latest
             npm: npm.cmd
+            unit: npm.cmd run test:unit
             package: npx.cmd electron-builder --win nsis --x64
             smoke: npm.cmd run test:packaged
             assets: |
@@ -36,6 +37,7 @@ jobs:
             label: Linux x64
             os: ubuntu-latest
             npm: npm
+            unit: xvfb-run -a npm run test:unit
             package: npx electron-builder --linux AppImage deb --x64
             smoke: xvfb-run -a npm run test:packaged
             assets: |
@@ -45,14 +47,15 @@ jobs:
             label: macOS Apple Silicon
             os: macos-latest
             npm: npm
+            unit: npm run test:unit
             package: npx electron-builder --mac dmg --arm64
             smoke: npm run test:packaged
             assets: release/v*/Jasmine-*-mac-arm64.dmg
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -73,7 +76,7 @@ jobs:
         run: ${{ matrix.npm }} run build
 
       - name: Run unit tests
-        run: ${{ matrix.npm }} run test:unit
+        run: ${{ matrix.unit }}
 
       - name: Run Windows release checks
         if: matrix.id == 'windows-x64'
@@ -107,9 +110,9 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
