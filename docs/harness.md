@@ -36,7 +36,7 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `integrations.spec.ts`: MCP, remotes, skills, prompts, Pi packages, and retired built-in migration.
 - `rendering.spec.ts`: markdown, timelines, tool summaries, images, and actions.
 - `spotlight.spec.ts`: global Spotlight launcher.
-- `working.spec.ts`: task-state routing, controls, notifications, and card geometry.
+- `working.spec.ts`: task-state routing, controls, viewed-chat hidden/minimized notifications and unread fallback, and card geometry.
 - `permissions.spec.ts`: permission-mode persistence, project scope, approval decisions, sender binding, reload, and cancellation.
 
 ## Verification policy

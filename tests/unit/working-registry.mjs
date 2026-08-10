@@ -137,6 +137,14 @@ registry.finish("request-5", "completed");
 assert.equal(notifications.length, 3, "the currently viewed chat should not create a notification");
 assert.equal(db.tasks.get("request-5").unread, false, "the currently viewed chat should be treated as read");
 
+db.settings.workingNotifications = { mode: "background", includeDetails: true };
+background = true;
+registry.viewThread("thread-6");
+registry.start({ requestId: "request-6", threadId: "thread-6" });
+registry.finish("request-6", "completed");
+assert.equal(notifications.length, 4, "a viewed chat should notify after the window moves to the background");
+assert.equal(db.tasks.get("request-6").unread, true, "a viewed chat should retain its unread fallback while the window is hidden");
+
 const unavailableDb = new FakeDatabase();
 const unavailableRegistry = new WorkingRegistry(unavailableDb, {
   broadcast() {},

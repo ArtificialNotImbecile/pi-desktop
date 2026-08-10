@@ -87,6 +87,7 @@ export class WorkingRegistry {
   finish(requestId: string, status: Extract<WorkingTaskStatus, "completed" | "failed" | "cancelled">, activity?: string): void {
     this.lastActivities.delete(requestId);
     const current = this.snapshot().items.find((item) => item.requestId === requestId);
+    const viewedInForeground = current?.threadId === this.viewedThreadId && !this.host.isBackground();
     const finishedAt = new Date().toISOString();
     if (!this.db.updateWorkingTask({
       requestId,
@@ -94,7 +95,7 @@ export class WorkingRegistry {
       activity: activity ?? terminalActivity(status),
       finishedAt,
       queueCount: 0,
-      unread: status !== "cancelled" && current?.threadId !== this.viewedThreadId
+      unread: status !== "cancelled" && !viewedInForeground
     })) return;
     this.publish();
     if (status === "completed" || status === "failed") this.maybeNotify(requestId, status);
@@ -125,8 +126,10 @@ export class WorkingRegistry {
     const settings = this.db.getAppSettings().workingNotifications;
     if (settings.mode === "never") return;
     const task = this.snapshot().items.find((item) => item.requestId === requestId);
-    if (!task || task.threadId === this.viewedThreadId) return;
-    if (!shouldNotifyForMode(settings.mode, this.host.isBackground())) return;
+    if (!task) return;
+    const isBackground = this.host.isBackground();
+    if (task.threadId === this.viewedThreadId && !isBackground) return;
+    if (!shouldNotifyForMode(settings.mode, isBackground)) return;
     // Claim the request/status before constructing the OS notification. Main
     // process transitions are serialized, so this is the durable dedupe gate
     // even if two completion callbacks arrive back-to-back.

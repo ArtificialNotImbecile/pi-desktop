@@ -108,11 +108,11 @@ test.describe("Working task center", () => {
     await expect.poll(() => page.evaluate(async (threadId) => (await window.jasmine.listThreads()).find((item) => item.id === threadId)?.projectId ?? null, setup.threads[4].id)).toBe(null);
   });
 
-  test("persists notification preferences and restores the hidden window to the exact chat", async ({}, testInfo) => {
+  test("notifies for the viewed chat after hiding or minimizing and restores that chat", async ({}, testInfo) => {
     let { page } = harness;
 
     await openSettings(page);
-    await page.getByRole("combobox", { name: "Working task notification mode" }).selectOption("always");
+    await page.getByRole("combobox", { name: "Working task notification mode" }).selectOption("background");
     await page.getByRole("switch", { name: "Show Working task details in notifications" }).click();
     await saveSettings(page);
     await page.getByRole("button", { name: "Close settings" }).click();
@@ -121,7 +121,11 @@ test.describe("Working task center", () => {
       const thread = await window.jasmine.createThread({ title: "Private notification chat" });
       return thread;
     });
-    await page.getByRole("button", { name: /^Working/ }).click();
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Private notification chat/ }).click();
+    await expect.poll(() => navigationPath(page)).toContain(task.id);
+    await page.evaluate((threadId) => window.jasmine.updateWorkingView({ threadId }), task.id);
     await harness.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("index.html"))?.hide();
       (globalThis as any).__jasmineWorkingNotifications?.clear?.();
@@ -138,6 +142,7 @@ test.describe("Working task center", () => {
     }, task.id);
 
     await expect.poll(() => harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications?.list?.().length ?? 0)).toBe(1);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items.find((item) => item.requestId === "working-notification-e2e")?.unread)).toBe(true);
     const notification = await harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications.list()[0]);
     expect(notification.body).not.toContain("Private notification chat");
     await harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications.click(0));
@@ -145,12 +150,34 @@ test.describe("Working task center", () => {
     await expect.poll(() => navigationPath(page)).toContain(task.id);
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items.find((item) => item.requestId === "working-notification-e2e")?.unread)).toBe(false);
 
+    await harness.app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes("index.html"));
+      (globalThis as any).__jasmineWorkingNotifications?.clear?.();
+      win?.minimize();
+    });
+    await expect.poll(() => harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((win) => win.webContents.getURL().includes("index.html") && win.isMinimized()))).toBe(true);
+    await page.evaluate((threadId) => {
+      void window.jasmine.sendChatMessage({
+        requestId: "working-minimized-notification-e2e",
+        threadId,
+        content: "notification completion",
+        messages: [],
+        providerId: "deepseek",
+        modelId: "deepseek-v4-flash"
+      });
+    }, task.id);
+    await expect.poll(() => harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications?.list?.().length ?? 0)).toBe(1);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items.find((item) => item.requestId === "working-minimized-notification-e2e")?.unread)).toBe(true);
+    await harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications.click(0));
+    await expect.poll(() => harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((win) => win.webContents.getURL().includes("index.html") && !win.isMinimized()))).toBe(true);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items.find((item) => item.requestId === "working-minimized-notification-e2e")?.unread)).toBe(false);
+
     const userDataDir = harness.userDataDir;
     await quitElectron(harness.app);
     harness = await launchJasmine(`${testInfo.title.replace(/\W+/g, "-")}-restart`, userDataDir);
     page = harness.page;
     await openSettings(page);
-    await expect(page.getByRole("combobox", { name: "Working task notification mode" })).toHaveValue("always");
+    await expect(page.getByRole("combobox", { name: "Working task notification mode" })).toHaveValue("background");
     await expect(page.getByRole("switch", { name: "Show Working task details in notifications" })).not.toBeChecked();
   });
 
