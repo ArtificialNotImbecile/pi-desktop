@@ -102,6 +102,10 @@
     "productName": "Jasmine",
     "copyright": "Copyright © 2026 ArtificialNotImbecile",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/prebuilds/**"
+    ],
+    "afterPack": "./scripts/after-pack.mjs",
     "npmRebuild": false,
     "directories": {
       "output": "release/v${version}"
@@ -154,6 +158,7 @@
       "category": "Development",
       "synopsis": "The desktop app for Pi",
       "maintainer": "ArtificialNotImbecile <10048576+ArtificialNotImbecile@users.noreply.github.com>",
+      "executableName": "jasmine",
       "syncDesktopName": true,
       "artifactName": "Jasmine-${version}-linux-${arch}.${ext}"
     },

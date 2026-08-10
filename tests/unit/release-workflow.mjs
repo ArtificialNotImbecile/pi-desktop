@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,6 +11,7 @@ const releaseWorkflow = await readFile(path.join(rootDir, ".github", "workflows"
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "jasmine-release-workflow-"));
 const sourceDirectory = path.join(temporaryRoot, "source");
 const outputDirectory = path.join(temporaryRoot, "output");
+const mockMacApp = path.join(temporaryRoot, "Jasmine.app");
 const expectedNames = [
   `Jasmine-Setup-${version}-x64.exe`,
   `Jasmine-Setup-${version}-x64.exe.blockmap`,
@@ -23,11 +24,24 @@ const expectedNames = [
 try {
   assert.equal(manifest.desktopName, manifest.build.appId, "Linux desktopName must match the Electron app id");
   assert.ok(manifest.build.linux.maintainer, "Linux deb packaging requires a maintainer");
+  assert.equal(manifest.build.linux.executableName, "jasmine");
   assert.equal(manifest.build.linux.syncDesktopName, true);
+  assert.ok(manifest.build.asarUnpack.includes("node_modules/node-pty/prebuilds/**"));
+  assert.equal(manifest.build.afterPack, "./scripts/after-pack.mjs");
   assert.equal((releaseWorkflow.match(/--publish never/g) || []).length, 3,
     "all platform build jobs must disable electron-builder's implicit CI publishing");
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-x86_64.AppImage"));
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-amd64.deb"));
+
+  const mockSpawnHelper = path.join(mockMacApp, "Contents", "Resources", "app.asar.unpacked", "node_modules", "node-pty", "prebuilds", "darwin-arm64", "spawn-helper");
+  await mkdir(path.dirname(mockSpawnHelper), { recursive: true });
+  await writeFile(mockSpawnHelper, "mock helper\n", "utf8");
+  await chmod(mockSpawnHelper, 0o644);
+  const { afterPack } = await import("../../scripts/after-pack.mjs");
+  await afterPack({ electronPlatformName: "darwin", appOutDir: mockMacApp });
+  if (process.platform !== "win32") {
+    assert.equal((await stat(mockSpawnHelper)).mode & 0o777, 0o755);
+  }
 
   const validTag = spawnSync(process.execPath, ["scripts/validate-release-version.mjs"], {
     cwd: rootDir,
