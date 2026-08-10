@@ -30,6 +30,8 @@ import { generateAssistantReply } from "../agent/runtime.js";
 import type { AssistantReply, RuntimeGeneratedMessage, RuntimeQueueControls } from "../agent/runtime.js";
 import type { JasmineDatabase } from "../db/database.js";
 import { askUserQuestionInRenderer } from "./askUserQuestion.js";
+import { requestPermissionApprovalInRenderer } from "./permissionApproval.js";
+import { sanitizePermissionDisplay, type PermissionApprovalRequest } from "../agent/extensions/permissionGate/index.js";
 import { getRuntimeProvider } from "../services/providers.js";
 import { getJasminePiAgentDir } from "../services/piAgent.js";
 import { appendThreadSessionName, branchParentForMessage, prepareThreadPiSession } from "../services/piSessions.js";
@@ -41,7 +43,7 @@ import {
   resolvePluginSkillsForPrompt
 } from "../services/plugins.js";
 import { getPromptTemplatePaths } from "../services/promptTemplates.js";
-import { prepareSkillManifests } from "../services/skillManifests.js";
+import { prepareEnabledSkillManifests, prepareSkillManifests } from "../services/skillManifests.js";
 import { mergeRuntimeSkills, pluginReferenceIds, skillReferenceIds } from "../services/skillRuntimeContext.js";
 import { generateTitleWithProviderResult } from "../services/threadTitles.js";
 import { bridgeInfoFilePath, getChromeBridge } from "../services/chromeBridge.js";
@@ -836,6 +838,7 @@ async function buildChatTurnContext(
   const memoryUsed = input.memoryEnabled ? db.findRelevantMemories(input.queryText) : [];
   const selectedSkills = await db.getSkillsForPrompt(input.skillIds);
   const skillManifests = await prepareSkillManifests(mergeRuntimeSkills(selectedSkills, input.inlineSkills, input.inlinePluginSkills), userDataDir);
+  const availableSkillManifests = await prepareEnabledSkillManifests(await db.listAllSkills(), userDataDir);
   const remoteConnection = db.getActiveRemoteConnection();
   const webSearchSettings = db.getWebSearchSettings();
   const effectiveWebSearchEnabled = Boolean(webSearchSettings.enabled);
@@ -843,6 +846,9 @@ async function buildChatTurnContext(
   const packageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir });
   const chromeTakeover = await resolveChromeTakeoverRuntime(appSettings.chromeTakeover, userDataDir);
   const promptTemplatePaths = getPromptTemplatePaths(db, userDataDir);
+  const thread = db.getThread(input.threadId);
+  if (!thread) throw new Error("Thread does not exist.");
+  const permissionProjectRoot = thread.projectId ? db.getProjectCwd(thread.projectId) : null;
   const skillsUsed = selectedSkills.map((skill) => ({
     id: skill.id,
     name: skill.name,
@@ -858,12 +864,14 @@ async function buildChatTurnContext(
     appSettings,
     memoryUsed,
     skillManifests,
+    availableSkillPaths: availableSkillManifests.map((skill) => skill.skillFilePath),
     remoteConnection,
     webSearchSettings,
     effectiveWebSearchEnabled,
     packageSkillPaths,
     chromeTakeover,
     promptTemplatePaths,
+    permissionProjectRoot,
     skillsUsed,
     prefetchWebSearch,
     webSearchUsed
@@ -882,6 +890,7 @@ function runtimeContextOptions(
   return {
     memoryContext: turn.memoryUsed.map((memory) => memory.content),
     skillContext: turn.skillManifests,
+    availableSkillPaths: turn.availableSkillPaths,
     packageSkillPaths: turn.packageSkillPaths,
     chromeTakeover: turn.chromeTakeover,
     piAgentDir: getJasminePiAgentDir(turn.userDataDir),
@@ -897,6 +906,29 @@ function runtimeContextOptions(
       const response = await askUserQuestionInRenderer(sender, prompt, signal);
       if (!signal?.aborted) working.resumed(requestId);
       return response;
+    },
+    permissionMode: turn.appSettings.permissionMode,
+    permissionProjectRoot: turn.permissionProjectRoot,
+    requestPermissionApproval: async (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => {
+      working.waitingForUser(requestId);
+      try {
+        return await requestPermissionApprovalInRenderer(sender, {
+          threadId,
+          toolCallId: request.toolCallId,
+          toolName: request.toolName,
+          reason: request.reason,
+          summary: sanitizePermissionDisplay(request.summary),
+          target: request.target,
+          ...(request.targetLabel ? { targetLabel: sanitizePermissionDisplay(request.targetLabel, 256) } : {}),
+          cwd: sanitizePermissionDisplay(request.cwd, 4_000),
+          projectRoot: request.projectRoot ? sanitizePermissionDisplay(request.projectRoot, 4_000) : null,
+          ...(request.command ? { command: sanitizePermissionDisplay(request.command, 20_000) } : {}),
+          ...(request.path ? { path: sanitizePermissionDisplay(request.path, 4_000) } : {}),
+          ...(request.resolvedPath ? { resolvedPath: sanitizePermissionDisplay(request.resolvedPath, 4_000) } : {})
+        }, signal);
+      } finally {
+        if (!signal?.aborted) working.resumed(requestId);
+      }
     },
     promptTemplatePaths: turn.promptTemplatePaths,
     remoteConnection: turn.remoteConnection

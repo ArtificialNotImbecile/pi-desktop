@@ -79,15 +79,6 @@ contextBridge.exposeInMainWorld("jasmine", {
     ipcRenderer.on("working:navigate", listener);
     return () => ipcRenderer.removeListener("working:navigate", listener);
   },
-  getTodoSnapshot() {
-    return ipcRenderer.invoke("todos:snapshot");
-  },
-  addTodo(request) {
-    return ipcRenderer.invoke("todos:add", request);
-  },
-  openTodoFile(request) {
-    return ipcRenderer.invoke("todos:openFile", request);
-  },
   listMessages(request) {
     return ipcRenderer.invoke("messages:list", request);
   },
@@ -117,6 +108,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   },
   answerAskUserQuestion(request) {
     return ipcRenderer.invoke("askUserQuestion:answer", request);
+  },
+  answerPermissionApproval(request) {
+    return ipcRenderer.invoke("permissionApproval:answer", request);
   },
   onChatStream(callback) {
     const listener = (_event, payload) => callback(payload);
@@ -276,6 +270,33 @@ contextBridge.exposeInMainWorld("jasmine", {
   },
   updateAppSettings(request) {
     return ipcRenderer.invoke("appSettings:update", request);
+  },
+  onPermissionApproval(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("permissionApproval:prompt", listener);
+    return () => ipcRenderer.removeListener("permissionApproval:prompt", listener);
+  },
+  onPermissionApprovalCancelled(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("permissionApproval:cancelled", listener);
+    return () => ipcRenderer.removeListener("permissionApproval:cancelled", listener);
+  },
+  getAppUpdateState() {
+    return ipcRenderer.invoke("updater:getState");
+  },
+  checkForAppUpdate() {
+    return ipcRenderer.invoke("updater:check");
+  },
+  downloadAppUpdate() {
+    return ipcRenderer.invoke("updater:download");
+  },
+  installAppUpdate() {
+    return ipcRenderer.invoke("updater:install");
+  },
+  onAppUpdateStateChanged(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("updater:changed", listener);
+    return () => ipcRenderer.removeListener("updater:changed", listener);
   },
   resolveTerminalShell() {
     return ipcRenderer.invoke("terminal:shell:resolve");

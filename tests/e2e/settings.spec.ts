@@ -62,42 +62,12 @@ test.describe("Jasmine settings", () => {
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  test("Chrome control settings validate and register real-browser takeover", async () => {
+  test("unreleased Chrome control settings stay out of the navigation", async () => {
     const { page } = harness;
 
-    await openSettings(page, "Chrome Control");
-    await expect(page.getByRole("heading", { name: "Chrome control" })).toBeVisible();
-    await expect(page.getByText("Real Chrome session")).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Unpacked extension folder" })).toHaveValue(/chrome-extension/);
-
-    const extensionId = page.getByRole("textbox", { name: "Extension ID" });
-    const registerButton = page.getByRole("button", { name: "Register / Enable" });
-    const bundledExtensionId = "acmkogchlihbjohfionenaficgcljdjk";
-    await expect(extensionId).toHaveValue(bundledExtensionId);
-    await expect(registerButton).toBeEnabled();
-
-    await extensionId.clear();
-    await extensionId.type("bad");
-    await expect(page.getByText("Enter the 32-character Chrome extension ID.")).toBeVisible();
-    await expect(registerButton).toBeDisabled();
-
-    await extensionId.fill(bundledExtensionId);
-    await expect(registerButton).toBeEnabled();
-    await registerButton.click();
-    await expect(page.getByText("Chrome control enabled", { exact: true })).toBeVisible();
-    await expect(page.getByText("Registered", { exact: true })).toBeVisible();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).chromeTakeover)).toMatchObject({
-      enabled: true,
-      extensionId: bundledExtensionId
-    });
-
-    await page.getByRole("switch", { name: "Disable real Chrome control" }).click();
-    await expect(page.getByText("Chrome control disabled", { exact: true })).toBeVisible();
-    await expect(page.getByText("Not registered", { exact: true })).toBeVisible();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).chromeTakeover)).toMatchObject({
-      enabled: false,
-      extensionId: bundledExtensionId
-    });
+    await openSettings(page);
+    await expect(page.locator(".settings-nav").getByRole("button", { name: "Chrome Control" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Chrome control" })).toHaveCount(0);
   });
 
   test("entry brand settings update the new chat surface and persist after restart", async ({}, testInfo) => {
@@ -136,7 +106,7 @@ test.describe("Jasmine settings", () => {
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect(page.locator(".settings-panel")).toHaveClass(/single-nav/);
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-nav button .icon")).toHaveCount(13);
+    await expect(page.locator(".settings-nav button .icon")).toHaveCount(12);
     await expect(page.locator(".settings-detail")).not.toContainText("Command palette");
     await expect(page.locator(".settings-detail")).not.toContainText("Theme");
     await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
@@ -215,7 +185,7 @@ test.describe("Jasmine settings", () => {
     await expect.poll(async () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim())).toBe("#0b74de");
   });
 
-  test("settings nav reaches memory, activity, web search, plugins, and about sections", async () => {
+  test("settings nav reaches memory, activity, web search, packages, and about sections", async () => {
     const { page } = harness;
 
     await expect(page).toHaveTitle("Jasmine — The desktop app for Pi");
@@ -230,7 +200,7 @@ test.describe("Jasmine settings", () => {
     await page.locator(".settings-nav").getByRole("button", { name: "Web Search" }).click();
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
     await expect(page.locator(".settings-detail")).toContainText("Use web search");
-    await page.locator(".settings-nav").getByRole("button", { name: "Plugins" }).click();
+    await page.locator(".settings-nav").getByRole("button", { name: "Packages" }).click();
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
     await expect(page.locator(".settings-detail")).toContainText("Pi Web Access");
     await page.locator(".settings-nav").getByRole("button", { name: "About" }).click();

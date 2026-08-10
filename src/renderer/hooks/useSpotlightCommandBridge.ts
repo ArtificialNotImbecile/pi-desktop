@@ -6,8 +6,6 @@ export type SpotlightCommandHandlers = {
   openThread(threadId: string, projectId?: string | null): void;
   newChat(): void;
   openSettings(section?: string): void;
-  openTodo(): void;
-  addTodo(): void;
 };
 
 export function useSpotlightCommandBridge(handlers: SpotlightCommandHandlers) {
@@ -23,10 +21,6 @@ export function useSpotlightCommandBridge(handlers: SpotlightCommandHandlers) {
         current.newChat();
       } else if (payload.commandId === "open-settings") {
         current.openSettings(payload.section);
-      } else if (payload.commandId === "open-todo") {
-        current.openTodo();
-      } else if (payload.commandId === "add-todo") {
-        current.addTodo();
       }
     };
 

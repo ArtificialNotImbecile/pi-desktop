@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { cp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ import { getJasminePiAgentDir } from "./piAgent.js";
 const require = createRequire(import.meta.url);
 const RESOURCE_KINDS = ["extensions", "skills", "prompts", "themes"] as const;
 const PI_WEB_ACCESS_PACKAGE_NAME = "pi-web-access";
-const CHROME_PACKAGE_NAME = "chrome";
+const RETIRED_BUILTIN_CHROME_PACKAGE_NAME = "chrome";
 const SKILL_NAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}-]{0,63}$/u;
 const bundledPluginSyncs = new Map<string, Promise<string[]>>();
 
@@ -40,14 +40,6 @@ export function resolvePiWebAccessPackageRoot(): string | null {
   } catch {
     return null;
   }
-}
-
-export function resolveChromePackageRoot(): string | null {
-  return resolveBuiltinResourceRoot({
-    envOverride: process.env.CHROME_PACKAGE_ROOT,
-    subPath: ["builtin-plugins", CHROME_PACKAGE_NAME],
-    exists: (candidate) => existsSync(path.join(candidate, "package.json"))
-  });
 }
 
 export function resolveBundledPluginPackageRoot(): string | null {
@@ -97,20 +89,39 @@ export async function syncBundledPluginPackages(userDataDir: string): Promise<st
 async function syncBundledPluginPackagesOnce(outputRoot: string): Promise<string[]> {
   const bundledRoot = resolveBundledPluginPackageRoot();
   await mkdir(outputRoot, { recursive: true });
+  await removeRetiredBundledChromeCopy(outputRoot);
+  const bundledPackageNames = bundledRoot ? await listBundledPluginPackageDirectories(bundledRoot) : [];
   if (bundledRoot) {
-    for (const packageName of await listBundledPluginPackageDirectories(bundledRoot)) {
+    for (const packageName of bundledPackageNames) {
       const sourceDir = path.join(bundledRoot, packageName);
       const targetDir = path.join(outputRoot, packageName);
       await cp(sourceDir, targetDir, { recursive: true, force: true });
     }
   }
-  const packageNames = await listPiPackageDirectories(outputRoot);
   const installed: string[] = [];
-  for (const packageName of packageNames) {
+  for (const packageName of bundledPackageNames) {
     const targetDir = path.join(outputRoot, packageName);
     if (await isPiPluginPackageDirectory(targetDir)) installed.push(targetDir);
   }
   return installed.sort((a, b) => displayNameForSource(a).localeCompare(displayNameForSource(b)));
+}
+
+async function removeRetiredBundledChromeCopy(outputRoot: string): Promise<void> {
+  const packageDir = path.join(outputRoot, RETIRED_BUILTIN_CHROME_PACKAGE_NAME);
+  try {
+    const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
+    const extensions = Array.isArray(packageJson?.pi?.extensions) ? packageJson.pi.extensions : [];
+    const skills = Array.isArray(packageJson?.pi?.skills) ? packageJson.pi.skills : [];
+    const isJasmineBuiltin = packageJson?.name === RETIRED_BUILTIN_CHROME_PACKAGE_NAME
+      && packageJson?.version === "0.1.0"
+      && extensions.length === 1
+      && extensions[0] === "./index.js"
+      && skills.length === 1
+      && skills[0] === "./skills";
+    if (isJasmineBuiltin) await rm(packageDir, { recursive: true, force: true });
+  } catch {
+    // Missing, unreadable, or user-modified directories are intentionally kept.
+  }
 }
 
 export function defaultPluginPackageRoot(userDataDir: string): string {
@@ -118,16 +129,6 @@ export function defaultPluginPackageRoot(userDataDir: string): string {
 }
 
 async function listBundledPluginPackageDirectories(root: string): Promise<string[]> {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (await isPiPluginPackageDirectory(path.join(root, entry.name))) names.push(entry.name);
-  }
-  return names.sort((a, b) => a.localeCompare(b));
-}
-
-async function listPiPackageDirectories(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
   const names: string[] = [];
   for (const entry of entries) {
@@ -339,11 +340,6 @@ class PluginPackageService {
       const builtinResources = await this.packageManager.resolveExtensionSources([piWebAccess], { temporary: true });
       records.push(this.toBuiltinPiWebAccessRecord(piWebAccess, resourceCountsByPackage(builtinResources).get(packageKey(piWebAccess, "temporary"))));
     }
-    const chrome = resolveChromePackageRoot();
-    if (chrome && !records.some((record) => sameSource(record.source, chrome)) && !records.some((record) => this.isBuiltinChromePluginSource(record.source, record.scope))) {
-      const builtinResources = await this.packageManager.resolveExtensionSources([chrome], { temporary: true });
-      records.push(this.toBuiltinChromeRecord(chrome, resourceCountsByPackage(builtinResources).get(packageKey(chrome, "temporary"))));
-    }
     return records.sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)) || a.displayName.localeCompare(b.displayName));
   }
 
@@ -480,12 +476,11 @@ class PluginPackageService {
     const source = entry.source;
     const installedPath = this.packageManager.getInstalledPath(source, entry.scope);
     const builtin = this.isPiWebAccessSourceForScope(source, entry.scope)
-      || this.isChromeSourceForScope(source, entry.scope)
       || this.isBuiltinPluginSourceForScope(source, entry.scope);
     return {
       id: packageKey(source, entry.scope),
       source,
-      displayName: this.isBuiltinChromePluginSource(source, entry.scope) ? "Chrome" : displayNameForSource(source),
+      displayName: displayNameForSource(source),
       scope: entry.scope,
       enabled: !isDisabledPackageSource(entry.packageSource),
       filtered: typeof entry.packageSource === "object",
@@ -515,23 +510,6 @@ class PluginPackageService {
     };
   }
 
-  private toBuiltinChromeRecord(source: string, counts: PluginResourceCounts | undefined): PluginPackageRecord {
-    return {
-      id: packageKey(source, "user"),
-      source,
-      displayName: "Chrome",
-      scope: "user",
-      enabled: false,
-      filtered: false,
-      installedPath: source,
-      builtin: true,
-      recommended: true,
-      removable: false,
-      updateable: false,
-      resourceCounts: counts ?? emptyResourceCounts()
-    };
-  }
-
   private async flush(): Promise<void> {
     await this.settingsManager.flush();
     // Any settings mutation can change which package skills resolve as enabled.
@@ -539,7 +517,6 @@ class PluginPackageService {
   }
 
   private sourcesMatch(left: string, right: string, scope: PluginPackageScope): boolean {
-    if (this.isChromeSourceMatch(left, right, scope)) return true;
     left = canonicalPluginSource(left);
     right = canonicalPluginSource(right);
     if (sameSource(left, right)) return true;
@@ -548,20 +525,12 @@ class PluginPackageService {
     return Boolean(leftPath && rightPath && samePath(leftPath, rightPath));
   }
 
-  private isChromeSourceMatch(left: string, right: string, scope: PluginPackageScope): boolean {
-    const leftChrome = isChromeSource(left) || this.isBuiltinChromePluginSource(left, scope);
-    const rightChrome = isChromeSource(right) || this.isBuiltinChromePluginSource(right, scope);
-    return leftChrome && rightChrome;
-  }
-
   private normalizeBuiltinPackageSources(builtinPluginSources: string[]): void {
     const piWebAccess = resolvePiWebAccessPackageRoot();
-    const chrome = builtinPluginSources.find((source) => path.basename(source).toLowerCase() === CHROME_PACKAGE_NAME) ?? resolveChromePackageRoot();
     for (const scope of ["user", "project"] as const) {
       const currentPackages = this.packagesForScope(scope);
-      let nextPackages = currentPackages;
+      let nextPackages = currentPackages.filter((item) => !isRetiredBuiltinChromeSource(packageSourceString(item), this.userDataDir));
       if (piWebAccess) nextPackages = this.normalizePiWebAccessPackages(nextPackages, scope, piWebAccess);
-      if (chrome) nextPackages = this.normalizeChromePackages(nextPackages, scope, chrome);
       if (builtinPluginSources.length > 0) nextPackages = this.normalizeBuiltinPluginPackages(nextPackages, scope, builtinPluginSources);
       if (!samePackageSourceList(currentPackages, nextPackages)) {
         this.setPackagesForScope(scope, nextPackages);
@@ -580,20 +549,6 @@ class PluginPackageService {
       piWebAccessEntry = mergePiWebAccessEntry(piWebAccessEntry, packageSourceWithSource(item, builtin), builtin);
     }
     if (piWebAccessEntry) nextPackages.push(piWebAccessEntry);
-    return nextPackages;
-  }
-
-  private normalizeChromePackages(packages: PackageSource[], scope: PluginPackageScope, builtin: string): PackageSource[] {
-    const nextPackages: PackageSource[] = [];
-    let chromeEntry: PackageSource | null = null;
-    for (const item of packages) {
-      if (!this.isChromeSourceForScope(packageSourceString(item), scope)) {
-        nextPackages.push(item);
-        continue;
-      }
-      chromeEntry = mergePiWebAccessEntry(chromeEntry, packageSourceWithSource(item, builtin), builtin);
-    }
-    if (chromeEntry) nextPackages.push(chromeEntry);
     return nextPackages;
   }
 
@@ -625,21 +580,8 @@ class PluginPackageService {
     return Boolean(installedPath && samePath(installedPath, builtin));
   }
 
-  private isChromeSourceForScope(source: string, scope: PluginPackageScope): boolean {
-    const builtin = resolveChromePackageRoot();
-    if (!builtin) return isChromeSource(source);
-    if (isChromeSource(source)) return true;
-    const installedPath = this.packageManager.getInstalledPath(source, scope);
-    return Boolean(installedPath && samePath(installedPath, builtin));
-  }
-
   private isBuiltinPluginSourceForScope(source: string, scope: PluginPackageScope): boolean {
     return Boolean(this.builtinPluginForSource(source, scope, this.builtinPluginSources ?? []));
-  }
-
-  private isBuiltinChromePluginSource(source: string, scope: PluginPackageScope): boolean {
-    const builtin = this.builtinPluginForSource(source, scope, this.builtinPluginSources ?? []);
-    return Boolean(builtin && path.basename(builtin).toLowerCase() === CHROME_PACKAGE_NAME);
   }
 
   private builtinPluginForSource(source: string, scope: PluginPackageScope, builtins: string[]): string | null {
@@ -769,8 +711,6 @@ function normalizeSourceForComparison(source: string): string {
 function canonicalPluginSource(source: string): string {
   const piWebAccess = resolvePiWebAccessPackageRoot();
   if (piWebAccess && isPiWebAccessSource(source)) return piWebAccess;
-  const chrome = resolveChromePackageRoot();
-  if (chrome && isChromeSource(source)) return chrome;
   return source;
 }
 
@@ -783,23 +723,12 @@ function isPiWebAccessSource(source: string | PackageSource): boolean {
   return Boolean(builtin && sameSource(sourceValue, builtin));
 }
 
-function isChromeSource(source: string | PackageSource): boolean {
-  const sourceValue = packageSourceString(source);
-  const normalized = normalizeSourceForComparison(sourceValue);
-  if (normalized === CHROME_PACKAGE_NAME || normalized.startsWith(`${CHROME_PACKAGE_NAME}@`)) return true;
-  if (normalized === `npm:${CHROME_PACKAGE_NAME}` || normalized.startsWith(`npm:${CHROME_PACKAGE_NAME}@`)) return true;
-  if (normalized.includes("/.codex/plugins/cache/openai-bundled/chrome/")) return true;
-  const builtin = resolveChromePackageRoot();
-  return Boolean(builtin && sameSource(sourceValue, builtin));
-}
-
 function isLocalSource(source: string): boolean {
   return /^(?:[A-Za-z]:[\\/]|[\\/]|\.{1,2}[\\/]|~[\\/])/.test(source.trim());
 }
 
 function displayNameForSource(source: string): string {
   if (isPiWebAccessSource(source)) return "Pi Web Access";
-  if (isChromeSource(source)) return "Chrome";
   if (source.startsWith("npm:")) return source.slice(4);
   if (source.startsWith("git:")) return source.slice(4);
   if (isLocalSource(source)) return path.basename(source.replace(/[\\/]$/, "")) || source;
@@ -808,6 +737,42 @@ function displayNameForSource(source: string): string {
     return url.pathname.split("/").filter(Boolean).slice(-2).join("/") || url.hostname;
   } catch {
     return path.basename(source.replace(/[\\/]$/, "")) || source;
+  }
+}
+
+function isRetiredBuiltinChromeSource(source: string, userDataDir: string): boolean {
+  const normalized = normalizeSourceForComparison(source);
+  if (normalized === RETIRED_BUILTIN_CHROME_PACKAGE_NAME
+    || normalized.startsWith(`${RETIRED_BUILTIN_CHROME_PACKAGE_NAME}@`)
+    || normalized === `npm:${RETIRED_BUILTIN_CHROME_PACKAGE_NAME}`
+    || normalized.startsWith(`npm:${RETIRED_BUILTIN_CHROME_PACKAGE_NAME}@`)) {
+    return true;
+  }
+  if (!isLocalSource(source)) return false;
+  if (samePath(source, path.join(defaultPluginPackageRoot(userDataDir), RETIRED_BUILTIN_CHROME_PACKAGE_NAME))) {
+    // The bundled copy is removed before settings normalization. A surviving
+    // directory belongs to the user unless it still has Jasmine's exact legacy
+    // package identity, so never disable a custom same-named package.
+    return !existsSync(source) || isLegacyJasmineChromePackage(source);
+  }
+  const slashed = normalized.replace(/\/+$/, "");
+  return slashed.endsWith("/resources/builtin-plugins/chrome")
+    || slashed.endsWith("/jasmine-resources/builtin-plugins/chrome");
+}
+
+function isLegacyJasmineChromePackage(packageDir: string): boolean {
+  try {
+    const packageJson = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+    const extensions = Array.isArray(packageJson?.pi?.extensions) ? packageJson.pi.extensions : [];
+    const skills = Array.isArray(packageJson?.pi?.skills) ? packageJson.pi.skills : [];
+    return packageJson?.name === RETIRED_BUILTIN_CHROME_PACKAGE_NAME
+      && packageJson?.version === "0.1.0"
+      && extensions.length === 1
+      && extensions[0] === "./index.js"
+      && skills.length === 1
+      && skills[0] === "./skills";
+  } catch {
+    return false;
   }
 }
 

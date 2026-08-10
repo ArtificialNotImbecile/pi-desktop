@@ -30,7 +30,8 @@ export const defaultAppSettings: AppSettings = {
   workingNotifications: {
     mode: "background",
     includeDetails: true
-  }
+  },
+  permissionMode: "ask"
 };
 
 export function useAppSettings(
@@ -105,6 +106,7 @@ export function readStartupSettingsCache(): AppSettings | null {
       !parsed.workingNotifications ||
       !["background", "always", "never"].includes(parsed.workingNotifications.mode) ||
       typeof parsed.workingNotifications.includeDetails !== "boolean" ||
+      (parsed.permissionMode !== "ask" && parsed.permissionMode !== "full-access") ||
       !parsed.toolModel ||
       typeof parsed.toolModel.providerId !== "string" ||
       typeof parsed.toolModel.modelId !== "string" ||

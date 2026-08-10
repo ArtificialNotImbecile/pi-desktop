@@ -12,7 +12,6 @@ export function AppShell(props: {
   projects: WorkspaceProject[];
   activeThreadId: string | null;
   activeProjectId: string | null;
-  todoActive: boolean;
   workingActive: boolean;
   workingActiveCount: number;
   workingAttention: boolean;
@@ -27,10 +26,9 @@ export function AppShell(props: {
   onOpenProjectFolder(): void;
   onSelectProject(projectId: string): void;
   onSelectThread(threadId: string): void;
-  onOpenTodo(): void;
   onOpenWorking(): void;
   onToggleMore(): void;
-  onClearHistory(): void;
+  onOpenAbout(): void;
   onOpenSettings(): void;
   onRenameThread(threadId: string, title: string): void;
   onDeleteThread(threadId: string): void;
@@ -50,7 +48,6 @@ export function AppShell(props: {
         projects={props.projects}
         activeThreadId={props.activeThreadId}
         activeProjectId={props.activeProjectId}
-        todoActive={props.todoActive}
         workingActive={props.workingActive}
         workingActiveCount={props.workingActiveCount}
         workingAttention={props.workingAttention}
@@ -63,10 +60,9 @@ export function AppShell(props: {
         onOpenProjectFolder={stable.onOpenProjectFolder}
         onSelectProject={stable.onSelectProject}
         onSelectThread={stable.onSelectThread}
-        onOpenTodo={stable.onOpenTodo}
         onOpenWorking={stable.onOpenWorking}
         onToggleMore={stable.onToggleMore}
-        onClearHistory={stable.onClearHistory}
+        onOpenAbout={stable.onOpenAbout}
         onOpenSettings={stable.onOpenSettings}
         onRenameThread={stable.onRenameThread}
         onDeleteThread={stable.onDeleteThread}
@@ -82,8 +78,8 @@ export function AppShell(props: {
         </button>
       )}
 
-      {/* Title-bar chrome is shell-owned so every workspace route (chat, todo,
-          future pages) keeps window controls; see UI-FIXED-126. */}
+      {/* Title-bar chrome is shell-owned so every workspace route keeps window
+          controls; see UI-FIXED-126. */}
       <div className="window-drag-region" aria-hidden="true" />
       <WindowControls />
 

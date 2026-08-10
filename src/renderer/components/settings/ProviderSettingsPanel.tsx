@@ -201,7 +201,6 @@ export function ProviderSettingsPanel(props: {
           <button className={section === "memory" ? "active" : ""} type="button" onClick={() => selectSection("memory")}><BrainIcon /><span>{t("settings.nav.memory")}</span></button>
           <button className={section === "skills" ? "active" : ""} type="button" onClick={() => selectSection("skills")}><SkillIcon /><span>{t("settings.nav.skills")}</span></button>
           <button className={section === "plugins" ? "active" : ""} type="button" onClick={() => selectSection("plugins")}><PlugIcon /><span>{t("settings.nav.plugins")}</span></button>
-          <button className={section === "chrome" ? "active" : ""} type="button" onClick={() => selectSection("chrome")}><PlugIcon /><span>{t("settings.nav.chrome")}</span></button>
           <button className={section === "prompts" ? "active" : ""} type="button" onClick={() => selectSection("prompts")}><TerminalIcon /><span>{t("settings.nav.prompts")}</span></button>
           <button className={section === "remote" ? "active" : ""} type="button" onClick={() => selectSection("remote")}><TerminalIcon /><span>{t("settings.nav.remote")}</span></button>
           <button className={section === "mcp" ? "active" : ""} type="button" onClick={() => selectSection("mcp")}><PlugIcon /><span>{t("settings.nav.mcp")}</span></button>

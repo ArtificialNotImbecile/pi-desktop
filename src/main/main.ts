@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, Notification, screen, Tray, type MenuItemConstructorOptions } from "electron";
+import { app, autoUpdater as electronAutoUpdater, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, Notification, screen, Tray, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "node:fs";
 import { cp, mkdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -144,6 +144,10 @@ app.on("before-quit", () => {
   isQuitting = true;
 });
 
+electronAutoUpdater.on("before-quit-for-update", () => {
+  isQuitting = true;
+});
+
 app.on("will-quit", () => {
   void stopChromeBridge().catch((error) => {
     console.warn("Failed to clean up Chrome bridge:", error);
@@ -208,12 +212,16 @@ async function startApplication(): Promise<void> {
     }
     await delayForStartupRegression();
 
-    const [{ JasmineDatabase }, { registerIpc }, { registerSpotlightIpc }] = await Promise.all([
+    const [{ JasmineDatabase }, { registerIpc }, { registerSpotlightIpc }, { initializeAppUpdater }] = await Promise.all([
       import("./db/database.js"),
       import("./ipc/index.js"),
-      import("./ipc/spotlight.js")
+      import("./ipc/spotlight.js"),
+      import("./services/appUpdaterRuntime.js")
     ]);
     createDatabase = () => new JasmineDatabase();
+    await initializeAppUpdater(() => {
+      isQuitting = true;
+    });
     registerIpc({ getDatabase, getWorkingRegistry, consumePendingWorkingNavigation });
     getWorkingRegistry().initialize();
     registerSpotlightIpc(
@@ -587,6 +595,12 @@ async function loadApplication(win: BrowserWindow): Promise<void> {
     await win.loadURL(devUrl);
   } else {
     await win.loadFile(path.join(__dirname, "../../renderer/index.html"));
+  }
+  if (!win.isDestroyed()) {
+    // The temporary startup document must never become a user-reachable page.
+    // Native mouse back/forward buttons operate on Chromium's history rather
+    // than Jasmine's renderer navigation stack.
+    win.webContents.navigationHistory.clear();
   }
 }
 

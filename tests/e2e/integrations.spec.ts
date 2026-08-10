@@ -330,12 +330,22 @@ test.describe("Jasmine integrations", () => {
     await expectComposerEditorText(textarea, "/triage ");
   });
 
-  test("plugins settings manages a local Pi package at package level", async () => {
+  test("packages settings migrates the retired Chrome bundle and manages a local Pi package", async () => {
     let { page, userDataDir } = harness;
     const packageSource = await createPiPluginFixture(userDataDir);
     const piWebAccessRoot = path.join(rootDir, "node_modules", "pi-web-access");
     const piWebAccessAgentDir = path.join(userDataDir, "pi-agent");
     await quitElectron(harness.app);
+    const retiredChromeDir = path.join(userDataDir, "plugins", "chrome");
+    await mkdir(path.join(retiredChromeDir, "skills", "chrome"), { recursive: true });
+    await writeFile(path.join(retiredChromeDir, "package.json"), JSON.stringify({
+      name: "chrome",
+      version: "0.1.0",
+      type: "module",
+      pi: { extensions: ["./index.js"], skills: ["./skills"] }
+    }, null, 2), "utf8");
+    await writeFile(path.join(retiredChromeDir, "index.js"), "export default function chrome() {}\n", "utf8");
+    await writeFile(path.join(retiredChromeDir, "skills", "chrome", "SKILL.md"), "---\nname: chrome\ndescription: retired fixture\n---\n", "utf8");
     await seedPiAgentPackageSettings(userDataDir, [
       { source: piWebAccessRoot, extensions: [], skills: [], prompts: [], themes: [] },
       path.relative(piWebAccessAgentDir, piWebAccessRoot),
@@ -344,7 +354,7 @@ test.describe("Jasmine integrations", () => {
     harness = await launchJasmine("plugins-legacy-pi-web-access", userDataDir);
     page = harness.page;
 
-    await openSettings(page, "Plugins");
+    await openSettings(page, "Packages");
     await expect(page.locator(".settings-detail")).toContainText("Pi Web Access");
     await expect(page.locator(".settings-detail").getByRole("menuitemcheckbox")).toHaveCount(0);
     const rowTitles = await page.locator(".plugin-row").evaluateAll((rows) =>
@@ -356,12 +366,8 @@ test.describe("Jasmine integrations", () => {
     await expect(piWebAccessRow).toContainText("Enabled");
     await expect(piWebAccessRow).toContainText("ext 1");
     await expect(piWebAccessRow).toContainText("skills 1");
-    const chromeRows = rowTitles.filter((title) => title.trim() === "Chrome");
-    expect(chromeRows).toHaveLength(1);
-    const chromeRow = page.locator(".plugin-row", { hasText: "Chrome" });
-    await expect(chromeRow).toContainText("Enabled");
-    await expect(chromeRow).toContainText("ext 1");
-    await expect(chromeRow).toContainText("skills 1");
+    expect(rowTitles.filter((title) => title.trim() === "Chrome")).toHaveLength(0);
+    await expect(access(retiredChromeDir)).rejects.toThrow();
 
     await page.locator(".plugins-toolbar").getByRole("button", { name: "Choose folder..." }).click();
     await expect(page.getByRole("textbox", { name: "Pi package source" })).toHaveValue(packageSource);
@@ -383,15 +389,15 @@ test.describe("Jasmine integrations", () => {
     await page.locator(".inline-skill-row").getByRole("button", { name: /jasmine-e2e/ }).click();
     await expect(page.locator(".inline-skill-row")).toHaveCount(0);
 
-    await openSettings(page, "Plugins");
+    await openSettings(page, "Packages");
     await row.getByRole("switch", { name: /Disable jasmine-e2e-plugin/ }).click();
     await expect(row).toContainText("Disabled");
 
     await page.getByRole("button", { name: "Close settings" }).click();
     await textarea.fill("@jasmine");
     await expect(page.locator(".mention-menu")).toBeVisible();
-    await expect(page.locator(".mention-menu")).toContainText("Plugins");
-    await expect(page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" })).toContainText("Activate this plugin for this chat");
+    await expect(page.locator(".mention-menu")).toContainText("Packages");
+    await expect(page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" })).toContainText("Activate this package for this chat");
     await expect(page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" })).toBeVisible();
     await page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" }).click();
     await expect(page.locator(".inline-plugin-row")).toContainText("jasmine-e2e-plugin");
@@ -400,22 +406,22 @@ test.describe("Jasmine integrations", () => {
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
     await expect(page.locator(".inline-plugin-row")).toContainText("jasmine-e2e-plugin");
-    await expect(page.locator(".user-bubble").last().getByLabel("Active plugins")).toContainText("jasmine-e2e-plugin");
-    await expect(page.locator(".assistant-block").last().getByLabel("Plugins used")).toContainText("jasmine-e2e-plugin");
+    await expect(page.locator(".user-bubble").last().getByLabel("Active packages")).toContainText("jasmine-e2e-plugin");
+    await expect(page.locator(".assistant-block").last().getByLabel("Packages used")).toContainText("jasmine-e2e-plugin");
     await textarea.fill("continue with active plugin package");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".user-bubble").last().getByLabel("Active plugins")).toContainText("jasmine-e2e-plugin");
-    await expect(page.locator(".assistant-block").last().getByLabel("Plugins used")).toContainText("jasmine-e2e-plugin");
+    await expect(page.locator(".user-bubble").last().getByLabel("Active packages")).toContainText("jasmine-e2e-plugin");
+    await expect(page.locator(".assistant-block").last().getByLabel("Packages used")).toContainText("jasmine-e2e-plugin");
     await page.locator(".inline-plugin-row").getByRole("button", { name: /jasmine-e2e-plugin/ }).click();
     await expect(page.locator(".inline-plugin-row")).toHaveCount(0);
     await textarea.fill("continue without active plugin package");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".user-bubble").last().getByLabel("Active plugins")).toHaveCount(0);
-    await expect(page.locator(".assistant-block").last().getByLabel("Plugins used")).toHaveCount(0);
+    await expect(page.locator(".user-bubble").last().getByLabel("Active packages")).toHaveCount(0);
+    await expect(page.locator(".assistant-block").last().getByLabel("Packages used")).toHaveCount(0);
 
-    await openSettings(page, "Plugins");
+    await openSettings(page, "Packages");
     await expect(row).toContainText("Disabled");
     await row.getByRole("button", { name: "Remove jasmine-e2e-plugin" }).click();
     await expect(row).toHaveCount(0);

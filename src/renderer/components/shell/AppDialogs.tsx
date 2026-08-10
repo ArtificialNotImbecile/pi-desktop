@@ -1,19 +1,18 @@
-import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatMessage, ChatThread, MemoryRecord } from "../../../shared/ipc";
+import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatMessage, ChatThread, MemoryRecord, PermissionApprovalPrompt, PermissionApprovalResponse } from "../../../shared/ipc";
 import { AskUserQuestionDialog } from "../chat/AskUserQuestionDialog";
+import { PermissionApprovalDialog } from "../chat/PermissionApprovalDialog";
 import { RememberDialog } from "../memory/RememberDialog";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Toast } from "../ui/Toast";
 import { useI18n } from "../../i18n";
 
 export function AppDialogs(props: {
-  clearHistoryOpen: boolean;
   deleteThreadCandidate: ChatThread | null;
   deleteMemoryCandidate: MemoryRecord | null;
   rememberingMessage: ChatMessage | null;
   askUserQuestionPrompt: AskUserQuestionPrompt | null;
+  permissionApprovalPrompt: PermissionApprovalPrompt | null;
   toast: string | null;
-  onCancelClearHistory(): void;
-  onConfirmClearHistory(): void;
   onCancelDeleteThread(): void;
   onConfirmDeleteThread(thread: ChatThread): void;
   onCancelDeleteMemory(): void;
@@ -21,19 +20,11 @@ export function AppDialogs(props: {
   onCancelRemember(): void;
   onConfirmRemember(content: string, message: ChatMessage): void;
   onAnswerAskUserQuestion(response: AskUserQuestionResponse): void;
+  onAnswerPermissionApproval(response: PermissionApprovalResponse): void;
 }) {
   const { t } = useI18n();
   return (
     <>
-      <ConfirmDialog
-        open={props.clearHistoryOpen}
-        title={t("dialogs.clearTitle")}
-        body={t("dialogs.clearBody")}
-        confirmLabel={t("dialogs.clearConfirm")}
-        onCancel={props.onCancelClearHistory}
-        onConfirm={props.onConfirmClearHistory}
-      />
-
       <ConfirmDialog
         open={Boolean(props.deleteThreadCandidate)}
         title={t("dialogs.deleteChatTitle")}
@@ -65,6 +56,11 @@ export function AppDialogs(props: {
       <AskUserQuestionDialog
         prompt={props.askUserQuestionPrompt}
         onAnswer={props.onAnswerAskUserQuestion}
+      />
+
+      <PermissionApprovalDialog
+        prompt={props.permissionApprovalPrompt}
+        onAnswer={props.onAnswerPermissionApproval}
       />
 
       <Toast label={props.toast} />

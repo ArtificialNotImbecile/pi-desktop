@@ -247,6 +247,7 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       chrome_takeover_extension_id TEXT,
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
+      permission_mode TEXT NOT NULL DEFAULT 'ask',
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
@@ -398,6 +399,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "app_settings", "working_notification_include_details", "INTEGER NOT NULL DEFAULT 1");
   markMigration(db, 32, "working task registry and recent results", now);
   markMigration(db, 33, "working notification preferences", now);
+  addColumnIfMissing(db, "app_settings", "permission_mode", "TEXT NOT NULL DEFAULT 'ask'");
+  markMigration(db, 34, "agent permission mode", now);
 }
 
 function migrateInlineContextCaptures(db: SqlDatabase): void {

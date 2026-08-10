@@ -10,8 +10,6 @@ export function useCommandPaletteCommands(input: {
   openSearch(): void;
   openMemory(): void;
   openActivity(): void;
-  openTodo(): void;
-  addTodo(): void;
   openUiCatalog(): void;
   toggleSidebar(): void;
   t(key: I18nKey, values?: Record<string, string | number>): string;
@@ -42,24 +40,6 @@ export function useCommandPaletteCommands(input: {
       action: () => {
         input.closeFloatingSurfaces();
         input.navigate({ name: "settings", section: "providers" });
-      }
-    },
-    {
-      id: "todo",
-      label: t("command.todo"),
-      detail: t("command.todo.detail"),
-      action: () => {
-        input.closeFloatingSurfaces();
-        input.openTodo();
-      }
-    },
-    {
-      id: "add-todo",
-      label: t("command.addTodo"),
-      detail: t("command.addTodo.detail"),
-      action: () => {
-        input.closeFloatingSurfaces();
-        input.addTodo();
       }
     },
     {

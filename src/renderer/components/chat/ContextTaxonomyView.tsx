@@ -27,7 +27,7 @@ export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: stri
         <div className="taxonomy-summary-counts" aria-label="Context token evidence">
           {actualInput !== undefined && <span>{actualInput.toLocaleString()} actual input tokens</span>}
           <span>~{estimatedTotal.toLocaleString()} estimated by part</span>
-          <span>{props.taxonomy.items.length} wire items</span>
+          <span>{props.taxonomy.items.length} derived items</span>
         </div>
         {props.taxonomy.payloadHash && (
           <span className="taxonomy-summary-hash">full sanitized payload sha256 {props.taxonomy.payloadHash.slice(0, 12)}</span>
@@ -42,7 +42,9 @@ export function TaxonomyView(props: { taxonomy: ContextTaxonomy; captureId: stri
       {props.taxonomy.payloadShape && <PayloadShape taxonomy={props.taxonomy} />}
 
       <p className="taxonomy-derived-note">
-        Items follow provider wire order. Text, reasoning, tool calls, and tool results are shown once as separate parts; per-part tokens are estimates.
+        {(props.taxonomy.payloadSchemaVersion ?? 1) >= 7
+          ? "Derived items are grouped as messages, tools, request options, then other fields. Each group keeps its source-relative order; the exact raw top-level field order is shown above."
+          : "Legacy derived items follow provider wire order. Text, reasoning, tool calls, and tool results are shown once as separate parts; per-part tokens are estimates."}
       </p>
       <div className="taxonomy-items" aria-label="Derived context taxonomy">
         {props.taxonomy.items.map((item) => <TaxonomyItemView key={`${item.order}-${item.payloadPath ?? item.source}`} item={item} validation={props.taxonomy.reasoningValidation} />)}
@@ -57,7 +59,7 @@ function UnclassifiedWarning(props: { paths: string[] }) {
   return (
     <section className="taxonomy-unclassified-card" aria-label="Unclassified provider payload warning">
       <strong>{props.paths.length} unclassified payload {props.paths.length === 1 ? "field" : "fields"}</strong>
-      <span>Retained in provider wire order. Add a classifier rule if these fields carry model context.</span>
+      <span>Retained with exact JSONPaths and source-relative order. Add a classifier rule if these fields carry model context.</span>
       <code>{props.paths.slice(0, 4).join(" · ")}{props.paths.length > 4 ? ` · +${props.paths.length - 4} more` : ""}</code>
     </section>
   );
@@ -133,7 +135,7 @@ function PayloadShape(props: { taxonomy: ContextTaxonomy }) {
   if (shape.topLevelOrder.length === 0) return null;
   return (
     <details className="taxonomy-payload-shape">
-      <summary><strong>Payload shape</strong><span>{shape.messageCount ?? 0} messages / {shape.toolCount ?? 0} tools</span></summary>
+      <summary><strong>Raw payload shape</strong><span>{shape.messageCount ?? 0} messages / {shape.toolCount ?? 0} tools</span></summary>
       <div className="taxonomy-payload-order">
         {shape.topLevelOrder.map((key, index) => <span key={`${key}-${index}`}>{index > 0 && <i aria-hidden="true">→</i>}<code>{key}</code></span>)}
       </div>
@@ -153,7 +155,7 @@ function TaxonomyItemView(props: { item: ContextTaxonomyItem; validation?: Conte
     <article className="taxonomy-item">
       <details className="taxonomy-item-details" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary>
-          <b title="Wire presentation order">{item.order}</b>
+          <b title="Derived taxonomy order">{item.order}</b>
           <span className="taxonomy-item-title"><strong>{itemTitle(item)}</strong><small>{item.role} · {item.payloadPath ?? item.source}</small></span>
           {item.kind && <span className="taxonomy-kind-pill">{kindLabel(item.kind)}</span>}
         </summary>
@@ -180,7 +182,7 @@ function TaxonomyPartView(props: { part: ContextTaxonomyPart; validation?: Conte
       <summary>
         <span>{part.title}</span>
         <small>
-          {part.toolName ? `${part.toolName} · ` : ""}{part.toolCallId ? `${part.toolCallId} · ` : ""}~{part.tokenEstimate.toLocaleString()} tokens
+          {part.payloadPath ? `${part.payloadPath} · ` : ""}{part.toolName ? `${part.toolName} · ` : ""}{part.toolCallId ? `${part.toolCallId} · ` : ""}~{part.tokenEstimate.toLocaleString()} tokens
         </small>
       </summary>
       <RenderedBody text={part.text} format={part.format} title={part.title} />
@@ -283,10 +285,14 @@ function taxonomyEstimatedTokens(taxonomy: ContextTaxonomy): number {
 function collectUnclassifiedPaths(taxonomy: ContextTaxonomy): string[] {
   const paths = new Set<string>();
   for (const item of taxonomy.items) {
-    if (item.kind === "unclassified") paths.add(item.payloadPath ?? item.source);
-    for (const part of item.parts ?? []) {
-      if (part.kind === "unclassified") paths.add(part.payloadPath ?? `${item.payloadPath ?? item.source}:${part.order}`);
+    const unclassifiedParts = (item.parts ?? []).filter((part) => part.kind === "unclassified");
+    // A v7 top-level unclassified item is a section container at "$". Count
+    // its field parts, not the container itself, so one unknown field is one
+    // warning rather than "$" plus that field.
+    if (item.kind === "unclassified" && unclassifiedParts.length === 0) {
+      paths.add(item.payloadPath ?? item.source);
     }
+    for (const part of unclassifiedParts) paths.add(part.payloadPath ?? `${item.payloadPath ?? item.source}:${part.order}`);
   }
   return Array.from(paths);
 }
@@ -313,6 +319,7 @@ function buildComposition(taxonomy: ContextTaxonomy): CompositionItem[] {
 function itemTitle(item: ContextTaxonomyItem): string {
   if (item.kind === "tool_definition") return item.label.replace(/^Tool definition:?\s*/i, "Tool: ");
   if (item.kind === "provider_options") return "Request options";
+  if (item.kind === "unclassified" && item.role === "unclassified" && item.payloadPath === "$") return "Other payload fields";
   if (item.kind === "current_user_prompt") return "Current user prompt";
   if (item.kind === "conversation_history") return "Conversation history";
   if (item.kind === "system_prompt") return "System prompt";

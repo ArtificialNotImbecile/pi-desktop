@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
 import { CommandPalette } from "./components/shell/CommandPalette";
 import { SearchOverlay } from "./components/shell/SearchOverlay";
-import { TodoPage } from "./components/todo/TodoPage";
 import { WorkingPage } from "./components/working/WorkingPage";
 import { useAppSurfaces } from "./hooks/useAppSurfaces";
 import { useAskUserQuestion } from "./hooks/useAskUserQuestion";
+import { usePermissionApproval } from "./hooks/usePermissionApproval";
 import { useChatMessages } from "./hooks/useChatMessages";
 import { useActivity } from "./hooks/useActivity";
 import { useAppSettings } from "./hooks/useAppSettings";
@@ -28,7 +28,6 @@ import { useSpotlightCommandBridge } from "./hooks/useSpotlightCommandBridge";
 import { useStableCallbacks } from "./hooks/useStableCallbacks";
 import { useThreadDraftPersistence } from "./hooks/useThreadDraftPersistence";
 import { useThreads } from "./hooks/useThreads";
-import { useTodos } from "./hooks/useTodos";
 import { useToast } from "./hooks/useToast";
 import { useThemeAppearance } from "./hooks/useThemeAppearance";
 import { useWebSearch } from "./hooks/useWebSearch";
@@ -64,7 +63,6 @@ function App(props: { initialAppSettings: AppSettings }) {
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(initialReasoningEffort);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [uiCatalogOpen, setUiCatalogOpen] = useState(false);
-  const [todoAddOpen, setTodoAddOpen] = useState(false);
   const [rightPanelTabs, setRightPanelTabs] = useState<RightPanelTab[]>([]);
   const [activeRightPanelTabId, setActiveRightPanelTabId] = useState<string | null>(null);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
@@ -72,6 +70,7 @@ function App(props: { initialAppSettings: AppSettings }) {
   const [inlineSkillIds, setInlineSkillIds] = useState<string[]>([]);
   const [inlinePluginIds, setInlinePluginIds] = useState<string[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [startingNewChat, setStartingNewChat] = useState(false);
   const { toast, showToast } = useToast();
   const surfaces = useAppSurfaces();
   const navigation = useJasmineNavigation();
@@ -146,6 +145,9 @@ function App(props: { initialAppSettings: AppSettings }) {
   const askUserQuestion = useAskUserQuestion({
     onError: setAppError
   });
+  const permissionApproval = usePermissionApproval({
+    onError: setAppError
+  });
   const working = useWorkingTasks({
     onError: setAppError,
     onNavigate: openWorkingTarget
@@ -163,18 +165,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     () => projects.projects.find((project) => project.id === activeScopeProjectId) ?? null,
     [activeScopeProjectId, projects.projects]
   );
-  const todos = useTodos({
-    enabled: navigation.route.name === "todo" || todoAddOpen,
-    messages: {
-      loadFailed: t("todo.error.load"),
-      saveFailed: t("todo.error.save"),
-      saved: t("todo.toast.saved"),
-      openFailed: t("todo.error.open"),
-      opened: t("todo.toast.opened")
-    },
-    onError: setAppError,
-    onToast: showToast
-  });
   const activeThreadPluginKey = threads.activeThread?.activePluginIds?.join("\u0000") ?? "";
   const composer = useComposer({
     runState: chat.runState,
@@ -228,18 +218,13 @@ function App(props: { initialAppSettings: AppSettings }) {
     openSearch: () => surfaces.setSearchOpen(true),
     openMemory: () => surfaces.setMemoryOpen(true),
     openActivity: () => surfaces.setActivityOpen(true),
-    openTodo: () => navigateToRoute({ name: "todo" }),
-    addTodo: () => {
-      navigateToRoute({ name: "todo" });
-      setTodoAddOpen(true);
-    },
     openUiCatalog: () => setUiCatalogOpen(true),
     toggleSidebar: () => setSidebarCollapsed((collapsed) => !collapsed),
     t
   });
 
   useEffect(() => {
-    if (navigation.route.name === "todo" || navigation.route.name === "working") return;
+    if (navigation.route.name === "working") return;
     if (surfaces.settingsOpen) return;
     if (threads.activeThreadId && activeRightPanelMode) {
       navigation.replace({ name: "rightPanel", threadId: threads.activeThreadId, projectId: threads.activeThread?.projectId ?? null, panel: activeRightPanelMode });
@@ -290,15 +275,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     },
     openSettings: (section) => {
       openSettingsSection(section && isSettingsSection(section) ? section : "general");
-    },
-    openTodo: () => {
-      closeFloatingSurfaces();
-      navigateToRoute({ name: "todo" });
-    },
-    addTodo: () => {
-      closeFloatingSurfaces();
-      navigateToRoute({ name: "todo" });
-      setTodoAddOpen(true);
     }
   });
 
@@ -331,11 +307,10 @@ function App(props: { initialAppSettings: AppSettings }) {
       skillMenu: surfaces.skillMenuOpen,
       command: surfaces.commandOpen,
       settings: surfaces.settingsOpen,
-      clearHistory: surfaces.clearHistoryOpen,
-      todoAdd: todoAddOpen,
       deleteThread: Boolean(deleteThreadCandidate),
       rememberDialog: Boolean(rememberingMessage),
-      askUserQuestion: Boolean(askUserQuestion.activePrompt)
+      askUserQuestion: Boolean(askUserQuestion.activePrompt),
+      permissionApproval: Boolean(permissionApproval.activePrompt)
     },
     actions: {
       closeFloatingSurfaces,
@@ -365,7 +340,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     skillMenuOpen: surfaces.skillMenuOpen,
     commandOpen: surfaces.commandOpen,
     settingsOpen: surfaces.settingsOpen,
-    clearHistoryOpen: surfaces.clearHistoryOpen,
     deleteThreadOpen: Boolean(deleteThreadCandidate),
     rememberDialogOpen: Boolean(rememberingMessage),
     closeFloatingSurfaces,
@@ -391,29 +365,26 @@ function App(props: { initialAppSettings: AppSettings }) {
   }
 
   async function startNewChat(projectId: string | null = activeScopeProjectId): Promise<ChatThread | null> {
-    await persistActiveDraft();
-    const thread = await threads.startNewChat(
-      chat.messages.length > 0 ||
-      chat.runState === "running" ||
-      chat.runState === "stopping" ||
-      composer.draft.trim().length > 0 ||
-      composer.attachments.length > 0,
-      projectId
-    );
-    setActiveProjectId(projectId);
-    resetWorkspaceState();
-    closeFloatingSurfaces();
-    clearErrors();
-    return thread;
-  }
-
-  async function clearHistory() {
-    const cleared = await threads.clearHistory();
-    if (cleared) {
+    setStartingNewChat(true);
+    try {
+      await persistActiveDraft();
+      const thread = await threads.startNewChat(
+        chat.messages.length > 0 ||
+        chat.runState === "running" ||
+        chat.runState === "stopping" ||
+        composer.draft.trim().length > 0 ||
+        composer.attachments.length > 0,
+        projectId
+      );
+      if (!thread) return null;
+      setActiveProjectId(projectId);
       resetWorkspaceState();
+      closeFloatingSurfaces();
       clearErrors();
+      return thread;
+    } finally {
+      setStartingNewChat(false);
     }
-    closeFloatingSurfaces();
   }
 
   async function copyMessage(message: ChatMessage) {
@@ -458,7 +429,7 @@ function App(props: { initialAppSettings: AppSettings }) {
   }
 
   const visibleError = chat.error ?? appError;
-  const workspaceLoading = threads.loadingThreads || projects.loadingProjects || providers.loadingProviders;
+  const workspaceLoading = threads.loadingThreads || projects.loadingProjects || providers.loadingProviders || startingNewChat;
   const messageActionKey = useMemo(
     () => [
       appSettings.settings.language,
@@ -510,7 +481,6 @@ function App(props: { initialAppSettings: AppSettings }) {
       selectProjectScope(projectId);
     },
     onSelectThread: (threadId: string) => openThreadById(threadId),
-    onOpenTodo: () => navigateToRoute({ name: "todo" }),
     onOpenWorking: () => navigateToRoute({ name: "working" }),
     onRenameProject: (projectId: string, name: string) => void projects.renameProject(projectId, name),
     onRemoveProject: (projectId: string) => {
@@ -524,10 +494,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       closeFloatingSurfaces();
       surfaces.setMoreOpen(nextOpen);
     },
-    onClearHistory: () => {
-      closeFloatingSurfaces();
-      surfaces.setClearHistoryOpen(true);
-    },
+    onOpenAbout: () => openSettingsSection("about"),
     onOpenSettings: () => openSettingsSection("general"),
     onRenameThread: (threadId: string, title: string) => void threads.renameThread(threadId, title),
     onDeleteThread: (threadId: string) => {
@@ -629,6 +596,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       composer.cancelEdit();
     },
     onToggleMemory: () => setMemoryEnabled((enabled) => !enabled),
+    onSelectPermissionMode: (mode: PermissionMode) => void appSettings.updateSettings({ permissionMode: mode }),
     onToggleTools: () => setToolsEnabled((enabled) => !enabled),
     onSelectRemoteConnection: (id: string | null) => {
       if (id) void remotes.updateConnection({ id, active: true });
@@ -648,36 +616,20 @@ function App(props: { initialAppSettings: AppSettings }) {
       projects={projects.projects}
       activeThreadId={threads.activeThreadId}
       activeProjectId={activeScopeProjectId}
-      todoActive={navigation.route.name === "todo"}
       workingActive={navigation.route.name === "working"}
       workingActiveCount={working.snapshot.activeCount}
       workingAttention={working.snapshot.attentionCount > 0}
-      messagesEmpty={navigation.route.name !== "todo" && navigation.route.name !== "working" && chat.messages.length === 0}
+      messagesEmpty={navigation.route.name !== "working" && chat.messages.length === 0}
       sidebarCollapsed={sidebarCollapsed}
       moreOpen={surfaces.moreOpen}
       {...shellHandlers}
     >
-      {workspaceLoading && navigation.route.name !== "todo" && navigation.route.name !== "working" ? (
+      {workspaceLoading && navigation.route.name !== "working" ? (
         <main className="workspace-startup" data-jasmine-workspace-startup role="status" aria-label="Jasmine">
           <div className="workspace-startup-line wide" />
           <div className="workspace-startup-line" />
           <div className="workspace-startup-composer" />
         </main>
-      ) : navigation.route.name === "todo" ? (
-        <TodoPage
-          snapshot={todos.snapshot}
-          loading={todos.loading}
-          saving={todos.saving}
-          openingKind={todos.openingKind}
-          addOpen={todoAddOpen}
-          activeProjectName={activeProject?.name ?? null}
-          onRefresh={() => void todos.refresh()}
-          onOpenAdd={() => setTodoAddOpen(true)}
-          onCloseAdd={() => setTodoAddOpen(false)}
-          onAdd={(text) => todos.addTodo({ text, projectId: activeScopeProjectId })}
-          onOpenFile={(kind) => void todos.openFile(kind)}
-          onCopyCode={(code) => void copyCode(code)}
-        />
       ) : navigation.route.name === "working" ? (
         <WorkingPage
           snapshot={working.snapshot}
@@ -732,6 +684,8 @@ function App(props: { initialAppSettings: AppSettings }) {
         activeRightPanelTabId={activeRightPanelTabId}
         collapsedRightPanel={rightPanelCollapsed}
         memoryEnabled={memoryEnabled}
+        permissionMode={appSettings.settings.permissionMode}
+        permissionModeSaving={appSettings.saving}
         webSearchSettings={webSearch.settings}
         webSearchLoading={webSearch.loading}
         remoteConnections={remotes.connections}
@@ -854,14 +808,12 @@ function App(props: { initialAppSettings: AppSettings }) {
       )}
 
       <AppDialogs
-        clearHistoryOpen={surfaces.clearHistoryOpen}
         deleteThreadCandidate={deleteThreadCandidate}
         deleteMemoryCandidate={deleteMemoryCandidate}
         rememberingMessage={rememberingMessage}
         askUserQuestionPrompt={askUserQuestion.activePrompt}
+        permissionApprovalPrompt={permissionApproval.activePrompt}
         toast={toast}
-        onCancelClearHistory={() => surfaces.setClearHistoryOpen(false)}
-        onConfirmClearHistory={() => void clearHistory()}
         onCancelDeleteThread={() => setDeleteThreadCandidate(null)}
         onConfirmDeleteThread={(thread) => {
           void threads.deleteSingleThread(thread.id, thread.projectId ?? activeProjectId).then(() => {
@@ -878,6 +830,7 @@ function App(props: { initialAppSettings: AppSettings }) {
         onCancelRemember={() => setRememberingMessage(null)}
         onConfirmRemember={(content, message) => void rememberMessage(content, message)}
         onAnswerAskUserQuestion={(response) => void askUserQuestion.answer(response)}
+        onAnswerPermissionApproval={(response) => void permissionApproval.answer(response)}
       />
     </AppShell>
     </I18nProvider>
@@ -887,7 +840,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     surfaces.closeFloatingSurfaces();
     setDeleteThreadCandidate(null);
     setRememberingMessage(null);
-    setTodoAddOpen(false);
   }
 
   function selectProjectScope(projectId: string | null, mode: "push" | "replace" = "push") {
@@ -921,10 +873,6 @@ function App(props: { initialAppSettings: AppSettings }) {
       selectThread(nextRoute.threadId, nextRoute.projectId ?? null);
       openRightPanelTab(nextRoute.panel, { forceNew: false, pushRoute: false });
       setRightPanelCollapsed(false);
-      closeFloatingSurfaces();
-      return;
-    }
-    if (nextRoute.name === "todo") {
       closeFloatingSurfaces();
       return;
     }

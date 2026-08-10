@@ -10,6 +10,8 @@ import { findGitBashPath, isWindowsBashLauncherPath } from "../utils/shellPaths.
 import { abortError, isAbortError, throwIfAborted } from "../utils/abort.js";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import type { PermissionMode } from "../../shared/permissions.js";
+import type { PermissionApprovalRequest } from "./extensions/permissionGate/index.js";
 
 export type AssistantReply = {
   content: string;
@@ -53,6 +55,10 @@ type RuntimeChatRequest = ChatSendRequest & {
     search(query: string, signal?: AbortSignal): Promise<WebSearchResult[]>;
   };
   askUserQuestion?: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => Promise<AskUserQuestionResponse>;
+  permissionMode?: PermissionMode;
+  permissionProjectRoot?: string | null;
+  requestPermissionApproval?: (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => Promise<"allow-once" | "deny">;
+  availableSkillPaths?: string[];
   promptTemplatePaths?: string[];
   remoteConnection?: RemoteConnectionRecord | null;
   sessionManager?: SessionManager;
@@ -119,8 +125,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       .filter((skill) => (parsed.inlineSkillIds ?? []).includes(skill.id))
       .map((skill) => skill.name);
     const remotePrefix = request.remoteConnection?.active && request.toolsEnabled ? `Remote coding target: ${request.remoteConnection.name}. ` : "";
-    const chromeTakeoverFlow = await runMockChromeTakeoverFlow(request, lastUserText, options.signal);
-    const content = remotePrefix + (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
+    let chromeTakeoverFlow: Awaited<ReturnType<typeof runMockChromeTakeoverFlow>> = null;
+    let content = "";
     const latestUpdate: { current?: RuntimeUpdate } = {};
     const onUpdate = options.onUpdate
       ? (update: RuntimeUpdate) => {
@@ -129,6 +135,9 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }
       : undefined;
     try {
+      chromeTakeoverFlow = await runMockChromeTakeoverFlow(request, lastUserText, options.signal);
+      const permissionFlow = await runMockPermissionFlow(request, lastUserText, options.signal);
+      content = permissionFlow ?? remotePrefix + (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
       if (lastUserText.toLowerCase().includes("working failure")) {
         throw new Error("Mock Working failure.");
       }
@@ -247,10 +256,14 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     reasoningEffort: request.reasoningEffort,
     webSearchTool: request.webSearchTool,
     askUserQuestion: request.askUserQuestion,
+    permissionMode: request.permissionMode ?? "ask",
+    permissionProjectRoot: request.permissionProjectRoot ?? null,
+    requestPermissionApproval: request.requestPermissionApproval,
     skillContext: request.skillContext ?? [],
     memoryContext: request.memoryContext ?? [],
     webSearchContext: request.webSearchContext ?? [],
     packageSkillPaths: request.packageSkillPaths ?? [],
+    availableSkillPaths: request.availableSkillPaths ?? [],
     packageExtensionPaths: request.packageExtensionPaths ?? [],
     promptTemplatePaths: request.promptTemplatePaths,
     remoteConnection: request.remoteConnection,
@@ -845,6 +858,52 @@ function promptTextForTaxonomy(content: string, attachments: NonNullable<ChatSen
     lines.push("", "Attachments:", ...attachments.map((item) => `- ${item.kind}: ${item.path}`));
   }
   return lines.join("\n");
+}
+
+async function runMockPermissionFlow(
+  request: RuntimeChatRequest,
+  lastUserText: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  const normalized = lastUserText.toLowerCase();
+  if (!normalized.includes("permission approval fixture")) return null;
+  if (request.permissionMode === "full-access") return "Full access allowed the fixture without an approval prompt.";
+  if (!request.requestPermissionApproval) throw new Error("Permission approval fixture requires a host approval broker.");
+
+  const remote = request.remoteConnection?.active ? request.remoteConnection : null;
+  const target = remote ? "ssh" as const : "local" as const;
+  const cwd = remote?.remotePath?.trim() || request.cwd?.trim() || process.cwd();
+  const projectRoot = request.permissionProjectRoot ?? null;
+  const fileRequest = normalized.includes("write");
+  const insideProjectRequest = fileRequest && normalized.includes("inside");
+  if (insideProjectRequest && projectRoot) {
+    return "The project-scoped write fixture was allowed without an approval prompt.";
+  }
+  const decision = await request.requestPermissionApproval(fileRequest ? {
+    toolCallId: "mock-permission-write",
+    toolName: "write",
+    reason: projectRoot ? "outside-project" : "no-project",
+    summary: projectRoot ? "Write outside the current project: ../outside.txt" : "Write without an open project: fixture.txt",
+    target,
+    ...(remote ? { targetLabel: remote.name } : {}),
+    cwd,
+    projectRoot,
+    path: projectRoot ? "../outside.txt" : "fixture.txt",
+    resolvedPath: projectRoot ? `${projectRoot}/../outside.txt` : `${cwd}/fixture.txt`
+  } : {
+    toolCallId: "mock-permission-bash",
+    toolName: "bash",
+    reason: "bash",
+    summary: "Run shell command: echo jasmine-permission-fixture",
+    target,
+    ...(remote ? { targetLabel: remote.name } : {}),
+    cwd,
+    projectRoot,
+    command: "echo jasmine-permission-fixture"
+  }, signal);
+  return decision === "allow-once"
+    ? "Permission approved once for the fixture."
+    : "Permission denied for the fixture.";
 }
 
 function mockContent(lastUserText: string, imageCount: number, toolsEnabled: boolean, memoryContext: string[], skillContext: RuntimeSkillManifest[], inlineSkillNames: string[], webSearchContext: WebSearchResult[]): string {

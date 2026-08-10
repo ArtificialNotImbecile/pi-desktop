@@ -27,12 +27,12 @@ import type {
   WebSearchSettingsUpdateRequest
 } from "../../../shared/ipc";
 import type { SettingsSection as SettingsSectionKey } from "./ProviderSettingsPanel";
-import { ChromeControlSettingsPage } from "./ChromeControlSettingsPage";
 import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginsSettingsPage } from "./PluginsSettingsPage";
 import { PromptTemplatesSettingsPage } from "./PromptTemplatesSettingsPage";
 import { SkillsSettingsPage } from "./SkillsSettingsPage";
 import { SettingsHeader } from "./SettingsHeader";
+import { AboutSettingsPage } from "./AboutSettingsPage";
 import { WebSearchSettingsPage } from "./WebSearchSettingsPage";
 import { DEFAULT_BRAND_SETTINGS } from "../../../shared/brand";
 import { defaultAppearance } from "../../hooks/useThemeAppearance";
@@ -43,7 +43,6 @@ import DEFAULT_BRAND_LOGO_URL from "../../assets/jasmine-logo.png";
 import { Button, Select, Switch, TextArea, TextInput } from "../ui";
 import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon, WorkingIcon } from "../icons/Icons";
 import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
-import packageMetadata from "../../../../package.json";
 
 export function LocalSettingsPage(props: {
   section: Exclude<SettingsSectionKey, "providers" | "remote">;
@@ -209,16 +208,6 @@ export function LocalSettingsPage(props: {
     );
   }
 
-  if (props.section === "chrome") {
-    return (
-      <ChromeControlSettingsPage
-        settings={props.appSettings}
-        saving={props.appSettingsSaving}
-        onUpdateSettings={props.onUpdateAppSettings}
-      />
-    );
-  }
-
   if (props.section === "prompts") {
     return (
       <PromptTemplatesSettingsPage
@@ -255,32 +244,7 @@ export function LocalSettingsPage(props: {
   }
 
   if (props.section === "about") {
-    return (
-      <>
-        <SettingsHeader title={t("settings.about.title")} />
-        <section className="settings-group">
-          <div className="settings-row">
-            <div>
-              <strong>{t("settings.about.positioning")}</strong>
-              <small>{t("settings.about.description")}</small>
-            </div>
-          </div>
-          <div className="settings-row">
-            <div>
-              <strong>{t("settings.about.version")}</strong>
-            </div>
-            <span className="settings-state-pill">{packageMetadata.version}</span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <strong>{t("settings.about.dataLocation")}</strong>
-              <small>{t("settings.about.dataLocationDescription")}</small>
-            </div>
-            <span className="settings-state-pill">{t("app.localOnly")}</span>
-          </div>
-        </section>
-      </>
-    );
+    return <AboutSettingsPage />;
   }
 
   if (props.section === "appearance") {
@@ -803,6 +767,7 @@ function GeneralSettingsPage(props: {
                 checked={workingNotificationsDraft.includeDetails}
                 disabled={props.loading || props.saving || workingNotificationsDraft.mode === "never"}
                 aria-label={t("settings.general.notificationDetailsAria")}
+                title={t("settings.general.notificationDetailsAria")}
                 onChange={(includeDetails) => {
                   setDraftTouched(true);
                   setWorkingNotificationsDraft((current) => ({ ...current, includeDetails }));

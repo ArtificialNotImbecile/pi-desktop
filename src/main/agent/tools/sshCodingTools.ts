@@ -6,6 +6,8 @@ import type {
   WriteOperations
 } from "@earendil-works/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent";
+import { access as accessLocalFile, readFile as readLocalFile, realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import { sshExec, sshExecWithStatus } from "../../services/remoteConnections.js";
 import type { RemoteConnectionRecord as JasmineRemoteConnection } from "../../../shared/ipc.js";
 
@@ -13,21 +15,28 @@ export function createSshCodingTools(input: {
   connection: JasmineRemoteConnection;
   localCwd: string;
   remoteCwd: string;
+  localResourcePaths?: string[];
 }): ToolDefinition[] {
-  const { connection, localCwd, remoteCwd } = input;
+  const { connection, localCwd, remoteCwd, localResourcePaths = [] } = input;
+  const localResourceRoots = localResourcePaths.map(localResourceRoot);
   return [
-    createReadTool(localCwd, { operations: createRemoteReadOps(connection, remoteCwd, localCwd) }),
+    createReadTool(localCwd, { operations: createRemoteReadOps(connection, remoteCwd, localCwd, localResourceRoots) }),
     createWriteTool(localCwd, { operations: createRemoteWriteOps(connection, remoteCwd, localCwd) }),
     createEditTool(localCwd, { operations: createRemoteEditOps(connection, remoteCwd, localCwd) }),
     createBashTool(localCwd, { operations: createRemoteBashOps(connection, remoteCwd, localCwd) })
   ];
 }
 
-function createRemoteReadOps(connection: JasmineRemoteConnection, remoteCwd: string, localCwd: string): ReadOperations {
+function createRemoteReadOps(connection: JasmineRemoteConnection, remoteCwd: string, localCwd: string, localResourceRoots: string[] = []): ReadOperations {
   return {
-    readFile: (p) => sshExec(connection, `cat ${quote(toRemotePath(p, remoteCwd, localCwd))}`),
-    access: (p) => sshExec(connection, `test -r ${quote(toRemotePath(p, remoteCwd, localCwd))}`).then(() => undefined),
+    readFile: async (p) => isLocalSkillResource(p, localResourceRoots)
+      ? readLocalFile(await assertCanonicalLocalResource(p, localResourceRoots))
+      : sshExec(connection, `cat ${quote(toRemotePath(p, remoteCwd, localCwd))}`),
+    access: async (p) => isLocalSkillResource(p, localResourceRoots)
+      ? accessLocalFile(await assertCanonicalLocalResource(p, localResourceRoots))
+      : sshExec(connection, `test -r ${quote(toRemotePath(p, remoteCwd, localCwd))}`).then(() => undefined),
     detectImageMimeType: async (p) => {
+      if (isLocalSkillResource(p, localResourceRoots)) return null;
       try {
         const output = await sshExec(connection, `file --mime-type -b ${quote(toRemotePath(p, remoteCwd, localCwd))}`);
         const mimeType = output.toString("utf8").trim();
@@ -37,6 +46,38 @@ function createRemoteReadOps(connection: JasmineRemoteConnection, remoteCwd: str
       }
     }
   };
+}
+
+function localResourceRoot(resourcePath: string): string {
+  return path.basename(resourcePath).toLowerCase() === "skill.md" ? path.dirname(resourcePath) : resourcePath;
+}
+
+function isLocalSkillResource(candidate: string, roots: string[]): boolean {
+  const normalizedCandidate = normalizeLocalPath(candidate);
+  return roots.some((root) => {
+    const normalizedRoot = normalizeLocalPath(root);
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+  });
+}
+
+async function assertCanonicalLocalResource(candidate: string, roots: string[]): Promise<string> {
+  const canonicalCandidate = await realpath(candidate);
+  for (const root of roots) {
+    const canonicalRoot = await canonicalResourceRoot(root);
+    if (isLocalSkillResource(canonicalCandidate, [canonicalRoot])) return canonicalCandidate;
+  }
+  throw new Error("Local skill resource resolves outside its configured directory.");
+}
+
+async function canonicalResourceRoot(root: string): Promise<string> {
+  const entry = await stat(root).catch(() => null);
+  if (entry?.isDirectory()) return realpath(root);
+  return realpath(path.dirname(root));
+}
+
+function normalizeLocalPath(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function createRemoteWriteOps(connection: JasmineRemoteConnection, remoteCwd: string, localCwd: string): WriteOperations {

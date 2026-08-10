@@ -27,7 +27,7 @@ export function usePlugins(options: {
       setSkills(nextSkills);
       options.onError(null);
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to load plugins."));
+      options.onError(errorMessage(caught, "Failed to load packages."));
     } finally {
       setLoading(false);
     }
@@ -39,10 +39,10 @@ export function usePlugins(options: {
       const next = await getBridge().installPlugin(request);
       setPackages(next);
       await refreshSkills();
-      options.onToast("Plugin installed");
+      options.onToast("Package installed");
       return next;
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to install plugin."));
+      options.onError(errorMessage(caught, "Failed to install package."));
       return null;
     } finally {
       setSavingSource(null);
@@ -55,10 +55,10 @@ export function usePlugins(options: {
       const next = await getBridge().updatePlugin(request);
       setPackages(next);
       await refreshSkills();
-      options.onToast("Plugin updated");
+      options.onToast("Package updated");
       return next;
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to update plugin."));
+      options.onError(errorMessage(caught, "Failed to update package."));
       return null;
     } finally {
       setSavingSource(null);
@@ -71,10 +71,10 @@ export function usePlugins(options: {
       const next = await getBridge().removePlugin(request);
       setPackages(next);
       await refreshSkills();
-      options.onToast("Plugin removed");
+      options.onToast("Package removed");
       return next;
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to remove plugin."));
+      options.onError(errorMessage(caught, "Failed to remove package."));
       return null;
     } finally {
       setSavingSource(null);
@@ -87,10 +87,10 @@ export function usePlugins(options: {
       const next = await getBridge().setPluginEnabled(request);
       setPackages(next);
       await refreshSkills();
-      options.onToast(request.enabled ? "Plugin enabled" : "Plugin disabled");
+      options.onToast(request.enabled ? "Package enabled" : "Package disabled");
       return next;
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to update plugin."));
+      options.onError(errorMessage(caught, "Failed to update package."));
       return null;
     } finally {
       setSavingSource(null);

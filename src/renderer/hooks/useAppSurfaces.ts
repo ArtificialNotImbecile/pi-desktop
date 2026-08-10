@@ -12,7 +12,6 @@ export function useAppSurfaces() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("general");
-  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
 
   const closeFloatingSurfaces = useCallback(() => {
     setSearchOpen(false);
@@ -23,7 +22,6 @@ export function useAppSurfaces() {
     setMemoryOpen(false);
     setActivityOpen(false);
     setSettingsOpen(false);
-    setClearHistoryOpen(false);
   }, []);
 
   return {
@@ -47,8 +45,6 @@ export function useAppSurfaces() {
     setSettingsOpen,
     settingsInitialSection,
     setSettingsInitialSection,
-    clearHistoryOpen,
-    setClearHistoryOpen,
     closeFloatingSurfaces
   };
 }

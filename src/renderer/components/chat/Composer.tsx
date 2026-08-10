@@ -1,6 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
-import type { AiProvider, ChatMessage, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ClipboardImagePasteRequest, FileSearchResult, PickedPath, PluginPackageRecord, PromptTemplateRecord, ReasoningEffort, RemoteConnectionRecord, SkillRecord, WorkspaceProject } from "../../../shared/ipc";
+import type { AiProvider, ChatMessage, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ClipboardImagePasteRequest, FileSearchResult, PermissionMode, PickedPath, PluginPackageRecord, PromptTemplateRecord, ReasoningEffort, RemoteConnectionRecord, SkillRecord, WorkspaceProject } from "../../../shared/ipc";
 import type { RunState } from "../../types";
 import {
   ChevronDownIcon,
@@ -10,6 +10,7 @@ import {
   PaperclipIcon,
   PlugIcon,
   SendIcon,
+  ShieldIcon,
   SkillIcon,
   StopIcon,
   TerminalIcon,
@@ -64,6 +65,8 @@ export const Composer = memo(function Composer(props: {
   remoteConnections: RemoteConnectionRecord[];
   activeRemoteConnection: RemoteConnectionRecord | null;
   toolsEnabled: boolean;
+  permissionMode: PermissionMode;
+  permissionModeSaving: boolean;
   reasoningEffort: ReasoningEffort;
   contextUsageLabel: string;
   contextUsageTitle: string;
@@ -101,6 +104,7 @@ export const Composer = memo(function Composer(props: {
   onOpenSkillSettings(): void;
   onOpenPluginSettings(): void;
   onToggleTools(): void;
+  onSelectPermissionMode(mode: PermissionMode): void;
   onToggleModelMenu(): void;
   onSelectProvider(providerId: string): void;
   onSelectModel(providerId: string, modelId: string): void;
@@ -117,10 +121,13 @@ export const Composer = memo(function Composer(props: {
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const skillTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const permissionTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerId = useId();
   const skillTriggerId = useId();
   const toolsTriggerId = useId();
+  const permissionTriggerId = useId();
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
   const [editingQueuedId, setEditingQueuedId] = useState<string | null>(null);
   const [queuedDraft, setQueuedDraft] = useState("");
   const [previewAttachment, setPreviewAttachment] = useState<PickedPath | null>(null);
@@ -543,6 +550,33 @@ export const Composer = memo(function Composer(props: {
             if (!open && props.skillMenuOpen) props.onToggleSkillMenu();
           }}
         />
+        <div className="permission-menu-wrap">
+          <button
+            ref={permissionTriggerRef}
+            id={permissionTriggerId}
+            className={`permission-mode-pill ${props.permissionMode === "full-access" ? "full-access" : ""} ${permissionMenuOpen ? "active" : ""}`}
+            type="button"
+            aria-label={t("permission.mode.menu")}
+            aria-expanded={permissionMenuOpen}
+            disabled={props.permissionModeSaving}
+            onClick={() => setPermissionMenuOpen((open) => !open)}
+          >
+            <ShieldIcon />
+            <span>{props.permissionMode === "full-access" ? t("permission.mode.full") : t("permission.mode.ask")}</span>
+            <ChevronDownIcon />
+          </button>
+          <PermissionModeMenu
+            open={permissionMenuOpen}
+            anchorRef={permissionTriggerRef}
+            triggerId={permissionTriggerId}
+            mode={props.permissionMode}
+            onOpenChange={setPermissionMenuOpen}
+            onSelect={(mode) => {
+              setPermissionMenuOpen(false);
+              props.onSelectPermissionMode(mode);
+            }}
+          />
+        </div>
         <span className="composer-spacer" />
         {props.activeRemoteConnection && (
           <span className="remote-meter" title={t("composer.remoteTitle", { target: remoteTarget(props.activeRemoteConnection) })}>
@@ -664,6 +698,52 @@ function ToolsMenu(props: {
           <b>{t("composer.manage")}</b>
         </span>
       </button>
+    </MenuSurface>
+  );
+}
+
+function PermissionModeMenu(props: {
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  triggerId: string;
+  mode: PermissionMode;
+  onOpenChange(open: boolean): void;
+  onSelect(mode: PermissionMode): void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <MenuSurface
+      anchorRef={props.anchorRef}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      placement="top-start"
+      minWidth={300}
+      maxWidth={360}
+      maxHeight={240}
+      className="permission-mode-menu"
+      aria-labelledby={props.triggerId}
+    >
+      <MenuItem
+        className="permission-mode-item"
+        leftIcon={<ShieldIcon />}
+        description={t("permission.mode.askDescription")}
+        selected={props.mode === "ask"}
+        trailing={props.mode === "ask" ? <CheckIcon /> : null}
+        onClick={() => props.onSelect("ask")}
+      >
+        {t("permission.mode.ask")}
+      </MenuItem>
+      <MenuItem
+        className="permission-mode-item full-access"
+        leftIcon={<ShieldIcon />}
+        description={t("permission.mode.fullDescription")}
+        selected={props.mode === "full-access"}
+        trailing={props.mode === "full-access" ? <CheckIcon /> : null}
+        onClick={() => props.onSelect("full-access")}
+      >
+        {t("permission.mode.full")}
+      </MenuItem>
     </MenuSurface>
   );
 }

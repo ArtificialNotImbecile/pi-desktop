@@ -110,11 +110,12 @@ Provider adapter 或 Pi 依赖升级后，至少验证以下 payload：
 
 ## Jasmine 的实现与审计界面
 
-Context Taxonomy schema v6 在 `before_provider_request` 上只读观察最终 payload，并把 sanitized raw payload 以 gzip 形式保存到 SQLite 的独立 `context_captures` 表。它不修改 Pi 事件 payload，也不把调试数据塞入 `chat_messages.timeline_json`。
+Context Taxonomy schema v7 在 `before_provider_request` 上只读观察最终 payload，并把 sanitized raw payload 以 gzip 形式保存到 SQLite 的独立 `context_captures` 表。它不修改 Pi 事件 payload，也不把调试数据塞入 `chat_messages.timeline_json`。
 
 - 默认界面只加载最新用户任务的 provider 请求摘要，并可在 `1/N` 请求之间切换；本轮捕获事务完成后会立即刷新，不依赖下一条用户消息触发。
-- 派生视图按 wire order 分开显示 text、reasoning、tool call、tool result 与 attachment；`tool_call_id` 会保留用于配对。展开一条 message 时，其内部 parts 同步展开。
-- classifier 尚未识别的顶层字段、message 同级字段或结构化 content 字段不会被丢弃，而是在原始线序位置标为 `unclassified` 并显示准确 JSONPath。这样新 provider 形态会直接暴露为 adapter 缺口，同时 raw payload 仍是最终审计事实。
+- 派生视图固定按 messages、tools、request options、unclassified fields 分层；每层内部保持 provider 原始相对顺序。text、reasoning、tool call、tool result 与 attachment 各显示一次，`tool_call_id` 会保留用于配对。展开一条 message 时，其内部 parts 同步展开。
+- `request_options` 在每次捕获中最多出现一次（没有 request option 时不生成），其内部字段保持 provider 顶层相对顺序。完整 raw 顶层键顺序只由 `payloadShape.topLevelOrder` 精确表达，不再与派生语义顺序混为一谈。
+- classifier 尚未识别的顶层字段、message 同级字段或结构化 content 字段不会被丢弃。顶层未知字段聚合为一个 `unclassified` item，各字段仍显示准确 JSONPath 和原始相对顺序；message 内未知字段保留在原 message 内。这样新 provider 形态会直接暴露为 adapter 缺口，同时 raw payload 仍是最终审计事实。
 - raw payload 只有在展开时才按 64 KiB 分块解压传给 renderer；hash 明确表示完整 sanitized payload。
 - DeepSeek/Kimi validator 比较 Pi 当前 active/compacted session context 与实际 provider payload，显示 `pass`、`fail`、`not_applicable` 或 `unknown`。未知模型和取不到规范上下文时不会误报通过。
 - provider 返回的 input/cache usage 是总量事实；分项 token 仅用于构成估算，CJK 按接近一字一 token、其余文本按约四字符一 token 估算。

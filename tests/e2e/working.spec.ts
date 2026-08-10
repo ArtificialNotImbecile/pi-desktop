@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { launchJasmine, navigationPath, openSettings, quitElectron, saveSettings, type HarnessApp } from "./helpers";
+import { launchJasmine, navigationPath, openSettings, quitElectron, rootDir, saveSettings, type HarnessApp } from "./helpers";
 
 test.describe("Working task center", () => {
   let harness: HarnessApp;
@@ -61,11 +61,35 @@ test.describe("Working task center", () => {
     await expect(page.locator(".working-group:not(.attention) .working-task.status-running")).toHaveCount(3);
     await expect(page.locator(".sidebar-feature-row").filter({ hasText: "Working" })).toContainText("4");
 
+    const taskGeometry = await page.locator(".working-task").evaluateAll((rows) => rows.map((row) => {
+      const card = row.getBoundingClientRect();
+      const content = Array.from(row.querySelectorAll<HTMLElement>(".working-task-main, .working-task-copy, .working-task-activity, .working-task-aside, .working-stop"));
+      return {
+        height: card.height,
+        content: content.map((item) => {
+          const box = item.getBoundingClientRect();
+          return { top: box.top, right: box.right, bottom: box.bottom, left: box.left };
+        }),
+        card: { top: card.top, right: card.right, bottom: card.bottom, left: card.left }
+      };
+    }));
+    for (const task of taskGeometry) {
+      expect(task.height).toBeGreaterThanOrEqual(72);
+      for (const box of task.content) {
+        expect(box.top).toBeGreaterThanOrEqual(task.card.top - 1);
+        expect(box.left).toBeGreaterThanOrEqual(task.card.left - 1);
+        expect(box.right).toBeLessThanOrEqual(task.card.right + 1);
+        expect(box.bottom).toBeLessThanOrEqual(task.card.bottom + 1);
+      }
+    }
     const waitingDialog = page.getByRole("dialog").filter({ hasText: "Should this Working task continue?" });
     await expect(waitingDialog).toBeVisible();
     await waitingDialog.getByRole("radio", { name: /Continue/ }).click();
     await waitingDialog.getByRole("button", { name: /Submit/ }).click();
     await expect(page.locator(".working-task.status-waiting_user")).toHaveCount(0, { timeout: 5_000 });
+    const screenshotDir = path.join(rootDir, "test-results", "ui-harness", "e2e");
+    await mkdir(screenshotDir, { recursive: true });
+    await page.screenshot({ path: path.join(screenshotDir, "working-task-layout.png") });
 
     const firstRunning = page.locator('.working-task[data-request-id="working-e2e-1"]');
     await firstRunning.getByRole("button", { name: "Stop" }).click();

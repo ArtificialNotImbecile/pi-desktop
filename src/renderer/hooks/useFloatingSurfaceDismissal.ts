@@ -11,7 +11,6 @@ export function useFloatingSurfaceDismissal(options: {
   skillMenuOpen: boolean;
   commandOpen: boolean;
   settingsOpen: boolean;
-  clearHistoryOpen: boolean;
   deleteThreadOpen: boolean;
   rememberDialogOpen: boolean;
   closeFloatingSurfaces(): void;
@@ -31,7 +30,6 @@ export function useFloatingSurfaceDismissal(options: {
       options.skillMenuOpen ||
       options.commandOpen ||
       options.settingsOpen ||
-      options.clearHistoryOpen ||
       options.deleteThreadOpen ||
       options.rememberDialogOpen;
     if (!hasFloatingSurface) return;
@@ -76,7 +74,6 @@ export function useFloatingSurfaceDismissal(options: {
     options.skillMenuOpen,
     options.commandOpen,
     options.settingsOpen,
-    options.clearHistoryOpen,
     options.deleteThreadOpen,
     options.rememberDialogOpen
   ]);

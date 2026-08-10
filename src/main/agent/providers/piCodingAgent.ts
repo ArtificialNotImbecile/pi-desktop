@@ -3,13 +3,14 @@ import { createAgentSessionFromServices, createAgentSessionServices, defineTool,
 import type { ExtensionFactory, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, ThinkingContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
+import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, PermissionMode, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
 import type { RuntimeProviderConfig } from "../runtime.js";
 import type { RuntimeGeneratedMessage, RuntimeQueueControls } from "../runtime.js";
 import type { RuntimeSkillManifest } from "../../services/skillManifests.js";
 import { createSshCodingTools } from "../tools/sshCodingTools.js";
 import { createContextCaptureExtension } from "../extensions/contextCapture/index.js";
-import { remoteLabel, testRemoteConnection } from "../../services/remoteConnections.js";
+import { createJasminePermissionGateExtension, type PermissionApprovalRequest } from "../extensions/permissionGate/index.js";
+import { remoteLabel, sshExec, testRemoteConnection } from "../../services/remoteConnections.js";
 import { abortError } from "../../utils/abort.js";
 import { mergeWebSearchResultsInto } from "../../utils/webSearchResults.js";
 
@@ -30,11 +31,15 @@ type PiCodingAgentChatInput = {
     search(query: string, signal?: AbortSignal): Promise<WebSearchResult[]>;
   };
   askUserQuestion?: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => Promise<AskUserQuestionResponse>;
+  permissionMode?: PermissionMode;
+  permissionProjectRoot?: string | null;
+  requestPermissionApproval?: (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => Promise<"allow-once" | "deny">;
   promptTemplatePaths?: string[];
   skillContext?: RuntimeSkillManifest[];
   memoryContext?: string[];
   webSearchContext?: WebSearchResult[];
   packageSkillPaths?: string[];
+  availableSkillPaths?: string[];
   packageExtensionPaths?: string[];
   remoteConnection?: RemoteConnectionRecord | null;
   shellPath?: string;
@@ -124,14 +129,15 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   if (input.askUserQuestion) {
     customTools.push(createAskUserQuestionTool(input.askUserQuestion));
   }
+  const additionalSkillPaths = runtimeSkillPaths(input.skillContext, input.packageSkillPaths, input.availableSkillPaths);
   if (remote) {
     customTools.push(...createSshCodingTools({
       connection: remote.connection,
       localCwd: cwd,
-      remoteCwd: remote.remoteCwd
+      remoteCwd: remote.remoteCwd,
+      localResourcePaths: additionalSkillPaths
     }));
   }
-  const additionalSkillPaths = selectedSkillPaths(input.skillContext, input.packageSkillPaths);
   const currentPromptText = promptText(input.content, input.attachments);
   const currentPromptAnchorText = promptAnchorText(input.content, input.attachments);
   const promptAppends = [
@@ -151,6 +157,32 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       currentUserPromptText: currentPromptAnchorText,
       getCanonicalMessages: () => sessionManager.buildSessionContext().messages,
       onCapture: input.onContextTaxonomy
+    }));
+  }
+  if (input.permissionMode) {
+    extensionFactories.push(createJasminePermissionGateExtension({
+      getMode: () => input.permissionMode ?? "ask",
+      getScope: () => remote ? {
+        projectRoot: input.permissionProjectRoot ? remote.remoteCwd : null,
+        cwd: remote.remoteCwd,
+        pathFlavor: "posix",
+        target: "ssh",
+        label: remoteLabel({ ...remote.connection, remotePath: remote.remoteCwd })
+      } : {
+        projectRoot: input.permissionProjectRoot ?? null,
+        cwd,
+        pathFlavor: "native",
+        target: "local"
+      },
+      ...(input.requestPermissionApproval ? { requestApproval: input.requestPermissionApproval } : {}),
+      ...(remote ? {
+        canonicalizePath: async ({ path: candidate }) => {
+          const canonical = await sshExec(remote.connection, `realpath -m -- ${quotePosixShell(candidate)}`, { signal: input.signal, timeoutMs: 8_000 });
+          const value = canonical.toString("utf8").trim();
+          if (!value.startsWith("/")) throw new Error("SSH realpath did not return an absolute path.");
+          return value;
+        }
+      } : {})
     }));
   }
 
@@ -378,11 +410,21 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   }
 }
 
-function selectedSkillPaths(skillContext: RuntimeSkillManifest[] | undefined, packageSkillPaths: string[] | undefined): string[] {
+function runtimeSkillPaths(
+  skillContext: RuntimeSkillManifest[] | undefined,
+  packageSkillPaths: string[] | undefined,
+  availableSkillPaths: string[] | undefined
+): string[] {
   return Array.from(new Set([
     ...(skillContext ?? []).map((skill) => skill.skillFilePath),
-    ...(packageSkillPaths ?? [])
+    ...(packageSkillPaths ?? []),
+    ...(availableSkillPaths ?? [])
   ]));
+}
+
+function quotePosixShell(value: string): string {
+  if (value.includes("\0")) throw new Error("Path contains a null byte.");
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 type TrackedQueuedMessage = ChatQueuedMessage & {

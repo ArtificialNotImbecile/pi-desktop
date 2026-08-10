@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_BRAND_LOGO_DATA_URL_LENGTH, MAX_BRAND_SUBTITLE_LENGTH, MAX_BRAND_TITLE_LENGTH, isSupportedBrandLogoDataUrl } from "./brand.js";
+import { permissionModeSchema } from "./permissionSchemas.js";
 
 export const threadCreateSchema = z.object({
   title: z.string().trim().min(1).optional(),
@@ -54,15 +55,6 @@ export const projectRemoveSchema = z.object({
 
 export const projectOpenInExplorerSchema = z.object({
   id: z.string().min(1)
-});
-
-export const todoAddSchema = z.object({
-  text: z.string().trim().min(1).max(20_000),
-  projectId: z.union([z.string().min(1), z.null()]).optional()
-});
-
-export const todoOpenFileSchema = z.object({
-  kind: z.enum(["todo", "log", "schema"])
 });
 
 export const messageListRequestSchema = z.union([
@@ -440,6 +432,7 @@ export const appSettingsUpdateSchema = z.object({
     mode: z.enum(["background", "always", "never"]).optional(),
     includeDetails: z.boolean().optional()
   }).optional(),
+  permissionMode: permissionModeSchema.optional(),
   skillEditorPath: z.string().trim().max(1000).optional(),
   terminalShellPath: z.string().trim().max(1000).optional()
 });
@@ -505,7 +498,7 @@ export const spotlightSearchSchema = z.object({
 });
 
 export const spotlightExecuteSchema = z.object({
-  commandId: z.enum(["open-thread", "new-chat", "open-settings", "open-todo", "add-todo"]),
+  commandId: z.enum(["open-thread", "new-chat", "open-settings"]),
   threadId: z.string().min(1).optional(),
   projectId: z.union([z.string().min(1), z.null()]).optional(),
   section: z.string().min(1).max(40).optional()

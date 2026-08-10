@@ -73,22 +73,6 @@ function buildFixedCommands(query: string): SpotlightItem[] {
       keywords: ["new", "chat", "\u65b0\u5bf9\u8bdd"]
     },
     {
-      id: "cmd:todo",
-      commandId: "open-todo",
-      label: "TODO",
-      description: "Open TODO",
-      group: "commands",
-      keywords: ["todo", "task", "tasks", "\u5f85\u529e", "\u4ee3\u529e", "\u8bb0\u5f55"]
-    },
-    {
-      id: "cmd:add-todo",
-      commandId: "add-todo",
-      label: "Add TODO",
-      description: "Capture a task or idea",
-      group: "commands",
-      keywords: ["add", "todo", "task", "capture", "\u6dfb\u52a0", "\u5f85\u529e", "\u8bb0\u5f55"]
-    },
-    {
       id: "cmd:settings",
       commandId: "open-settings",
       label: "Settings",

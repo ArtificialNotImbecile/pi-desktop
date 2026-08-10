@@ -14,6 +14,10 @@ export async function prepareSkillManifests(skills: SkillRecord[], userDataDir: 
   return Promise.all(skills.map((skill) => prepareSkillManifest(skill, userDataDir)));
 }
 
+export async function prepareEnabledSkillManifests(skills: SkillRecord[], userDataDir: string): Promise<RuntimeSkillManifest[]> {
+  return prepareSkillManifests(skills.filter((skill) => skill.enabled), userDataDir);
+}
+
 async function prepareSkillManifest(skill: SkillRecord, userDataDir: string): Promise<RuntimeSkillManifest> {
   if (skill.skillFilePath || skill.sourcePath) {
     return {

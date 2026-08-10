@@ -1,4 +1,4 @@
-export const CONTEXT_TAXONOMY_SCHEMA_VERSION = 6 as const;
+export const CONTEXT_TAXONOMY_SCHEMA_VERSION = 7 as const;
 
 export type ContextTaxonomyKind =
   | "system_prompt"

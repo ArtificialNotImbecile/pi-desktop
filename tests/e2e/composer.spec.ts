@@ -61,7 +61,7 @@ test.describe("Jasmine composer", () => {
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  test("composer grows with multiline input and Tools menu exposes always-on tools plus plugins", async () => {
+  test("composer grows with multiline input and Tools menu exposes always-on tools plus packages", async () => {
     const { page } = harness;
     const composer = page.locator(".rich-composer-editor");
     const initialHeight = await composer.evaluate((node) => node.getBoundingClientRect().height);
@@ -77,10 +77,10 @@ test.describe("Jasmine composer", () => {
     await expect(page.locator(".tools-menu").getByRole("menuitem")).toHaveCount(2);
     await expect(page.locator(".tools-menu").getByRole("menuitemcheckbox")).toHaveCount(0);
     await expect(page.locator(".tools-menu")).toContainText("Pi tools");
-    await expect(page.locator(".tools-menu")).toContainText("Plugins");
-    await page.locator(".tools-menu").getByRole("menuitem", { name: /Plugins/ }).click();
+    await expect(page.locator(".tools-menu")).toContainText("Packages");
+    await page.locator(".tools-menu").getByRole("menuitem", { name: /Packages/ }).click();
     await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-nav button.active")).toContainText("Plugins");
+    await expect(page.locator(".settings-nav button.active")).toContainText("Packages");
     await page.getByRole("button", { name: "Close settings" }).click();
     await expect(page.locator(".composer").getByRole("button", { name: "Memory" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Voice" })).toHaveCount(0);

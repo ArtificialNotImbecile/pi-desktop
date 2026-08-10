@@ -64,7 +64,7 @@ export function useThreads(options: { onError(message: string): void; onResetCha
       setThreads((current) => current.map((thread) => (thread.id === threadId ? updated : thread)));
       return updated;
     } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to update active plugins."));
+      options.onError(errorMessage(caught, "Failed to update active packages."));
       return null;
     }
   }
@@ -94,25 +94,6 @@ export function useThreads(options: { onError(message: string): void; onResetCha
     } catch (caught) {
       options.onError(errorMessage(caught, "Failed to create a new chat."));
       return null;
-    }
-  }
-
-  async function clearHistory(): Promise<boolean> {
-    try {
-      if (threads.length > 0) {
-        const deletedIds = threads.map((thread) => thread.id);
-        await getBridge().deleteThreads(deletedIds);
-        options.onThreadsDeleted?.(deletedIds);
-      }
-      const thread = await getBridge().createThread({ title: "New chat" });
-      setThreads([thread]);
-      setActiveThreadId(thread.id);
-      options.onResetChatState();
-      options.onToast("History cleared");
-      return true;
-    } catch (caught) {
-      options.onError(errorMessage(caught, "Failed to clear history."));
-      return false;
     }
   }
 
@@ -162,7 +143,6 @@ export function useThreads(options: { onError(message: string): void; onResetCha
     patchThread,
     updateThreadActivePlugins,
     startNewChat,
-    clearHistory,
     renameThread,
     deleteSingleThread
   };

@@ -167,35 +167,6 @@ test.describe("Spotlight quick launcher", () => {
     }
   });
 
-  test("opens the Add TODO flow from Spotlight", async () => {
-    const harness = await launchJasmine("spotlight-add-todo");
-    const { app, page } = harness;
-    const todoText = "Spotlight captured TODO";
-
-    try {
-      await showSpotlight(app);
-      const spotlight = await waitForSpotlightPage(app, 10_000);
-      await spotlight.locator(".spotlight-input input").fill("add todo");
-      await spotlight.locator('.command-menu-row:has-text("Add TODO")').click();
-
-      await expect.poll(() => isSpotlightVisible(app)).toBe(false);
-      await expect.poll(async () =>
-        page.evaluate(() => window.__jasmineHarness?.snapshot()?.app?.navigation?.path ?? "")
-      ).toBe("/todo");
-      await expect(page.getByRole("textbox", { name: "TODO text" })).toBeFocused();
-      await page.getByRole("textbox", { name: "TODO text" }).fill(todoText);
-      await page.getByRole("button", { name: "Save TODO" }).click();
-      await expect(page.locator(".todo-section-list")).toContainText(todoText);
-      await expect.poll(async () =>
-        page.evaluate(() => window.__jasmineHarness?.snapshot()?.surfaces ?? [])
-      ).not.toContain("todoAdd");
-    } finally {
-      await quitJasmine(app);
-      await app.close().catch(() => undefined);
-      await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
   test("closes on Escape without losing the main window", async () => {
     const harness = await launchJasmine("spotlight-escape");
     const { app, page } = harness;

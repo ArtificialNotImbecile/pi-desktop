@@ -66,55 +66,80 @@ export function providerPayloadToContextTaxonomy(payload: unknown, metadata: Con
   const toolKey = record && Array.isArray(record.tools) ? "tools" : record && Array.isArray(record.toolDefinitions) ? "toolDefinitions" : null;
 
   if (record) {
-    for (const [key, value] of Object.entries(record)) {
-      if (key === messageKey) {
-        for (const message of messages) {
-          const role = String(message.role ?? "unknown");
-          const { kind, confidence } = classifyMessage(message, currentUserMessageIndex);
-          items.push(taxonomyItem({
-            order: order++,
-            role,
-            source: "provider.payload.messages",
-            label: providerMessageLabel(message, kind),
-            kind,
-            confidence,
-            payloadPath: message.payloadPath,
-            text: message.text,
-            parts: message.parts
-          }));
-        }
-        continue;
+    // Taxonomy items use a stable semantic hierarchy. Exact cross-section wire
+    // order belongs exclusively to payloadShape.topLevelOrder; within each
+    // section, array/property order still follows the sanitized provider payload.
+    if (messageKey) {
+      for (const message of messages) {
+        const role = String(message.role ?? "unknown");
+        const { kind, confidence } = classifyMessage(message, currentUserMessageIndex);
+        items.push(taxonomyItem({
+          order: order++,
+          role,
+          source: "provider.payload.messages",
+          label: providerMessageLabel(message, kind),
+          kind,
+          confidence,
+          payloadPath: message.payloadPath,
+          text: message.text,
+          parts: message.parts
+        }));
       }
-      if (key === toolKey) {
-        for (const tool of tools) {
-          items.push(taxonomyItem({
-            order: order++,
-            role: "tool_definition",
-            source: "provider.payload.tools",
-            label: tool.name ? `Tool definition: ${tool.name}` : `Tool definition ${tool.index + 1}`,
-            kind: "tool_definition",
-            confidence: 0.98,
-            payloadPath: tool.payloadPath,
-            text: tool.text,
-            parts: [taxonomyPart("metadata", "Tool definition", tool.text, tool.payloadPath)]
-          }));
-        }
-        continue;
-      }
+    }
 
-      const payloadPath = propertyPath("$", key);
+    if (toolKey) {
+      for (const tool of tools) {
+        items.push(taxonomyItem({
+          order: order++,
+          role: "tool_definition",
+          source: "provider.payload.tools",
+          label: tool.name ? `Tool definition: ${tool.name}` : `Tool definition ${tool.index + 1}`,
+          kind: "tool_definition",
+          confidence: 0.98,
+          payloadPath: tool.payloadPath,
+          text: tool.text,
+          parts: [taxonomyPart("metadata", "Tool definition", tool.text, tool.payloadPath)]
+        }));
+      }
+    }
+
+    const options = Object.entries(record).filter(([key]) => key !== messageKey && key !== toolKey && PROVIDER_OPTION_KEYS.has(key));
+    if (options.length > 0) {
+      const value = Object.fromEntries(options);
       const text = safeStringify(value);
-      const classified = PROVIDER_OPTION_KEYS.has(key);
       items.push(taxonomyItem({
         order: order++,
-        role: classified ? "request_option" : "unclassified",
-        source: classified ? "provider.payload.options" : "provider.payload.unclassified",
-        label: classified ? `Request option: ${key}` : `Unclassified payload field: ${key}`,
-        kind: classified ? "provider_options" : "unclassified",
-        confidence: classified ? 0.98 : 1,
-        payloadPath,
+        role: "request_options",
+        source: "provider.payload.options",
+        label: "Provider request options",
+        kind: "provider_options",
+        confidence: 0.98,
+        payloadPath: "$",
         text,
-        parts: [taxonomyPart(classified ? "metadata" : "unclassified", classified ? `Option: ${key}` : `Unclassified: ${key}`, text, payloadPath)]
+        parts: options.map(([key, optionValue], index) => ({
+          ...taxonomyPart("metadata", `Option: ${key}`, safeStringify(optionValue), propertyPath("$", key)),
+          order: index + 1
+        }))
+      }));
+    }
+
+    const unclassified = Object.entries(record).filter(([key]) => key !== messageKey && key !== toolKey && !PROVIDER_OPTION_KEYS.has(key));
+    if (unclassified.length > 0) {
+      const value = Object.fromEntries(unclassified);
+      const text = safeStringify(value);
+      items.push(taxonomyItem({
+        order: order++,
+        role: "unclassified",
+        source: "provider.payload.unclassified",
+        label: "Unclassified provider payload fields",
+        kind: "unclassified",
+        confidence: 1,
+        payloadPath: "$",
+        text,
+        parts: unclassified.map(([key, fieldValue], index) => ({
+          ...taxonomyPart("unclassified", `Unclassified: ${key}`, safeStringify(fieldValue), propertyPath("$", key)),
+          order: index + 1
+        }))
       }));
     }
   }

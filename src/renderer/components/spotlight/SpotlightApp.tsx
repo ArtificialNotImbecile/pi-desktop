@@ -99,10 +99,6 @@ function resolveLabel(item: SpotlightItem, t: Translate): string {
       return t("spotlight.cmd.settings");
     case "cmd:providers":
       return t("spotlight.cmd.providers");
-    case "cmd:todo":
-      return t("spotlight.cmd.todo");
-    case "cmd:add-todo":
-      return t("spotlight.cmd.addTodo");
     default:
       return item.label;
   }
@@ -116,10 +112,6 @@ function resolveDescription(item: SpotlightItem, t: Translate): string | undefin
       return t("spotlight.cmd.settings.detail");
     case "cmd:providers":
       return t("spotlight.cmd.providers.detail");
-    case "cmd:todo":
-      return t("spotlight.cmd.todo.detail");
-    case "cmd:add-todo":
-      return t("spotlight.cmd.addTodo.detail");
     default: {
       if (item.commandId !== "open-thread") return item.description;
       const count = Number.parseInt(item.description ?? "0", 10);

@@ -86,26 +86,6 @@ try {
     assert.equal(reply.result.items.length, 1);
     assert.equal(reply.__bridgeId, undefined);
 
-    process.env.JASMINE_CHROME_TAKEOVER = "1";
-    const { default: chromePackage } = await import("../../resources/builtin-plugins/chrome/index.js");
-    const tools = collectTools(chromePackage);
-    const statusResult = await runTool(tools, "chrome_status", {});
-    assert.match(textOf(statusResult), /takeover bridge/);
-    const tabsResult = await runTool(tools, "chrome_list_tabs", {});
-    assert.match(textOf(tabsResult), /Real Chrome tab/);
-    const openResult = await runTool(tools, "chrome_open_url", { url: "https://example.test/opened" });
-    assert.match(textOf(openResult), /https:\/\/example\.test\/opened/);
-    const snapshotResult = await runTool(tools, "chrome_snapshot", { maxItems: 5 });
-    assert.match(textOf(snapshotResult), /\[e1\] input/);
-    assert.equal(snapshotResult.details.takeover, true);
-    const clickResult = await runTool(tools, "chrome_click", { ref: "e1" });
-    assert.equal(clickResult.details.method, "click");
-    const typeResult = await runTool(tools, "chrome_type", { ref: "e1", text: "Bridge", clear: true });
-    assert.equal(typeResult.details.method, "type");
-    const screenshotResult = await runTool(tools, "chrome_screenshot", {});
-    assert.equal(screenshotResult.details.takeover, true);
-    await access(screenshotResult.details.path);
-
     replyToExtension = false;
     const degraded = await bridge.refreshExtensionHealth(50);
     assert.equal(degraded.extensionConnected, true);
@@ -187,26 +167,6 @@ function fakeExtensionResult(message) {
     x: 10,
     y: 10
   };
-}
-
-function collectTools(extension) {
-  const tools = new Map();
-  extension({
-    registerTool(tool) {
-      tools.set(tool.name, tool);
-    }
-  });
-  return tools;
-}
-
-async function runTool(tools, name, params) {
-  const tool = tools.get(name);
-  assert.ok(tool, `Missing tool ${name}`);
-  return tool.execute(`${name}-call`, params, new AbortController().signal);
-}
-
-function textOf(result) {
-  return (result.content ?? []).map((item) => item.text ?? "").join("\n");
 }
 
 function connectClient(port) {

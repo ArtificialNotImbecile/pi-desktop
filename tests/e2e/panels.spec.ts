@@ -169,10 +169,10 @@ test.describe("Jasmine panels and tools", () => {
     await page.getByRole("button", { name: "Close settings" }).click();
 
     await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("plugin");
+    await page.getByRole("combobox", { name: "Command palette" }).fill("package");
     await page.keyboard.press("Enter");
     await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-nav").getByRole("button", { name: "Plugins" })).toHaveClass(/active/);
+    await expect(page.locator(".settings-nav").getByRole("button", { name: "Packages" })).toHaveClass(/active/);
     await page.getByRole("button", { name: "Close settings" }).click();
 
     await page.keyboard.press("Control+K");
@@ -402,7 +402,7 @@ test.describe("Jasmine panels and tools", () => {
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
     await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload");
-    await expect(page.locator(".taxonomy-summary")).toContainText("schema v6");
+    await expect(page.locator(".taxonomy-summary")).toContainText("schema v7");
     await expect(page.locator(".taxonomy-summary")).toContainText("full sanitized payload sha256");
     await expect(page.locator(".taxonomy-warning-card")).toHaveCount(0);
     await expect(page.locator(".taxonomy-validation-card")).toContainText("Reasoning retention: Not required");
@@ -418,8 +418,10 @@ test.describe("Jasmine panels and tools", () => {
     await expect(requestSwitcher.getByRole("button", { name: "2/2" })).toHaveAttribute("aria-pressed", "true");
     await requestSwitcher.getByRole("button", { name: "1/2" }).click();
     await expect(requestSwitcher.getByRole("button", { name: "1/2" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".taxonomy-payload-shape")).toContainText("Payload shape");
-    await page.locator(".taxonomy-payload-shape > summary").click();
+    await expect(page.locator(".taxonomy-payload-shape")).toContainText("Raw payload shape");
+    const payloadShapeSummary = page.locator(".taxonomy-payload-shape > summary");
+    await expect(payloadShapeSummary).toContainText("Raw payload shape");
+    await payloadShapeSummary.click();
     await expect(page.locator(".taxonomy-payload-order")).toContainText("messages");
     await expect(page.locator(".taxonomy-payload-order")).toContainText("tools");
     const rawPayload = page.locator(".taxonomy-raw-payload");
@@ -452,10 +454,23 @@ test.describe("Jasmine panels and tools", () => {
     await expect(toolTaxonomy.locator(".taxonomy-part", { hasText: "Tool definition" })).toBeVisible();
     await expect(toolTaxonomy.locator("pre")).toContainText("Read file contents.");
     await expect(toolTaxonomy.locator("pre")).toContainText("parameters");
-    const optionsTaxonomy = page.locator(".taxonomy-item", { hasText: "Request option: model" });
+    const optionsTaxonomy = page.locator(".taxonomy-item", { hasText: "Request options" });
+    await expect(optionsTaxonomy).toHaveCount(1);
     await expect(optionsTaxonomy).toBeVisible();
-    await expect(optionsTaxonomy).toContainText("request_option");
+    await expect(optionsTaxonomy).toContainText("request_options");
     await expect(optionsTaxonomy).toContainText("$.model");
+    const optionsDetails = optionsTaxonomy.locator(".taxonomy-item-details");
+    if (!(await optionsDetails.getAttribute("open"))) {
+      await optionsDetails.locator(":scope > summary").click();
+    }
+    const rawPayloadDetails = page.locator(".taxonomy-raw-payload");
+    if (await rawPayloadDetails.getAttribute("open")) {
+      await rawPayloadDetails.locator(":scope > summary").click();
+    }
+    await optionsTaxonomy.scrollIntoViewIfNeeded();
+    const taxonomyScreenshotDir = path.join(rootDir, "test-results", "ui-harness", "e2e");
+    await mkdir(taxonomyScreenshotDir, { recursive: true });
+    await page.screenshot({ path: path.join(taxonomyScreenshotDir, "context-taxonomy-v7.png") });
     await expect(page.locator(".message-jump-rail")).toBeVisible();
     const railGutter = await page.evaluate(() => {
       const rail = document.querySelector(".message-jump-rail")?.getBoundingClientRect();
@@ -510,7 +525,7 @@ test.describe("Jasmine panels and tools", () => {
     expect(restored.raw.sha256).toHaveLength(64);
   });
 
-  test("context taxonomy refreshes after a slow loop and exposes ordered unclassified fields", async () => {
+  test("context taxonomy refreshes after a slow loop and exposes source-ordered taxonomy sections", async () => {
     const { page } = harness;
     await startEmptyThread(page);
     await page.getByRole("button", { name: "Open Context taxonomy" }).click();
@@ -528,14 +543,21 @@ test.describe("Jasmine panels and tools", () => {
     // Exact regression: the just-finished run must appear without another user
     // turn, panel reopen, or manual refresh.
     await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload", { timeout: 5_000 });
-    await expect(page.locator(".taxonomy-summary")).toContainText("schema v6");
+    await expect(page.locator(".taxonomy-summary")).toContainText("schema v7");
     await expect(page.locator(".taxonomy-unclassified-card")).toContainText("1 unclassified payload field");
     await expect(page.locator(".taxonomy-unclassified-card")).toContainText("$.future_context_envelope");
 
-    const wirePaths = await page.locator(".taxonomy-item-title small").allTextContents();
-    expect(wirePaths.findIndex((text) => text.includes("$.stream"))).toBeLessThan(wirePaths.findIndex((text) => text.includes("$.future_context_envelope")));
-    expect(wirePaths.findIndex((text) => text.includes("$.future_context_envelope"))).toBeLessThan(wirePaths.findIndex((text) => text.includes("$.tools[0]")));
-    const unclassified = page.locator(".taxonomy-item", { hasText: "Unclassified payload field: future_context_envelope" });
+    await page.locator(".taxonomy-payload-shape > summary").click();
+    await expect(page.locator(".taxonomy-payload-order code")).toHaveText([
+      "model", "messages", "stream", "future_context_envelope", "tools"
+    ]);
+    const options = page.locator(".taxonomy-item", { hasText: "Request options" });
+    await expect(options).toHaveCount(1);
+    await expect(options.locator(".taxonomy-part")).toHaveCount(2);
+    await expect(options.locator(".taxonomy-part").nth(0)).toContainText("Option: model");
+    await expect(options.locator(".taxonomy-part").nth(1)).toContainText("Option: stream");
+    await expect(page.locator(".taxonomy-derived-note")).toContainText("messages, tools, request options, then other fields");
+    const unclassified = page.locator(".taxonomy-item", { hasText: "future_context_envelope" });
     await expect(unclassified.locator(".taxonomy-item-details")).toHaveAttribute("open", "");
     await expect(unclassified.locator(".taxonomy-part-unclassified")).toHaveAttribute("open", "");
     await expect(unclassified).toContainText("classifier coverage fixture");

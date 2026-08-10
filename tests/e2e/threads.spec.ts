@@ -232,9 +232,16 @@ test.describe("Jasmine threads and projects", () => {
     expect(movedThread?.projectId).toBeNull();
   });
 
-  test("draft hydration does not overwrite immediate typing after switching chats", async () => {
+  test("draft hydration does not overwrite immediate typing after switching chats in a populated sidebar", async () => {
     const { page } = harness;
 
+    await page.evaluate(async () => {
+      for (let index = 0; index < 40; index += 1) {
+        const thread = await window.jasmine.createThread({ title: `Hydration fixture ${index + 1}` });
+        await window.jasmine.updateThreadDraft({ threadId: thread.id, content: `fixture draft ${index + 1}` });
+      }
+    });
+    await page.reload();
     await page.getByRole("button", { name: "New chat" }).first().click();
     await page.locator(".rich-composer-editor").fill("typed before draft hydration settles");
     await expectComposerDraft(page, "typed before draft hydration settles");
@@ -242,40 +249,6 @@ test.describe("Jasmine threads and projects", () => {
     await page.waitForTimeout(350);
     await expectComposerDraft(page, "typed before draft hydration settles");
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
-  });
-
-  test("clear history uses destructive semantics and confirm cancel preserves chats", async () => {
-    const { page } = harness;
-
-    await page.locator(".rich-composer-editor").fill("history should survive cancel");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    const clearHistory = page.getByRole("button", { name: "Clear History..." });
-    await expect(clearHistory).toHaveClass(/danger/);
-
-    await clearHistory.click();
-    await expect(page.locator(".confirm-dialog")).toBeVisible();
-    await expect(page.locator(".confirm-dialog")).toContainText("This cannot be undone.");
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".confirm-dialog")).toBeHidden();
-    await expect(page.locator(".user-bubble").last()).toContainText("history should survive cancel");
-
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Clear History..." }).click();
-    await expect(page.locator(".confirm-dialog")).toBeVisible();
-    await page.locator(".confirm-dialog").getByRole("button", { name: "Cancel" }).click();
-    await expect(page.locator(".confirm-dialog")).toBeHidden();
-    await expect(page.locator(".user-bubble").last()).toContainText("history should survive cancel");
-
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Clear History..." }).click();
-    await page.locator(".confirm-dialog").getByRole("button", { name: "Clear History" }).click();
-
-    await expect(page.locator(".thread-item")).toHaveCount(1);
-    await expect(page.locator(".empty-state")).toBeVisible();
-    await expect(page.locator(".user-bubble")).toHaveCount(0);
   });
 
   test("thread drafts, rename, delete confirmation, and long-list paging are durable", async () => {

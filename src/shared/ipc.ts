@@ -1,3 +1,19 @@
+import type {
+  PermissionApprovalPrompt,
+  PermissionApprovalResponse,
+  PermissionMode
+} from "./permissions.js";
+
+export type {
+  PermissionApprovalDecision,
+  PermissionApprovalPrompt,
+  PermissionApprovalReason,
+  PermissionApprovalResponse,
+  PermissionMode,
+  PermissionTarget,
+  PermissionToolName
+} from "./permissions.js";
+
 export type ChatRole = "user" | "assistant";
 export type ReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AppLanguage = "en" | "zh";
@@ -161,43 +177,6 @@ export type WorkspaceProject = {
   createdAt: string;
   updatedAt: string;
   lastOpenedAt: string;
-};
-
-export type TodoFileKind = "todo" | "log" | "schema";
-
-export type TodoSection = {
-  id: string;
-  title: string;
-  markdown: string;
-  openCount: number;
-  doneCount: number;
-};
-
-export type TodoSnapshot = {
-  rootPath: string;
-  todoPath: string;
-  logPath: string;
-  schemaPath: string;
-  todoMarkdown: string;
-  logMarkdown: string;
-  schemaMarkdown: string;
-  sections: TodoSection[];
-  updatedAt: string;
-};
-
-export type TodoAddRequest = {
-  text: string;
-  projectId?: string | null;
-};
-
-export type TodoOpenFileRequest = {
-  kind: TodoFileKind;
-};
-
-export type TodoOpenFileResponse = {
-  kind: TodoFileKind;
-  path: string;
-  editorPath?: string;
 };
 
 export type ToolRunStatus = "running" | "success" | "error";
@@ -535,6 +514,30 @@ export type WorkingNavigationTarget = {
   projectId: string | null;
 };
 
+export type AppUpdatePhase =
+  | "unsupported"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "error";
+
+export type AppUpdateState = {
+  phase: AppUpdatePhase;
+  supported: boolean;
+  currentVersion: string;
+  availableVersion: string | null;
+  progressPercent: number | null;
+  bytesPerSecond: number | null;
+  transferredBytes: number | null;
+  totalBytes: number | null;
+  lastCheckedAt: string | null;
+  error: string | null;
+};
+
 export type AppSettings = {
   toolModel: ToolModelSettings;
   appearance: AppearanceSettings;
@@ -542,6 +545,7 @@ export type AppSettings = {
   language: AppLanguage;
   chromeTakeover: ChromeTakeoverSettings;
   workingNotifications: WorkingNotificationSettings;
+  permissionMode: PermissionMode;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -557,6 +561,7 @@ export type AppSettingsUpdateRequest = {
   language?: AppLanguage;
   chromeTakeover?: Partial<ChromeTakeoverSettings>;
   workingNotifications?: Partial<WorkingNotificationSettings>;
+  permissionMode?: PermissionMode;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -1206,7 +1211,7 @@ export type WindowState = {
   maximized: boolean;
 };
 
-export type SpotlightCommandId = "open-thread" | "new-chat" | "open-settings" | "open-todo" | "add-todo";
+export type SpotlightCommandId = "open-thread" | "new-chat" | "open-settings";
 
 export type SpotlightItem = {
   id: string;
@@ -1260,9 +1265,6 @@ export type JasmineApi = {
   consumePendingWorkingNavigation(): Promise<WorkingNavigationTarget | null>;
   onWorkingChanged(callback: (snapshot: WorkingSnapshot) => void): () => void;
   onWorkingNavigate(callback: (target: WorkingNavigationTarget) => void): () => void;
-  getTodoSnapshot(): Promise<TodoSnapshot>;
-  addTodo(request: TodoAddRequest): Promise<TodoSnapshot>;
-  openTodoFile(request: TodoOpenFileRequest): Promise<TodoOpenFileResponse>;
   listMessages(request: string | MessageListRequest): Promise<ChatMessage[]>;
   sendChatMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
   retryChatMessage(request: ChatRetryRequest): Promise<ChatRetryResponse>;
@@ -1273,9 +1275,12 @@ export type JasmineApi = {
   steerQueuedChatMessage(request: ChatQueueSteerRequest): Promise<ChatQueueResponse>;
   cancelChatMessage(requestId: string): Promise<boolean>;
   answerAskUserQuestion(request: AskUserQuestionResponse): Promise<void>;
+  answerPermissionApproval(request: PermissionApprovalResponse): Promise<void>;
   onChatStream(callback: (event: ChatStreamEvent) => void): () => void;
   onAskUserQuestion(callback: (prompt: AskUserQuestionPrompt) => void): () => void;
   onAskUserQuestionCancelled(callback: (id: string) => void): () => void;
+  onPermissionApproval(callback: (prompt: PermissionApprovalPrompt) => void): () => void;
+  onPermissionApprovalCancelled(callback: (id: string) => void): () => void;
   listTracesForThread(threadId: string): Promise<ToolRun[]>;
   listTracesForMessage(messageId: string): Promise<ToolRun[]>;
   getTrace(runId: string): Promise<ToolRun>;
@@ -1324,6 +1329,11 @@ export type JasmineApi = {
   testRemoteConnection(id: string): Promise<RemoteConnectionTestResult>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(request: AppSettingsUpdateRequest): Promise<AppSettings>;
+  getAppUpdateState(): Promise<AppUpdateState>;
+  checkForAppUpdate(): Promise<AppUpdateState>;
+  downloadAppUpdate(): Promise<AppUpdateState>;
+  installAppUpdate(): Promise<AppUpdateState>;
+  onAppUpdateStateChanged(callback: (state: AppUpdateState) => void): () => void;
   resolveTerminalShell(): Promise<TerminalShellInfo>;
   startTerminal(request?: TerminalStartRequest): Promise<TerminalSession>;
   writeTerminal(request: TerminalInputRequest): Promise<void>;

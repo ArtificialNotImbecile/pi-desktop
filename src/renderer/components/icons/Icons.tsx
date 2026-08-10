@@ -96,12 +96,12 @@ export function CheckIcon() {
   return <Svg><path d="m5 12 4 4L19 6" /></Svg>;
 }
 
-export function TodoIcon() {
-  return <Svg><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m8 9 2 2 4-4" /><path d="M8 15h8" /></Svg>;
-}
-
 export function WorkingIcon() {
   return <Svg><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2" /></Svg>;
+}
+
+export function ShieldIcon() {
+  return <Svg><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6Z" /><path d="m9 12 2 2 4-4" /></Svg>;
 }
 
 export function EyeIcon() {

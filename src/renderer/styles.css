@@ -599,6 +599,87 @@ select:focus-visible {
   width: min(560px, calc(100vw - 32px));
 }
 
+.permission-approval-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.permission-approval-content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.permission-approval-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.permission-approval-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.permission-approval-summary span {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.permission-approval-command {
+  max-height: 190px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--soft);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.permission-approval-meta {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.permission-approval-meta > div {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.permission-approval-meta dt {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.permission-approval-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.permission-approval-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .ask-user-question-form {
   display: grid;
   gap: 16px;
@@ -1733,7 +1814,7 @@ select:focus-visible {
 }
 
 /* Shell-owned title-bar chrome: rendered once by AppShell so every workspace
-   route (chat, todo, ...) keeps window drag + controls (UI-FIXED-126).
+   route keeps window drag + controls (UI-FIXED-126).
    The region starts after the sidebar, whose .side-top is its own drag strip. */
 .window-drag-region {
   position: absolute;
@@ -5023,6 +5104,87 @@ button.attachment-chip-main:hover span {
   display: inline-flex;
 }
 
+.permission-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.permission-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.permission-mode-pill:hover,
+.permission-mode-pill.active {
+  border-color: var(--line);
+  background: var(--soft);
+}
+
+.permission-mode-pill.full-access {
+  color: var(--danger);
+}
+
+.permission-mode-pill:disabled {
+  opacity: 0.55;
+}
+
+.permission-mode-pill .icon:first-child {
+  width: 15px;
+  height: 15px;
+}
+
+.permission-mode-pill .icon:last-child {
+  width: 12px;
+  height: 12px;
+}
+
+.permission-mode-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.permission-mode-menu {
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+}
+
+.permission-mode-item {
+  min-height: 54px;
+  align-items: start;
+}
+
+.permission-mode-item .ui-menu-item-main span,
+.permission-mode-item .ui-menu-item-main small {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.permission-mode-item .ui-menu-item-main small {
+  line-height: 1.35;
+}
+
+.permission-mode-item.full-access,
+.permission-mode-item.full-access .ui-menu-item-icon {
+  color: var(--danger);
+}
+
+.permission-mode-item .ui-menu-item-meta .icon {
+  width: 14px;
+  height: 14px;
+}
+
 .tools-menu {
   position: absolute;
   left: 0;
@@ -7675,6 +7837,42 @@ button.attachment-chip-main:hover span {
   background: var(--danger-soft);
 }
 
+.about-update-row .ui-settings-row-copy > small {
+  display: grid;
+  gap: 7px;
+}
+
+.about-update-progress {
+  display: grid;
+  grid-template-columns: minmax(120px, 240px) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.about-update-progress progress {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--soft-strong);
+}
+
+.about-update-progress progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--soft-strong);
+}
+
+.about-update-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.about-update-error {
+  color: var(--danger);
+}
+
 .provider-meta {
   display: grid;
   grid-template-columns: 142px minmax(0, 1fr);
@@ -8942,14 +9140,6 @@ button.attachment-chip-main:hover span {
   background: var(--accent);
 }
 
-.todo-page {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  min-width: 0;
-  height: 100vh;
-  background: var(--surface);
-}
-
 .working-page {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -9062,9 +9252,11 @@ button.attachment-chip-main:hover span {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  min-height: 74px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
+  overflow: hidden;
 }
 
 .working-task.unread {
@@ -9083,12 +9275,16 @@ button.attachment-chip-main:hover span {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 13px 14px;
+  width: 100%;
+  height: auto;
+  min-height: 72px;
+  padding: 12px 14px;
   border: 0;
   border-radius: 10px;
   color: var(--ink);
   background: transparent;
   text-align: left;
+  white-space: normal;
 }
 
 .working-task-main:hover {
@@ -9124,8 +9320,9 @@ button.attachment-chip-main:hover span {
 .working-task-copy,
 .working-task-aside {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
+  line-height: 1.25;
 }
 
 .working-task-title {
@@ -9143,6 +9340,13 @@ button.attachment-chip-main:hover span {
   font-size: 11px;
 }
 
+.working-task-meta,
+.working-task-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .working-task-aside {
   justify-items: end;
   min-width: 92px;
@@ -9154,7 +9358,8 @@ button.attachment-chip-main:hover span {
 }
 
 .working-stop {
-  margin-right: 10px;
+  align-self: center;
+  margin-right: 12px;
 }
 
 .working-loading {
@@ -9192,218 +9397,7 @@ button.attachment-chip-main:hover span {
   margin-bottom: 6px;
 }
 
-.todo-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  /* Top padding clears the shell-owned 44px window drag strip so header
-     actions never sit inside the caption area (UI-FIXED-126). */
-  padding: 48px 30px 16px;
-  border-bottom: 1px solid var(--line);
-}
-
-.todo-title-group {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.todo-title-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.todo-title-group h1 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-.todo-title-group p {
-  max-width: min(620px, 55vw);
-  margin: 6px 0 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.todo-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.todo-tabs-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 30px;
-  border-bottom: 1px solid var(--line);
-}
-
-.todo-updated {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.todo-content {
-  min-height: 0;
-  overflow: auto;
-  padding: 18px 30px 30px;
-}
-
-.todo-section-list {
-  display: grid;
-  gap: 10px;
-  max-width: 860px;
-}
-
-.todo-section {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.todo-section-toggle {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 42px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--ink);
-  background: transparent;
-  font: inherit;
-  text-align: left;
-}
-
-.todo-section-toggle .ui-button-label {
-  min-width: 0;
-}
-
-.todo-section-toggle .ui-button-icon {
-  width: auto;
-  min-width: 16px;
-}
-
-.todo-section-toggle:hover {
-  background: var(--soft);
-}
-
-.todo-section-chevron {
-  display: inline-flex;
-  color: var(--muted);
-}
-
-.todo-section-chevron.open .icon {
-  transform: rotate(90deg);
-}
-
-.todo-section-title {
-  overflow: hidden;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.todo-section-count {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.todo-section-body {
-  padding: 0 16px 14px 42px;
-}
-
-.todo-section-body .markdown-message ul,
-.todo-log .markdown-message ul {
-  padding-left: 18px;
-}
-
-.todo-section-body .markdown-message input[type="checkbox"],
-.todo-log .markdown-message input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  margin: 0 7px 0 0;
-  accent-color: var(--accent);
-  vertical-align: -2px;
-}
-
-.todo-empty-section {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.todo-log {
-  max-width: 880px;
-}
-
-.todo-loading {
-  display: grid;
-  gap: 10px;
-  max-width: 760px;
-}
-
-.todo-loading div {
-  height: 42px;
-  border-radius: 8px;
-  background: var(--soft);
-  animation: workspace-startup-pulse 820ms ease-in-out infinite alternate;
-}
-
-.todo-add-dialog {
-  width: min(520px, calc(100vw - 48px));
-}
-
-.todo-add-body {
-  display: grid;
-  gap: 10px;
-}
-
-.todo-add-context {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.todo-add-dialog .ui-textarea {
-  min-height: 138px;
-  resize: vertical;
-}
-
 @media (max-width: 900px) {
-  .todo-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .todo-header-actions {
-    justify-content: flex-start;
-  }
-
-  .todo-title-group p {
-    max-width: calc(100vw - 120px);
-  }
-
   .working-header {
     align-items: stretch;
     flex-direction: column;

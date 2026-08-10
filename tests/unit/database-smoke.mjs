@@ -95,6 +95,7 @@ try {
       chrome_takeover_extension_id TEXT,
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
+      permission_mode TEXT NOT NULL DEFAULT 'ask',
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
@@ -265,6 +266,8 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 31").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 32").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 33").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 34").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT permission_mode FROM app_settings WHERE id = 'default'").get().permission_mode, "ask");
     assert.equal(legacyDb.prepare("PRAGMA table_info(app_settings)").all().some((row) => row.name === "working_notification_mode"), true);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'working_tasks'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("PRAGMA table_info(context_captures)").all().some((row) => row.name === "raw_payload_gzip"), true);
@@ -465,6 +468,7 @@ try {
     mode: "background",
     includeDetails: true
   });
+  assert.equal(appSettings.getAppSettings(db).permissionMode, "ask");
   assert.deepEqual(appSettings.getAppSettings(db).brand, {
     logoDataUrl: null,
     mainTitle: "Talk to yourself.",
@@ -496,6 +500,8 @@ try {
   });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { workingNotifications: { mode: "never", includeDetails: false } }, timestamp);
   assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, { mode: "never", includeDetails: false });
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { permissionMode: "full-access" }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).permissionMode, "full-access");
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { skillEditorPath: process.execPath }, timestamp);
   assert.equal(appSettings.getAppSettings(db).skillEditorPath, process.execPath);
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { terminalShellPath: process.execPath }, timestamp);

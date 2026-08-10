@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   baseLaunchEnv,
@@ -76,88 +76,6 @@ test.describe("Jasmine app shell", () => {
     await expect(page.locator(".app-shell")).not.toHaveClass(/sidebar-collapsed/);
   });
 
-  test("sidebar TODO shortcut stays a compact pinned row below the top actions", async () => {
-    const { page } = harness;
-
-    const measureTodoRow = async () => {
-      const row = await page.locator(".sidebar-feature-row").boundingBox();
-      const top = await page.locator(".side-top").boundingBox();
-      const projectsHeading = await page.locator(".sidebar-section-heading").first().boundingBox();
-      expect(row).toBeTruthy();
-      expect(top).toBeTruthy();
-      expect(projectsHeading).toBeTruthy();
-      return { row: row!, top: top!, projectsHeading: projectsHeading! };
-    };
-
-    const assertCompactPinnedRow = (measured: Awaited<ReturnType<typeof measureTodoRow>>) => {
-      // The row itself must stay a slim menu row.
-      expect(measured.row.height).toBeLessThanOrEqual(44);
-      // It must sit directly under the top action bar.
-      expect(measured.row.y - (measured.top.y + measured.top.height)).toBeLessThanOrEqual(12);
-      // And Projects must follow immediately below it: a large gap means the
-      // feature area absorbed the sidebar's flexible row and the shortcut is
-      // floating over empty space.
-      const gapToProjects = measured.projectsHeading.y - (measured.row.y + measured.row.height);
-      expect(gapToProjects).toBeGreaterThanOrEqual(-1);
-      expect(gapToProjects).toBeLessThanOrEqual(32);
-    };
-
-    // Idle state with an almost-empty thread list: the shortcut must sit
-    // directly under the top action bar, not float mid-sidebar.
-    assertCompactPinnedRow(await measureTodoRow());
-
-    // Active state: opening /todo highlights the row but must not stretch it
-    // into a filler block that pushes Projects/Chats down.
-    await page.getByRole("button", { name: "TODO" }).click();
-    await expect(page.locator(".todo-page")).toBeVisible();
-    assertCompactPinnedRow(await measureTodoRow());
-    await expect(page.locator(".sidebar-feature-row.active")).toBeVisible();
-
-    await mkdir(path.join(rootDir, "test-results", "ui-harness", "e2e"), { recursive: true });
-    await page.locator(".sidebar").screenshot({
-      path: path.join(rootDir, "test-results", "ui-harness", "e2e", "sidebar-todo-pinned-row.png")
-    });
-  });
-
-  test("captures TODOs into markdown files from the sidebar surface", async () => {
-    const { page, userDataDir } = harness;
-    const todoText = "Read DingTalk groups and summarize action items\n[image](local-test.png)";
-    const todoSummary = "Read DingTalk groups and summarize action items [image](local-test.png)";
-
-    await page.getByRole("button", { name: "TODO" }).click();
-    await expect(page.locator(".todo-page")).toBeVisible();
-    await expect.poll(async () =>
-      page.evaluate(() => window.__jasmineHarness?.snapshot()?.app?.navigation?.path ?? "")
-    ).toBe("/todo");
-
-    await page.getByRole("button", { name: "Add TODO" }).click();
-    const todoInput = page.getByRole("textbox", { name: "TODO text" });
-    await expect(todoInput).toBeFocused();
-    await todoInput.fill(todoText);
-    await page.getByRole("button", { name: "Save TODO" }).click();
-
-    await expect(page.locator(".todo-section-list")).toContainText("Read DingTalk groups");
-    await page.getByRole("tab", { name: "Log" }).click();
-    await expect(page.locator(".todo-log")).toContainText("Read DingTalk groups");
-    await mkdir(path.join(rootDir, "test-results", "ui-harness", "e2e"), { recursive: true });
-    await page.locator(".todo-page").screenshot({
-      path: path.join(rootDir, "test-results", "ui-harness", "e2e", "todo-markdown-surface.png")
-    });
-
-    const todoMarkdown = await readFile(path.join(userDataDir, "todos", "todo.md"), "utf8");
-    const logMarkdown = await readFile(path.join(userDataDir, "todos", "log.md"), "utf8");
-    const schemaMarkdown = await readFile(path.join(userDataDir, "todos", "schema.md"), "utf8");
-    expect(todoMarkdown).toContain(`- [ ] ${todoSummary}`);
-    expect(logMarkdown).toContain("> Read DingTalk groups and summarize action items");
-    expect(logMarkdown).toContain("> [image](local-test.png)");
-    expect(schemaMarkdown).toContain("Jasmine TODO Schema");
-
-    await page.getByRole("button", { name: "Open todo.md" }).click();
-    await expect.poll(async () =>
-      readFile(path.join(userDataDir, "editor-open.log"), "utf8").catch(() => "")
-    ).toContain(path.join(userDataDir, "todos", "todo.md"));
-  });
-
   test("window controls maximize, restore, and minimize", async () => {
     const { app, page } = harness;
 
@@ -173,43 +91,6 @@ test.describe("Jasmine app shell", () => {
       const win = BrowserWindow.getAllWindows()[0];
       win?.restore();
       win?.focus();
-    });
-  });
-
-  test("window controls stay available and functional on the TODO route", async () => {
-    const { app, page, userDataDir } = harness;
-
-    await page.getByRole("button", { name: "TODO" }).click();
-    await expect(page.locator(".todo-page")).toBeVisible();
-
-    // Title-bar chrome is shell-owned, so leaving the chat route must not
-    // drop the window controls or the drag strip (UI-FIXED-126).
-    await expect(page.getByRole("button", { name: "Minimize" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Close" })).toBeVisible();
-    await expect(page.locator(".window-drag-region")).toHaveCount(1);
-
-    await clickCenter(page.getByRole("button", { name: "Maximize" }));
-    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(true);
-    await clickCenter(page.getByRole("button", { name: "Restore" }));
-    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(false);
-
-    const refreshButton = page.getByRole("button", { name: "Refresh" });
-    await expect(refreshButton).toBeEnabled();
-
-    const refreshedTodoText = "Refresh click reached todo snapshot";
-    await writeFile(path.join(userDataDir, "todos", "todo.md"), `# TODO\n\n## Inbox\n\n- [ ] ${refreshedTodoText}\n`, "utf8");
-
-    // Header actions must sit fully below the 44px caption strip; otherwise
-    // clicks in their upper half start a window drag instead of the action.
-    const refreshBox = await refreshButton.boundingBox();
-    expect(refreshBox).toBeTruthy();
-    expect(refreshBox!.y).toBeGreaterThanOrEqual(44);
-    await clickCenter(refreshButton);
-    await expect(page.locator(".todo-section-list")).toContainText(refreshedTodoText);
-
-    await mkdir(path.join(rootDir, "test-results", "ui-harness", "e2e"), { recursive: true });
-    await page.screenshot({
-      path: path.join(rootDir, "test-results", "ui-harness", "e2e", "todo-window-controls.png")
     });
   });
 
@@ -229,13 +110,13 @@ test.describe("Jasmine app shell", () => {
     await expect(page.locator(".command-panel")).toBeHidden();
   });
 
-  test("tools menu shows always-on Pi tools and plugins", async () => {
+  test("tools menu shows always-on Pi tools and packages", async () => {
     const { page } = harness;
 
     await page.locator(".composer").getByRole("button", { name: "Tools" }).click();
     await expect(page.locator(".tools-menu")).toBeVisible();
     await expect(page.locator(".tools-menu")).toContainText("Pi tools");
-    await expect(page.locator(".tools-menu")).toContainText("Plugins");
+    await expect(page.locator(".tools-menu")).toContainText("Packages");
     await expect(page.locator(".tools-menu-row")).toHaveCount(2);
     await expect(page.locator(".tools-menu-row").first().locator(".tools-menu-state .icon")).toHaveCount(1);
     await expect(page.locator(".tools-menu").getByRole("menuitemcheckbox")).toHaveCount(0);
@@ -243,10 +124,14 @@ test.describe("Jasmine app shell", () => {
     await expect(page.locator(".tools-menu")).toBeHidden();
   });
 
-  test("settings open and close from the side menu @smoke", async () => {
+  test("More menu opens About without exposing bulk history deletion @smoke", async () => {
     const { page } = harness;
 
-    await openSettings(page);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator(".side-menu").getByRole("button", { name: /Clear History/i })).toHaveCount(0);
+    await page.locator(".side-menu").getByRole("button", { name: "About" }).click();
+    await expect(page.locator(".settings-nav button.active")).toContainText("About");
+    await expect(page.locator(".settings-detail")).toContainText("Jasmine — The desktop app for Pi");
     await page.getByRole("button", { name: "Close settings" }).click();
     await expect(page.locator(".settings-panel")).toBeHidden();
   });

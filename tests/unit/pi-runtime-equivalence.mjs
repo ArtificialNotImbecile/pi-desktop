@@ -17,7 +17,9 @@ const { buildTurnContext, createAskUserQuestionTool, createWebSearchTool, replac
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
 const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
-const { nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
+const { modelContentForMessage, nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
+const { createSshCodingTools } = await import("../../dist/main/main/agent/tools/sshCodingTools.js");
+const { prepareEnabledSkillManifests } = await import("../../dist/main/main/services/skillManifests.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
 const { parseBingResults } = await import("../../dist/main/main/services/webSearch.js");
@@ -26,7 +28,6 @@ const {
   listPluginSkills,
   resolveEnabledPackageSkillPaths,
   resolvePluginPackageRuntimeSources,
-  resolveChromePackageRoot,
   resolvePiWebAccessPackageRoot,
   setPluginPackageEnabled
 } = await import("../../dist/main/main/services/plugins.js");
@@ -160,24 +161,29 @@ const classifierTaxonomy = providerPayloadToContextTaxonomy({
   provider: "jasmine-mock",
   model: "jasmine-test"
 });
-assert.equal(classifierTaxonomy.payloadSchemaVersion, 6);
+assert.equal(classifierTaxonomy.payloadSchemaVersion, 7);
 assert.deepEqual(classifierTaxonomy.payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
 assert.equal(classifierTaxonomy.payloadShape.messagesBeforeTools, true);
 assert.equal(classifierTaxonomy.rawPayload.includes(fakeProviderSecret), false);
 assert.match(classifierTaxonomy.rawPayload, /\[redacted\]/);
 assert.deepEqual(classifierTaxonomy.items.map((item) => item.payloadPath), [
-  "$.model", "$.apiKey", "$.messages[0]", "$.messages[1]", "$.messages[2]", "$.messages[3]", "$.tools[0]", "$.stream"
+  "$.messages[0]", "$.messages[1]", "$.messages[2]", "$.messages[3]", "$.tools[0]", "$", "$"
 ]);
 const classifierSystemItem = classifierTaxonomy.items.find((item) => item.payloadPath === "$.messages[0]");
 assert.equal(classifierSystemItem.kind, "system_prompt");
 assert.equal(classifierSystemItem.segments.some((segment) => segment.kind === "project_context"), true);
 assert.equal(classifierSystemItem.segments.some((segment) => segment.kind === "skill_instructions"), true);
 assert.equal(classifierTaxonomy.items.find((item) => item.kind === "current_user_prompt")?.parts.some((part) => part.kind === "text" && part.text === "current turn"), true);
-assert.equal(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.kind, "unclassified");
-assert.equal(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.parts[0].kind, "unclassified");
-assert.match(classifierTaxonomy.items.find((item) => item.payloadPath === "$.apiKey")?.text, /redacted/);
-assert.equal(classifierTaxonomy.items.at(-2).kind, "tool_definition");
-assert.equal(classifierTaxonomy.items.at(-1).kind, "provider_options");
+const classifierOptions = classifierTaxonomy.items.find((item) => item.kind === "provider_options");
+assert.equal(classifierTaxonomy.items.filter((item) => item.role === "request_options").length, 1);
+assert.deepEqual(classifierOptions.parts.map((part) => part.payloadPath), ["$.model", "$.stream"]);
+const classifierUnclassified = classifierTaxonomy.items.find((item) => item.kind === "unclassified");
+assert.equal(classifierUnclassified.parts[0].payloadPath, "$.apiKey");
+assert.equal(classifierUnclassified.parts[0].kind, "unclassified");
+assert.match(classifierUnclassified.text, /redacted/);
+assert.equal(classifierTaxonomy.items.at(-3).kind, "tool_definition");
+assert.equal(classifierTaxonomy.items.at(-2).kind, "provider_options");
+assert.equal(classifierTaxonomy.items.at(-1).kind, "unclassified");
 const classifierTaxonomyWithCache = withContextCacheMetrics(classifierTaxonomy, {
   input: 137,
   output: 18,
@@ -204,9 +210,14 @@ const toolsFirstTaxonomy = providerPayloadToContextTaxonomy({
 assert.deepEqual(toolsFirstTaxonomy.payloadShape.topLevelOrder, ["model", "tools", "messages", "stream"]);
 assert.equal(toolsFirstTaxonomy.payloadShape.messagesBeforeTools, false);
 assert.ok(
-  toolsFirstTaxonomy.items.findIndex((item) => item.kind === "tool_definition")
-    < toolsFirstTaxonomy.items.findIndex((item) => item.payloadPath === "$.messages[0]"),
-  "tools-first payloads should present tool rows before message rows"
+  toolsFirstTaxonomy.items.findIndex((item) => item.payloadPath === "$.messages[0]")
+    < toolsFirstTaxonomy.items.findIndex((item) => item.kind === "tool_definition"),
+  "derived taxonomy should keep messages before tools even when raw payload order is tools-first"
+);
+assert.equal(toolsFirstTaxonomy.items.filter((item) => item.role === "request_options").length, 1);
+assert.deepEqual(
+  toolsFirstTaxonomy.items.find((item) => item.role === "request_options").parts.map((part) => part.payloadPath),
+  ["$.model", "$.stream"]
 );
 assert.equal(toolsFirstTaxonomy.items.at(-1).kind, "provider_options");
 
@@ -313,9 +324,10 @@ assert.match(structuredAssistantTaxonomy.rawPayload, /"max_tokens": 1024/);
 assert.match(structuredAssistantTaxonomy.rawPayload, /"prompt_tokens": 2048/);
 assert.ok(estimateTokens("这是中文测试") >= 6, "CJK composition estimates should not use chars/4");
 
-// Lossless fallback: unsupported top-level and message fields must remain in
-// their exact wire position instead of being absorbed into an options bucket
-// or silently dropped. Nested structured-content siblings are retained too.
+// Lossless fallback: unsupported top-level and message fields must remain
+// nested under a visible unclassified section instead of being absorbed into
+// request options or silently dropped. Raw top-level order stays exact in the
+// payload shape while each semantic section preserves its own source order.
 const taxonomyWithUnclassifiedFields = providerPayloadToContextTaxonomy({
   model: "future-provider-model",
   contents: [{ role: "user", parts: [{ text: "Gemini-shaped input" }] }],
@@ -331,11 +343,16 @@ const taxonomyWithUnclassifiedFields = providerPayloadToContextTaxonomy({
   stream: true
 }, { provider: "future-provider", model: "future-provider-model" });
 assert.deepEqual(taxonomyWithUnclassifiedFields.items.map((item) => item.payloadPath), [
-  "$.model", "$.contents", "$.messages[0]", "$.stream"
+  "$.messages[0]", "$", "$"
 ]);
-assert.equal(taxonomyWithUnclassifiedFields.items[1].kind, "unclassified");
-assert.match(taxonomyWithUnclassifiedFields.items[1].text, /Gemini-shaped input/);
-const futureMessage = taxonomyWithUnclassifiedFields.items[2];
+assert.deepEqual(taxonomyWithUnclassifiedFields.payloadShape.topLevelOrder, ["model", "contents", "messages", "stream"]);
+assert.deepEqual(Object.keys(JSON.parse(taxonomyWithUnclassifiedFields.rawPayload)), taxonomyWithUnclassifiedFields.payloadShape.topLevelOrder);
+assert.equal(taxonomyWithUnclassifiedFields.items.filter((item) => item.role === "request_options").length, 1);
+assert.deepEqual(taxonomyWithUnclassifiedFields.items[1].parts.map((part) => part.payloadPath), ["$.model", "$.stream"]);
+assert.equal(taxonomyWithUnclassifiedFields.items[2].kind, "unclassified");
+assert.equal(taxonomyWithUnclassifiedFields.items[2].parts[0].payloadPath, "$.contents");
+assert.match(taxonomyWithUnclassifiedFields.items[2].text, /Gemini-shaped input/);
+const futureMessage = taxonomyWithUnclassifiedFields.items[0];
 assert.deepEqual(futureMessage.parts.map((part) => part.kind), [
   "metadata", "reasoning", "unclassified", "text", "unclassified", "unclassified", "tool_call"
 ]);
@@ -1514,6 +1531,129 @@ try {
     "",
     "Use concise headings and remove vague filler."
   ].join("\n"));
+
+  const discoverableSkillDir = path.join(tempDir, "configured-skills", "release-notes");
+  const discoverableSkillPath = path.join(discoverableSkillDir, "SKILL.md");
+  const discoverableSkillBodyMarker = "DISCOVERABLE_SKILL_BODY_MUST_NOT_BE_PRELOADED";
+  await mkdir(discoverableSkillDir, { recursive: true });
+  await writeFile(discoverableSkillPath, [
+    "---",
+    "name: release-notes",
+    "description: Produces focused release notes when a task asks for them.",
+    "---",
+    "",
+    "# Release notes",
+    "",
+    discoverableSkillBodyMarker
+  ].join("\n"));
+  const disabledSkillDir = path.join(tempDir, "configured-skills", "disabled-private-skill");
+  const disabledSkillPath = path.join(disabledSkillDir, "SKILL.md");
+  await mkdir(disabledSkillDir, { recursive: true });
+  await writeFile(disabledSkillPath, [
+    "---",
+    "name: disabled-private-skill",
+    "description: This disabled skill must not be discoverable.",
+    "---",
+    "",
+    "DISABLED_SKILL_BODY_MUST_NOT_APPEAR"
+  ].join("\n"));
+
+  const enabledSkillManifests = await prepareEnabledSkillManifests([{
+    id: "release-notes",
+    name: "release-notes",
+    description: "Produces focused release notes when a task asks for them.",
+    instructions: discoverableSkillBodyMarker,
+    enabled: true,
+    source: "external",
+    skillFilePath: discoverableSkillPath,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    updatedAt: "2026-08-10T00:00:00.000Z"
+  }, {
+    id: "disabled-private-skill",
+    name: "disabled-private-skill",
+    description: "This disabled skill must not be discoverable.",
+    instructions: "DISABLED_SKILL_BODY_MUST_NOT_APPEAR",
+    enabled: false,
+    source: "external",
+    skillFilePath: disabledSkillPath,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    updatedAt: "2026-08-10T00:00:00.000Z"
+  }], userDataDir);
+  assert.deepEqual(enabledSkillManifests.map((skill) => skill.skillFilePath), [discoverableSkillPath]);
+
+  const captureCountBeforeDiscoverableSkill = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "write ordinary prose" }],
+    content: "write ordinary prose",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    agentDir,
+    toolsEnabled: true,
+    availableSkillPaths: enabledSkillManifests.map((skill) => skill.skillFilePath)
+  });
+  assert.equal(captures.length, captureCountBeforeDiscoverableSkill + 1);
+  const discoverableSkillPayloadText = JSON.stringify(captures.at(-1));
+  assert.match(discoverableSkillPayloadText, /release-notes/);
+  assert.match(discoverableSkillPayloadText, /Produces focused release notes when a task asks for them/);
+  assert.match(discoverableSkillPayloadText, /SKILL\.md/);
+  assert.doesNotMatch(discoverableSkillPayloadText, new RegExp(discoverableSkillBodyMarker));
+  assert.doesNotMatch(discoverableSkillPayloadText, /disabled-private-skill|DISABLED_SKILL_BODY_MUST_NOT_APPEAR/);
+
+  const explicitSkillContent = modelContentForMessage({
+    role: "user",
+    content: "prepare the release notes",
+    skillsUsed: [{
+      id: "release-notes",
+      name: "release-notes",
+      description: "Produces focused release notes when a task asks for them.",
+      instructions: discoverableSkillBodyMarker
+    }]
+  });
+  assert.match(explicitSkillContent, /<explicit_user_selected_skills>/);
+  assert.match(explicitSkillContent, new RegExp(discoverableSkillBodyMarker));
+  assert.equal(modelContentForMessage({ role: "user", content: "prepare the release notes" }), "prepare the release notes");
+
+  const sshSkillReadTool = createSshCodingTools({
+    connection: {
+      id: "invalid-ssh-fixture",
+      name: "Invalid SSH fixture",
+      host: "invalid.example.test",
+      source: "manual",
+      active: true,
+      status: "connected",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z"
+    },
+    localCwd: path.join(tempDir, "local-project"),
+    remoteCwd: "/srv/remote-project",
+    localResourcePaths: [discoverableSkillPath]
+  }).find((tool) => tool.name === "read");
+  assert.ok(sshSkillReadTool);
+  const sshSkillReadResult = await sshSkillReadTool.execute(
+    "ssh-local-skill-read",
+    { path: discoverableSkillPath },
+    undefined,
+    undefined,
+    { cwd: path.join(tempDir, "local-project") }
+  );
+  assert.match(sshSkillReadResult.content[0].text, new RegExp(discoverableSkillBodyMarker));
+
   const captureCountBeforeSelectedSkill = captures.length;
   const taxonomyCaptures = [];
   await runPiCodingAgentChat({
@@ -1554,7 +1694,7 @@ try {
   const selectedSkillPayloadText = JSON.stringify(selectedSkillPayload);
   const capturedRawProviderPayload = JSON.parse(taxonomyCaptures[0].rawPayload);
   assert.deepEqual(capturedRawProviderPayload, normalizePayload(selectedSkillPayload));
-  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 6);
+  assert.equal(taxonomyCaptures[0].payloadSchemaVersion, 7);
   assert.equal(
     taxonomyCaptures[0].payloadHash,
     createHash("sha256").update(taxonomyCaptures[0].rawPayload).digest("hex")
@@ -1568,6 +1708,7 @@ try {
   assert.equal(taxonomyCaptures[0].items.some((item) => item.kind === "system_prompt" && item.segments.some((segment) => segment.kind === "project_context")), true);
   assert.equal(taxonomyCaptures[0].items.some((item) => item.kind === "current_user_prompt" && item.payloadPath?.startsWith("$.messages[")), true);
   assert.doesNotMatch(selectedSkillPayloadText, /Active user-selected skill manifests/);
+  assert.doesNotMatch(selectedSkillPayloadText, /Use concise headings and remove vague filler/);
   assert.match(selectedSkillPayloadText, /technical-writer/);
   assert.match(selectedSkillPayloadText, /Tightens explanations for technical readers/);
   assert.match(selectedSkillPayloadText, /SKILL\.md/);
@@ -1609,17 +1750,12 @@ try {
   const builtinPluginRecords = await listPluginPackages({ userDataDir });
   const builtinRuntimeRecords = builtinPluginRecords.filter((plugin) => normalizePath(plugin.source).includes("/plugins/"));
   const builtinChromeRecords = builtinRuntimeRecords.filter((plugin) => plugin.displayName === "Chrome");
-  assert.equal(builtinRuntimeRecords.length, 1);
-  assert.equal(builtinChromeRecords.length, 1);
-  assert.equal(builtinRuntimeRecords.every((plugin) => plugin.builtin && plugin.recommended && !plugin.removable), true);
-  assert.equal(builtinRuntimeRecords.every((plugin) => plugin.enabled === false), true);
+  assert.equal(builtinRuntimeRecords.length, 0);
+  assert.equal(builtinChromeRecords.length, 0);
   const builtinSettings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
-  assert.equal(builtinSettings.packages.filter((source) =>
+  assert.equal((builtinSettings.packages ?? []).filter((source) =>
     typeof source === "object" && normalizePath(source.source).includes("/plugins/")
-  ).length, 1);
-  for (const record of builtinRuntimeRecords) {
-    assert.equal(await fileExists(path.join(record.source, "package.json")), true);
-  }
+  ).length, 0);
 
   const fixturePackageDir = path.join(tempDir, "fixture-pi-package");
   await mkdir(path.join(fixturePackageDir, "skills", "jasmine-fixture"), { recursive: true });
@@ -1834,11 +1970,11 @@ try {
   assert.equal(legacyPiWebAccessRecords[0].resourceCounts.skills.enabled >= 1, true);
   assert.equal(legacyPluginRecords.some((plugin) => plugin.displayName === "pi-web-access"), false);
   const legacyPackageSettings = JSON.parse(await readFile(path.join(legacyPiWebAccessAgentDir, "settings.json"), "utf8"));
-  assert.equal(legacyPackageSettings.packages.length, 2);
+  assert.equal(legacyPackageSettings.packages.length, 1);
   assert.equal(legacyPackageSettings.packages.some((source) => typeof source === "string" && samePath(source, piWebAccessRoot)), true);
   assert.equal(legacyPackageSettings.packages.filter((source) =>
     typeof source === "object" && normalizePath(source.source).includes("/plugins/")
-  ).length, 1);
+  ).length, 0);
   const legacyPackageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir: legacyPiWebAccessUserDataDir });
   assert.equal(legacyPackageSkillPaths.some((skillPath) => skillPath.endsWith(path.join("skills", "librarian", "SKILL.md"))), true);
   const captureCountBeforeLegacyPiWebAccess = captures.length;
@@ -1874,54 +2010,6 @@ try {
   assert.equal(legacyPiWebAccessToolNames.has("get_search_content"), true);
   assert.equal(legacyPiWebAccessToolNames.has("code_search"), true);
   assert.match(JSON.stringify(captures.at(-1)), /librarian/);
-
-  const chromeRoot = resolveChromePackageRoot();
-  assert.equal(typeof chromeRoot, "string");
-  await setPluginPackageEnabled({ userDataDir }, "chrome", true);
-  const chromePluginRecords = await listPluginPackages({ userDataDir });
-  const chromeRecords = chromePluginRecords.filter((plugin) => plugin.displayName === "Chrome");
-  assert.equal(chromeRecords.length, 1);
-  assert.equal(chromeRecords[0].enabled, true);
-  assert.equal(chromeRecords[0].resourceCounts.extensions.enabled, 1);
-  assert.equal(chromeRecords[0].resourceCounts.skills.enabled, 1);
-  packageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir });
-  const captureCountBeforeChrome = captures.length;
-  await runPiCodingAgentChat({
-    provider: {
-      providerName: "jasmine-mock",
-      apiKey: "test-key",
-      baseUrl,
-      modelId: "jasmine-test",
-      capabilities: {
-        vision: false,
-        imageOutput: false,
-        toolCalling: true,
-        reasoning: false,
-        embedding: false
-      },
-      contextWindow: 128000,
-      maxOutputTokens: 1200,
-      providerOptionsJson: "{}"
-    },
-    messages: [{ role: "user", content: "hello with chrome" }],
-    content: "hello with chrome",
-    attachments: [],
-    jasminePromptAppend: systemPrompt,
-    agentDir,
-    toolsEnabled: true,
-    packageSkillPaths
-  });
-  assert.equal(captures.length, captureCountBeforeChrome + 1);
-  const chromeToolNames = new Set((captures.at(-1).tools ?? []).map((tool) => tool.function?.name).filter(Boolean));
-  assert.equal(chromeToolNames.has("chrome_status"), true);
-  assert.equal(chromeToolNames.has("chrome_list_tabs"), true);
-  assert.equal(chromeToolNames.has("chrome_open_url"), true);
-  assert.equal(chromeToolNames.has("chrome_open_path"), true);
-  assert.equal(chromeToolNames.has("chrome_read_page"), true);
-  assert.equal(chromeToolNames.has("chrome_click"), true);
-  assert.equal(chromeToolNames.has("chrome_type"), true);
-  assert.equal(chromeToolNames.has("chrome_screenshot"), true);
-  assert.match(JSON.stringify(captures.at(-1)), /chrome/);
 
   const promptTemplateDir = path.join(tempDir, "prompts");
   await mkdir(promptTemplateDir, { recursive: true });

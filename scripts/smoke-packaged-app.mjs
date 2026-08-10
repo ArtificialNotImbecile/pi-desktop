@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { _electron as electron } from "playwright";
@@ -7,19 +7,24 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite");
 
 const rootDir = process.cwd();
-const executablePath = path.resolve(process.argv[2] || path.join(rootDir, "release", "v0.1.1", "win-unpacked", "Jasmine.exe"));
+const packageManifest = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
+const packageOutput = packageManifest.build?.directories?.output || path.join("release", `v${packageManifest.version}`);
+const executablePath = path.resolve(process.argv[2] || path.join(rootDir, packageOutput, "win-unpacked", "Jasmine.exe"));
 const executableInfo = await stat(executablePath).catch(() => null);
 if (!executableInfo?.isFile()) throw new Error(`Packaged Jasmine executable not found: ${executablePath}`);
 
 const resourcesRoot = path.join(path.dirname(executablePath), "resources", "jasmine-resources");
 for (const requiredPath of [
   path.join(resourcesRoot, "chrome-extension", "manifest.json"),
-  path.join(resourcesRoot, "builtin-plugins", "chrome", "package.json"),
   path.join(resourcesRoot, "builtin-skills", "code-reviewer", "SKILL.md"),
   path.join(resourcesRoot, "jasmine-logo.ico")
 ]) {
   const info = await stat(requiredPath).catch(() => null);
   if (!info?.isFile()) throw new Error(`Packaged resource missing: ${requiredPath}`);
+}
+const retiredChromePackage = path.join(resourcesRoot, "builtin-plugins", "chrome", "package.json");
+if (await stat(retiredChromePackage).catch(() => null)) {
+  throw new Error(`Retired built-in Chrome package is still packaged: ${retiredChromePackage}`);
 }
 
 const outputDir = path.join(rootDir, "test-results", "ui-harness", "release");
@@ -102,7 +107,7 @@ try {
   if (result.title !== "Jasmine — The desktop app for Pi" || result.bodyTextLength < 100) {
     throw new Error(`Packaged renderer is blank or mislabeled: ${JSON.stringify(result)}`);
   }
-  if (!result.pluginNames.some((name) => /chrome/i.test(name))) throw new Error(`Packaged Chrome plugin was not discovered: ${JSON.stringify(result)}`);
+  if (result.pluginNames.some((name) => /^chrome$/i.test(name))) throw new Error(`Retired Chrome package was discovered: ${JSON.stringify(result)}`);
   if (!result.skillNames.includes("code-reviewer")) throw new Error(`Packaged built-in skills were not discovered: ${JSON.stringify(result)}`);
   if (result.language !== "en" || result.legacyMcp?.transport !== "stdio" || result.legacyMcp?.source !== "manual") {
     throw new Error(`Packaged legacy database migration failed: ${JSON.stringify(result)}`);

@@ -56,6 +56,25 @@ test.describe("Jasmine cold start", () => {
       const appPage = await waitForAppShellPage(app, 15_000);
       await expect(appPage.locator(".app-shell")).toBeVisible();
       await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+      const nativeHistory = await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        return {
+          canGoBack: window?.webContents.navigationHistory.canGoBack() ?? false,
+          entries: window?.webContents.navigationHistory.getAllEntries().length ?? 0
+        };
+      });
+      expect(nativeHistory).toEqual({ canGoBack: false, entries: 1 });
+
+      // Regression: a mouse back button maps to the native navigation history.
+      // It must not reveal the temporary startup data URL.
+      await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        if (window?.webContents.navigationHistory.canGoBack()) {
+          window.webContents.navigationHistory.goBack();
+        }
+      });
+      await expect(appPage.locator(".app-shell")).toBeVisible();
+      await expect(appPage.locator("[data-jasmine-startup]")).toHaveCount(0);
     } finally {
       await quitElectron(app);
       await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);

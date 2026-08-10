@@ -66,12 +66,6 @@ try {
   await capture(page, "03-long-model-menu", "Long model menu stays bounded and scrollable");
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("button", { name: "Clear History..." }).click();
-  await page.waitForSelector(".confirm-dialog");
-  await capture(page, "03-clear-history-confirm", "App-styled destructive confirmation dialog");
-  await page.getByRole("button", { name: "Cancel" }).click();
-
   await page.getByRole("button", { name: "New chat" }).first().click();
   await fillComposer(page, "Visual matrix draft");
   await page.waitForTimeout(350);
@@ -200,8 +194,6 @@ try {
   await page.getByRole("button", { name: "Add Folder" }).click();
   await page.waitForSelector(".skill-settings-row");
   await capture(page, "07-settings-skills", "Settings Skills compact grouped management list");
-  await page.locator(".settings-nav").getByRole("button", { name: "Chrome Control" }).click();
-  await capture(page, "07-settings-chrome-control", "Settings Chrome Control takeover setup and status");
   await page.locator(".settings-nav").getByRole("button", { name: "Prompt Templates" }).click();
   await page.getByRole("button", { name: "Add Source" }).click();
   await page.waitForSelector(".prompt-template-row");

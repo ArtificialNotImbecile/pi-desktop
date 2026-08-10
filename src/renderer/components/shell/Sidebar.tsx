@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef, useState } from "react";
 import type { ChatThread, WorkspaceProject } from "../../../shared/ipc";
-import { ChevronRightIcon, EditIcon, ExternalLinkIcon, FolderIcon, MoreIcon, PinIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TodoIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
+import { ChevronRightIcon, EditIcon, ExternalLinkIcon, FolderIcon, InfoIcon, MoreIcon, PinIcon, PlusIcon, SearchIcon, SettingsIcon, SidebarIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { IconButton } from "../ui/IconButton";
 import { MenuItem, MenuSurface } from "../ui";
 import { useI18n } from "../../i18n";
@@ -24,7 +24,6 @@ export const Sidebar = memo(function Sidebar(props: {
   projects: WorkspaceProject[];
   activeThreadId: string | null;
   activeProjectId: string | null;
-  todoActive: boolean;
   workingActive: boolean;
   workingActiveCount: number;
   workingAttention: boolean;
@@ -37,10 +36,9 @@ export const Sidebar = memo(function Sidebar(props: {
   onOpenProjectFolder(): void;
   onSelectProject(projectId: string): void;
   onSelectThread(threadId: string): void;
-  onOpenTodo(): void;
   onOpenWorking(): void;
   onToggleMore(): void;
-  onClearHistory(): void;
+  onOpenAbout(): void;
   onOpenSettings(): void;
   onRenameThread(threadId: string, title: string): void;
   onDeleteThread(threadId: string): void;
@@ -131,18 +129,6 @@ export const Sidebar = memo(function Sidebar(props: {
       </div>
 
       <div className="sidebar-feature-list" aria-label={t("sidebar.features")}>
-        <button
-          className={`sidebar-feature-row ${props.todoActive ? "active" : ""}`}
-          type="button"
-          aria-current={props.todoActive ? "page" : undefined}
-          onClick={() => {
-            props.onCloseFloatingSurfaces();
-            props.onOpenTodo();
-          }}
-        >
-          <TodoIcon />
-          <span>{t("sidebar.todo")}</span>
-        </button>
         <button
           className={`sidebar-feature-row ${props.workingActive ? "active" : ""} ${props.workingAttention ? "attention" : ""}`}
           type="button"
@@ -329,9 +315,12 @@ export const Sidebar = memo(function Sidebar(props: {
               <span className="menu-inline-icon"><SettingsIcon /></span>
               <span>{t("app.settings")}</span>
             </button>
-            <button className="danger" type="button" onClick={props.onClearHistory}>
-              <span className="menu-inline-icon"><TrashIcon /></span>
-              <span>{t("sidebar.clearHistory")}</span>
+            <button type="button" onClick={() => {
+              props.onCloseFloatingSurfaces();
+              props.onOpenAbout();
+            }}>
+              <span className="menu-inline-icon"><InfoIcon /></span>
+              <span>{t("settings.nav.about")}</span>
             </button>
         </MenuSurface>
       </div>

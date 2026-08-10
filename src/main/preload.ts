@@ -4,6 +4,7 @@ import type {
   ActivityObservationListRequest,
   ActivitySettingsUpdateRequest,
   AppSettingsUpdateRequest,
+  AppUpdateState,
   AskUserQuestionPrompt,
   AskUserQuestionResponse,
   ChatEditRequest,
@@ -29,6 +30,8 @@ import type {
   McpServerUpdateRequest,
   MessageListRequest,
   PickedPath,
+  PermissionApprovalPrompt,
+  PermissionApprovalResponse,
   PluginPackageEnableRequest,
   PluginPackageInstallRequest,
   PluginPackageOperationRequest,
@@ -54,8 +57,6 @@ import type {
   TerminalResizeRequest,
   TerminalStartRequest,
   TerminalStopRequest,
-  TodoAddRequest,
-  TodoOpenFileRequest,
   ThreadActivePluginsUpdateRequest,
   ThreadContextUsageRequest,
   ThreadDraftUpdateRequest,
@@ -145,15 +146,6 @@ const api: JasmineApi = {
     ipcRenderer.on("working:navigate", listener);
     return () => ipcRenderer.removeListener("working:navigate", listener);
   },
-  getTodoSnapshot() {
-    return ipcRenderer.invoke("todos:snapshot");
-  },
-  addTodo(request: TodoAddRequest) {
-    return ipcRenderer.invoke("todos:add", request);
-  },
-  openTodoFile(request: TodoOpenFileRequest) {
-    return ipcRenderer.invoke("todos:openFile", request);
-  },
   listMessages(request: string | MessageListRequest) {
     return ipcRenderer.invoke("messages:list", request);
   },
@@ -183,6 +175,9 @@ const api: JasmineApi = {
   },
   answerAskUserQuestion(request: AskUserQuestionResponse): Promise<void> {
     return ipcRenderer.invoke("askUserQuestion:answer", request);
+  },
+  answerPermissionApproval(request: PermissionApprovalResponse): Promise<void> {
+    return ipcRenderer.invoke("permissionApproval:answer", request);
   },
   onChatStream(callback: (event: ChatStreamEvent) => void) {
     const listener = (_event: Electron.IpcRendererEvent, payload: ChatStreamEvent) => callback(payload);
@@ -342,6 +337,33 @@ const api: JasmineApi = {
   },
   updateAppSettings(request: AppSettingsUpdateRequest) {
     return ipcRenderer.invoke("appSettings:update", request);
+  },
+  onPermissionApproval(callback: (prompt: PermissionApprovalPrompt) => void) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: PermissionApprovalPrompt) => callback(payload);
+    ipcRenderer.on("permissionApproval:prompt", listener);
+    return () => ipcRenderer.removeListener("permissionApproval:prompt", listener);
+  },
+  onPermissionApprovalCancelled(callback: (id: string) => void) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: string) => callback(payload);
+    ipcRenderer.on("permissionApproval:cancelled", listener);
+    return () => ipcRenderer.removeListener("permissionApproval:cancelled", listener);
+  },
+  getAppUpdateState() {
+    return ipcRenderer.invoke("updater:getState");
+  },
+  checkForAppUpdate() {
+    return ipcRenderer.invoke("updater:check");
+  },
+  downloadAppUpdate() {
+    return ipcRenderer.invoke("updater:download");
+  },
+  installAppUpdate() {
+    return ipcRenderer.invoke("updater:install");
+  },
+  onAppUpdateStateChanged(callback: (state: AppUpdateState) => void) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: AppUpdateState) => callback(payload);
+    ipcRenderer.on("updater:changed", listener);
+    return () => ipcRenderer.removeListener("updater:changed", listener);
   },
   resolveTerminalShell() {
     return ipcRenderer.invoke("terminal:shell:resolve");

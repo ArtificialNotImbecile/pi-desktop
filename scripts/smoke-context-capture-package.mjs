@@ -32,7 +32,7 @@ for (const target of [
 }
 
 const extensionModule = await import(pathToFileURL(path.join(packageDir, "dist", "index.js")).href);
-assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 6);
+assert.equal(extensionModule.CONTEXT_TAXONOMY_SCHEMA_VERSION, 7);
 assert.equal(typeof extensionModule.createContextCaptureExtension, "function");
 assert.equal(typeof extensionModule.classifyTextSegments, "function");
 assert.equal(typeof extensionModule.default, "function");
@@ -73,17 +73,54 @@ sdkBus.emit("message_end", {
 });
 
 assert.equal(captured.length, 1);
-assert.equal(captured[0].payloadSchemaVersion, 6);
+assert.equal(captured[0].payloadSchemaVersion, 7);
 assert.equal(captured[0].provider, "deepseek");
 assert.equal(captured[0].model, "deepseek-v4-flash");
 assert.deepEqual(captured[0].payloadShape.topLevelOrder, ["model", "apiKey", "messages", "tools", "stream"]);
+assert.deepEqual(Object.keys(JSON.parse(captured[0].rawPayload)), captured[0].payloadShape.topLevelOrder);
 assert.equal(captured[0].payloadShape.messagesBeforeTools, true);
+assert.deepEqual(captured[0].items.map((item) => item.payloadPath), [
+  "$.messages[0]", "$.messages[1]", "$.tools[0]", "$", "$"
+]);
+const requestOptions = captured[0].items.filter((item) => item.role === "request_options");
+assert.equal(requestOptions.length, 1);
+assert.deepEqual(requestOptions[0].parts.map((part) => part.payloadPath), ["$.model", "$.stream"]);
+const unclassified = captured[0].items.find((item) => item.kind === "unclassified");
+assert.deepEqual(unclassified.parts.map((part) => part.payloadPath), ["$.apiKey"]);
 assert.equal(captured[0].cacheMetrics.cacheHitTokens, 4096);
 assert.equal(captured[0].cacheMetrics.cacheMissTokens, 137);
 assert.equal(captured[0].cacheMetrics.status, "hit");
 assert.equal(captured[0].reasoningValidation.status, "not_applicable");
 assert.equal(captured[0].rawPayload.includes(fakeProviderSecret), false);
 assert.match(captured[0].rawPayload, /\[redacted\]/);
+
+const groupedTaxonomy = extensionModule.providerPayloadToContextTaxonomy({
+  stream: true,
+  future_before_tools: { retained: 1 },
+  tools: [{ type: "function", function: { name: "write", parameters: { type: "object" } } }],
+  temperature: 0.2,
+  messages: [{ role: "user", content: "semantic grouping" }],
+  model: "tools-first-model",
+  future_after_messages: { retained: 2 }
+}, { provider: "future-provider", model: "tools-first-model" });
+assert.deepEqual(groupedTaxonomy.payloadShape.topLevelOrder, [
+  "stream", "future_before_tools", "tools", "temperature", "messages", "model", "future_after_messages"
+]);
+assert.deepEqual(Object.keys(JSON.parse(groupedTaxonomy.rawPayload)), groupedTaxonomy.payloadShape.topLevelOrder);
+assert.deepEqual(groupedTaxonomy.items.map((item) => item.payloadPath), ["$.messages[0]", "$.tools[0]", "$", "$"]);
+assert.equal(groupedTaxonomy.items.filter((item) => item.role === "request_options").length, 1);
+assert.deepEqual(
+  groupedTaxonomy.items.find((item) => item.role === "request_options").parts.map((part) => part.payloadPath),
+  ["$.stream", "$.temperature", "$.model"]
+);
+assert.equal(groupedTaxonomy.items.filter((item) => item.kind === "unclassified").length, 1);
+const groupedUnclassified = groupedTaxonomy.items.find((item) => item.kind === "unclassified");
+assert.deepEqual(
+  groupedUnclassified.parts.map((part) => part.payloadPath),
+  ["$.future_before_tools", "$.future_after_messages"]
+);
+assert.match(groupedUnclassified.text, /"retained": 1/);
+assert.match(groupedUnclassified.text, /"retained": 2/);
 
 const outputDir = await mkdtemp(path.join(tmpdir(), "pi-context-capture-package-"));
 const previousEnv = {

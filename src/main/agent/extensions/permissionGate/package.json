@@ -1,0 +1,54 @@
+{
+  "name": "@jasmine-ai/pi-permission-gate",
+  "version": "0.1.0",
+  "description": "Fail-closed approval gate for Pi bash and file mutation tools.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./display": {
+      "types": "./dist/display.d.ts",
+      "import": "./dist/display.js"
+    },
+    "./path-scope": {
+      "types": "./dist/pathScope.d.ts",
+      "import": "./dist/pathScope.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/permission-gate.test.mjs",
+    "check": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.1 <1"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT",
+  "sideEffects": false
+}

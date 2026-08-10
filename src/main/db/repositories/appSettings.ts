@@ -1,4 +1,5 @@
 import type { AppLanguage, AppSettings, AppSettingsUpdateRequest, ReasoningEffort } from "../../../shared/ipc.js";
+import type { PermissionMode } from "../../../shared/permissions.js";
 import { DEFAULT_BRAND_SETTINGS, isSupportedBrandLogoDataUrl } from "../../../shared/brand.js";
 import { DEFAULT_APPEARANCE } from "../../../shared/theme.js";
 import { isWindowsBashLauncherPath } from "../../utils/shellPaths.js";
@@ -22,6 +23,7 @@ type AppSettingsRow = {
   chrome_takeover_extension_id?: string | null;
   working_notification_mode?: string | null;
   working_notification_include_details?: number | null;
+  permission_mode?: string | null;
   skill_editor_path?: string | null;
   terminal_shell_path?: string | null;
   updated_at: string;
@@ -49,10 +51,11 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       chrome_takeover_extension_id,
       working_notification_mode,
       working_notification_include_details,
+      permission_mode,
       skill_editor_path,
       terminal_shell_path,
       updated_at
-    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, NULL, NULL, ?)`
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, 'ask', NULL, NULL, ?)`
   ).run(
     DEFAULT_APPEARANCE.accent,
     DEFAULT_APPEARANCE.surface,
@@ -86,6 +89,7 @@ export function getAppSettings(db: SqlDatabase): AppSettings | null {
         chrome_takeover_extension_id,
         working_notification_mode,
         working_notification_include_details,
+        permission_mode,
         skill_editor_path,
         terminal_shell_path,
         updated_at
@@ -120,6 +124,7 @@ export function updateAppSettings(
     chromeTakeoverExtensionId: normalizeChromeExtensionId(input.chromeTakeover?.extensionId, current.chromeTakeover.extensionId),
     workingNotificationMode: normalizeWorkingNotificationMode(input.workingNotifications?.mode, current.workingNotifications.mode),
     workingNotificationIncludeDetails: input.workingNotifications?.includeDetails ?? current.workingNotifications.includeDetails,
+    permissionMode: normalizePermissionMode(input.permissionMode, current.permissionMode),
     skillEditorPath: normalizeOptionalPath(input.skillEditorPath, current.skillEditorPath),
     terminalShellPath: normalizeTerminalShellPath(input.terminalShellPath, current.terminalShellPath)
   };
@@ -142,6 +147,7 @@ export function updateAppSettings(
         chrome_takeover_extension_id = ?,
         working_notification_mode = ?,
         working_notification_include_details = ?,
+        permission_mode = ?,
         skill_editor_path = ?,
         terminal_shell_path = ?,
         updated_at = ?
@@ -163,6 +169,7 @@ export function updateAppSettings(
     next.chromeTakeoverExtensionId,
     next.workingNotificationMode,
     next.workingNotificationIncludeDetails ? 1 : 0,
+    next.permissionMode,
     next.skillEditorPath ?? null,
     next.terminalShellPath ?? null,
     timestamp
@@ -200,6 +207,7 @@ function mapAppSettings(row: AppSettingsRow): AppSettings {
       mode: normalizeWorkingNotificationMode(row.working_notification_mode, "background"),
       includeDetails: row.working_notification_include_details !== 0
     },
+    permissionMode: normalizePermissionMode(row.permission_mode, "ask"),
     skillEditorPath: normalizeOptionalPath(row.skill_editor_path, undefined),
     terminalShellPath: normalizeTerminalShellPath(row.terminal_shell_path, undefined)
   };
@@ -251,6 +259,10 @@ function normalizeWorkingNotificationMode(
   fallback: "background" | "always" | "never"
 ): "background" | "always" | "never" {
   return value === "background" || value === "always" || value === "never" ? value : fallback;
+}
+
+function normalizePermissionMode(value: string | null | undefined, fallback: PermissionMode): PermissionMode {
+  return value === "ask" || value === "full-access" ? value : fallback;
 }
 
 function normalizeTerminalShellPath(value: string | null | undefined, fallback: string | undefined): string | undefined {

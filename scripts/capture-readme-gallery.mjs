@@ -43,8 +43,6 @@ try {
   await page.addStyleTag({ content: "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important;caret-color:transparent!important}" });
   await page.evaluate(async () => {
     await Promise.all([
-      window.jasmine.addTodo({ text: "Review the Windows release checklist" }),
-      window.jasmine.addTodo({ text: "Document the provider configuration flow" }),
       window.jasmine.createMemory({ content: "Prefer concise answers with concrete next steps." }),
       window.jasmine.createManualActivityObservation({ note: "Prepared the Jasmine open-source walkthrough." })
     ]);
@@ -66,9 +64,9 @@ try {
     if (await close.count()) await close.click();
   }
 
-  await page.getByRole("button", { name: "TODO" }).click();
-  await page.locator(".todo-page").waitFor();
-  await capture("todo");
+  await page.getByRole("button", { name: "Working" }).click();
+  await page.locator(".working-page").waitFor();
+  await capture("working");
   await projectRow.locator(".project-item").click();
 
   await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
@@ -98,8 +96,7 @@ try {
     ["Appearance", "settings-appearance"],
     ["Memory", "settings-memory"],
     ["Skills", "settings-skills"],
-    ["Plugins", "settings-plugins"],
-    ["Chrome Control", "settings-chrome"],
+    ["Packages", "settings-packages"],
     ["Prompt Templates", "settings-prompt-templates"],
     ["Remote", "settings-remote"],
     ["MCP Servers", "settings-mcp"],

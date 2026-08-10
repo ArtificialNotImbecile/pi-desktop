@@ -11,8 +11,8 @@ Jasmine is an independent, open-source desktop GUI for the Pi coding agent, brin
 ## Features
 
 - **Pi Sessions** — keep Pi-compatible JSONL as the canonical conversation record, with persistent local threads, drafts, projects, search, and session import.
-- **Desktop GUI for Pi** — use rich chat, attachments, TODOs, memories, activity, and project context without leaving the desktop app.
-- **Pi Skills & Extensions** — work with reusable skills, prompt templates, package plugins, MCP servers, web access, and optional Chrome integration.
+- **Desktop GUI for Pi** — use rich chat, attachments, Working tasks, memories, activity, and project context without leaving the desktop app.
+- **Pi Skills & Extensions** — work with reusable skills, prompt templates, Pi packages, MCP servers, and web access.
 - **Integrated Terminal** — run project terminals and remote shells alongside coding-agent conversations.
 - **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
 
@@ -33,9 +33,9 @@ The example above uses two real model turns and opens the captured conversation 
 <details>
 <summary>Workspace, local context, and project tools</summary>
 
-| TODOs | Search |
+| Working | Search |
 | --- | --- |
-| ![Project TODOs](docs/assets/screenshots/todo.png) | ![Search chats](docs/assets/screenshots/search.png) |
+| ![Working task center](docs/assets/screenshots/working.png) | ![Search chats](docs/assets/screenshots/search.png) |
 | Memory | Activity |
 | ![Local memory](docs/assets/screenshots/memory.png) | ![Local activity](docs/assets/screenshots/activity.png) |
 | Artifacts | Terminal |
@@ -51,16 +51,14 @@ The example above uses two real model turns and opens the captured conversation 
 | ![General settings](docs/assets/screenshots/settings-general.png) | ![Provider settings](docs/assets/screenshots/settings-providers.png) |
 | Appearance | Memory |
 | ![Appearance settings](docs/assets/screenshots/settings-appearance.png) | ![Memory settings](docs/assets/screenshots/settings-memory.png) |
-| Skills | Plugins |
-| ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Plugin settings](docs/assets/screenshots/settings-plugins.png) |
-| Chrome Control | Prompt Templates |
-| ![Chrome Control settings](docs/assets/screenshots/settings-chrome.png) | ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) |
-| Remote | MCP Servers |
-| ![Remote settings](docs/assets/screenshots/settings-remote.png) | ![MCP server settings](docs/assets/screenshots/settings-mcp.png) |
-| Activity | Web Search |
-| ![Activity settings](docs/assets/screenshots/settings-activity.png) | ![Web Search settings](docs/assets/screenshots/settings-web-search.png) |
-| About | |
-| ![About Jasmine](docs/assets/screenshots/settings-about.png) | |
+| Skills | Packages |
+| ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Package settings](docs/assets/screenshots/settings-packages.png) |
+| Prompt Templates | Remote |
+| ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![Remote settings](docs/assets/screenshots/settings-remote.png) |
+| MCP Servers | Activity |
+| ![MCP server settings](docs/assets/screenshots/settings-mcp.png) | ![Activity settings](docs/assets/screenshots/settings-activity.png) |
+| Web Search | About |
+| ![Web Search settings](docs/assets/screenshots/settings-web-search.png) | ![About Jasmine](docs/assets/screenshots/settings-about.png) |
 
 </details>
 
@@ -72,7 +70,9 @@ The example above uses two real model turns and opens the captured conversation 
 
 ## Install on Windows
 
-Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.1.1` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
+Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.2.0` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
+
+After installation, open **About** to check GitHub Releases, download an available update with visible progress, and restart Jasmine into the installer.
 
 ## Run locally
 
@@ -98,11 +98,7 @@ Environment-variable references are the recommended credential method. For examp
 
 Jasmine also supports entering a key directly. Direct keys are stored as plain text in the local SQLite database. They are masked in renderer-visible settings, but they are not protected by the operating system credential vault. Do not use direct storage on an untrusted or shared computer.
 
-## Chrome integration
-
-The optional Chrome extension uses `debugger`, `tabs`, `nativeMessaging`, `scripting`, and `<all_urls>` permissions so Jasmine can control a browser only when the integration is enabled and invoked. Disable the Chrome package in Settings and remove the extension/native host to turn the integration off.
-
-The Chrome integration, extension source, and Jasmine visual assets in this repository are project-owned or authorized for distribution under the MIT License.
+The unreleased Chrome bridge and extension source remain in the repository for future package work, but Jasmine does not currently expose Chrome Control in Settings or ship a built-in Chrome package.
 
 ## Testing
 

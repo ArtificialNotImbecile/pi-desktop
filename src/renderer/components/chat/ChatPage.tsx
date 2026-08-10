@@ -13,6 +13,7 @@ import type {
   ChatThread,
   ClipboardImagePasteRequest,
   MemoryRecord,
+  PermissionMode,
   PickedPath,
   PluginPackageRecord,
   PromptTemplateRecord,
@@ -74,6 +75,8 @@ export function ChatPage(props: {
   modelMenuOpen: boolean;
   skillMenuOpen: boolean;
   memoryEnabled: boolean;
+  permissionMode: PermissionMode;
+  permissionModeSaving: boolean;
   webSearchSettings: WebSearchSettings;
   webSearchLoading: boolean;
   remoteConnections: RemoteConnectionRecord[];
@@ -145,6 +148,7 @@ export function ChatPage(props: {
   onRemoveAttachment(path: string): void;
   onCancelEdit(): void;
   onToggleMemory(): void;
+  onSelectPermissionMode(mode: PermissionMode): void;
   onToggleTools(): void;
   onSelectRemoteConnection(id: string | null): void;
   onSelectRightPanel(mode: RightPanelMode): void;
@@ -291,6 +295,8 @@ export function ChatPage(props: {
         remoteConnections={props.remoteConnections}
         activeRemoteConnection={props.activeRemoteConnection}
         toolsEnabled={props.toolsEnabled}
+        permissionMode={props.permissionMode}
+        permissionModeSaving={props.permissionModeSaving}
         reasoningEffort={props.reasoningEffort}
         contextUsageLabel={contextUsageDisplay.label}
         contextUsageTitle={contextUsageDisplay.title}
@@ -328,6 +334,7 @@ export function ChatPage(props: {
         onOpenSkillSettings={stable.onOpenSkillSettings}
         onOpenPluginSettings={stable.onOpenPluginSettings}
         onToggleTools={stable.onToggleTools}
+        onSelectPermissionMode={stable.onSelectPermissionMode}
         onToggleModelMenu={stable.onToggleModelMenu}
         onSelectProvider={stable.onSelectProvider}
         onSelectModel={stable.onSelectModel}
