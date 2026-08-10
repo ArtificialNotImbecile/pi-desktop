@@ -1915,10 +1915,12 @@ try {
     cwd: fileChangesDedupeCwd,
     agentDir,
     toolsEnabled: true,
+    fileChangeTrackingMode: "watcher",
     onFileChanges: (capture) => settingsFileChangeCaptures.push(capture)
   });
   assert.equal(captures.length, captureCountBeforeSettingsFileChangesDedupe + 1);
   assert.equal(settingsFileChangeCaptures.length, 1, "Jasmine must retain exactly one inline file-change tracker");
+  assert.equal(settingsFileChangeCaptures[0].coverage.trackingMode, "watcher");
   assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false);
   assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true, "unrelated packages must remain loaded");
 
@@ -2003,6 +2005,7 @@ try {
   });
   assert.equal(captures.length, captureCountBeforeTemporaryFileChangesDedupe + 1);
   assert.equal(temporaryFileChangeCaptures.length, 1);
+  assert.equal(temporaryFileChangeCaptures[0].coverage.trackingMode, "managed-tools-only");
   assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false);
   assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true);
 

@@ -248,6 +248,7 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
       permission_mode TEXT NOT NULL DEFAULT 'ask',
+      file_change_tracking_mode TEXT NOT NULL DEFAULT 'managed-tools-only',
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
@@ -403,6 +404,9 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   markMigration(db, 34, "agent permission mode", now);
   ensureFileChangeTables(db);
   markMigration(db, 35, "deterministic file change captures", now);
+  addColumnIfMissing(db, "app_settings", "file_change_tracking_mode", "TEXT NOT NULL DEFAULT 'managed-tools-only'");
+  if (!hasMigration(db, 36)) migrateFileChangesToSparseEvidence(db);
+  markMigration(db, 36, "fast file change modes and sparse watcher evidence", now);
 }
 
 function ensureFileChangeTables(db: SqlDatabase): void {
@@ -452,11 +456,6 @@ function ensureFileChangeTables(db: SqlDatabase): void {
       diff_truncated INTEGER NOT NULL DEFAULT 0 CHECK (diff_truncated IN (0, 1)),
       provenance TEXT NOT NULL CHECK (provenance = 'observed-between-checkpoints'),
       UNIQUE(capture_id, ordinal),
-      CHECK (
-        (status = 'added' AND before_sha256 IS NULL AND before_size IS NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
-        OR (status = 'modified' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
-        OR (status = 'deleted' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NULL AND after_size IS NULL)
-      ),
       CHECK (before_redacted = 0 OR before_content IS NULL),
       CHECK (after_redacted = 0 OR after_content IS NULL)
     );
@@ -478,6 +477,65 @@ function ensureFileChangeTables(db: SqlDatabase): void {
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_file_change_captures_run_producer
       ON file_change_captures(run_id, producer_capture_id) WHERE producer_capture_id IS NOT NULL;
+  `);
+}
+
+function migrateFileChangesToSparseEvidence(db: SqlDatabase): void {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get() as { sql?: string } | undefined;
+  if (!table?.sql?.includes("status = 'added'")) return;
+  db.exec(`
+    DROP INDEX IF EXISTS idx_file_changes_capture_ordinal;
+    CREATE TABLE file_changes_v36 (
+      id TEXT PRIMARY KEY,
+      capture_id TEXT NOT NULL REFERENCES file_change_captures(id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+      status TEXT NOT NULL CHECK (status IN ('added', 'modified', 'deleted')),
+      kind TEXT NOT NULL CHECK (kind IN ('text', 'image', 'binary', 'other')),
+      path TEXT NOT NULL,
+      root TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      before_sha256 TEXT,
+      before_size INTEGER CHECK (before_size IS NULL OR before_size >= 0),
+      before_media_type TEXT,
+      before_encoding TEXT CHECK (before_encoding IS NULL OR before_encoding IN ('utf8', 'base64')),
+      before_mode TEXT,
+      before_content TEXT,
+      before_content_truncated INTEGER NOT NULL DEFAULT 0 CHECK (before_content_truncated IN (0, 1)),
+      before_redacted INTEGER NOT NULL DEFAULT 0 CHECK (before_redacted IN (0, 1)),
+      after_sha256 TEXT,
+      after_size INTEGER CHECK (after_size IS NULL OR after_size >= 0),
+      after_media_type TEXT,
+      after_encoding TEXT CHECK (after_encoding IS NULL OR after_encoding IN ('utf8', 'base64')),
+      after_mode TEXT,
+      after_content TEXT,
+      after_content_truncated INTEGER NOT NULL DEFAULT 0 CHECK (after_content_truncated IN (0, 1)),
+      after_redacted INTEGER NOT NULL DEFAULT 0 CHECK (after_redacted IN (0, 1)),
+      unified_diff TEXT,
+      diff_truncated INTEGER NOT NULL DEFAULT 0 CHECK (diff_truncated IN (0, 1)),
+      provenance TEXT NOT NULL CHECK (provenance = 'observed-between-checkpoints'),
+      UNIQUE(capture_id, ordinal),
+      CHECK (before_redacted = 0 OR before_content IS NULL),
+      CHECK (after_redacted = 0 OR after_content IS NULL)
+    );
+    INSERT INTO file_changes_v36 (
+      id, capture_id, ordinal, status, kind, path, root, relative_path,
+      before_sha256, before_size, before_media_type, before_encoding, before_mode,
+      before_content, before_content_truncated, before_redacted,
+      after_sha256, after_size, after_media_type, after_encoding, after_mode,
+      after_content, after_content_truncated, after_redacted,
+      unified_diff, diff_truncated, provenance
+    )
+    SELECT
+      id, capture_id, ordinal, status, kind, path, root, relative_path,
+      before_sha256, before_size, before_media_type, before_encoding, before_mode,
+      before_content, before_content_truncated, before_redacted,
+      after_sha256, after_size, after_media_type, after_encoding, after_mode,
+      after_content, after_content_truncated, after_redacted,
+      unified_diff, diff_truncated, provenance
+    FROM file_changes;
+    DROP TABLE file_changes;
+    ALTER TABLE file_changes_v36 RENAME TO file_changes;
+    CREATE INDEX idx_file_changes_capture_ordinal ON file_changes(capture_id, ordinal);
   `);
 }
 

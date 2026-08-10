@@ -791,7 +791,7 @@ function persistFileChangeCaptures(
   input: { threadId: string; messageId?: string; runId: string; captures: FileChangeCaptureInput[] }
 ): void {
   for (const capture of input.captures) {
-    if (capture.changes.length === 0 && capture.coverage.status === "complete" && capture.warnings.length === 0) continue;
+    if (capture.changes.length === 0 && capture.coverage.status === "complete" && capture.warnings.length === 0 && !capture.coverage.bashInvoked) continue;
     db.addFileChangeCapture({
       threadId: input.threadId,
       ...(input.messageId ? { messageId: input.messageId } : {}),
@@ -810,7 +810,7 @@ function persistFailedRunFileChanges(
   }
 ): void {
   const captures = input.captures.filter((capture) => (
-    capture.changes.length > 0 || capture.coverage.status !== "complete" || capture.warnings.length > 0
+    capture.changes.length > 0 || capture.coverage.status !== "complete" || capture.warnings.length > 0 || capture.coverage.bashInvoked
   ));
   if (captures.length === 0) return;
   db.runInTransaction(() => persistFileChangeCaptures(db, {
@@ -949,6 +949,7 @@ function runtimeContextOptions(
       return response;
     },
     permissionMode: turn.appSettings.permissionMode,
+    fileChangeTrackingMode: turn.appSettings.fileChangeTrackingMode,
     permissionProjectRoot: turn.permissionProjectRoot,
     requestPermissionApproval: async (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => {
       working.waitingForUser(requestId);

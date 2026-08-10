@@ -434,6 +434,7 @@ export const appSettingsUpdateSchema = z.object({
     includeDetails: z.boolean().optional()
   }).optional(),
   permissionMode: permissionModeSchema.optional(),
+  fileChangeTrackingMode: z.enum(["managed-tools-only", "watcher"]).optional(),
   skillEditorPath: z.string().trim().max(1000).optional(),
   terminalShellPath: z.string().trim().max(1000).optional()
 });

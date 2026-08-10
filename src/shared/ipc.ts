@@ -546,6 +546,7 @@ export type AppSettings = {
   chromeTakeover: ChromeTakeoverSettings;
   workingNotifications: WorkingNotificationSettings;
   permissionMode: PermissionMode;
+  fileChangeTrackingMode: FileChangeTrackingMode;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -562,6 +563,7 @@ export type AppSettingsUpdateRequest = {
   chromeTakeover?: Partial<ChromeTakeoverSettings>;
   workingNotifications?: Partial<WorkingNotificationSettings>;
   permissionMode?: PermissionMode;
+  fileChangeTrackingMode?: FileChangeTrackingMode;
   skillEditorPath?: string;
   terminalShellPath?: string;
 };
@@ -741,14 +743,15 @@ export type ContextTaxonomy = {
 
 export type FileChangeStatus = "added" | "modified" | "deleted";
 export type FileChangeKind = "text" | "image" | "binary" | "other";
+export type FileChangeTrackingMode = "managed-tools-only" | "watcher";
 export type FileChangeProvenance = "observed-between-checkpoints";
 
 export type FileChangeCoverageRoot = {
   id: string;
   path: string;
   physicalPath: string;
-  source: "cwd" | "configured" | "write-target";
-  scope: "recursive" | "file";
+  source: "cwd" | "configured" | "write-target" | "watcher";
+  scope: "recursive" | "file" | "watcher";
   filePath?: string;
   requestedPath?: string;
   requestedFilePath?: string;
@@ -770,22 +773,24 @@ export type FileChangeCoverage = {
   reason?: string;
   scannedFiles?: number;
   scannedBytes?: number;
-  bashCoverage?: "agent-start-roots-only";
+  trackingMode?: FileChangeTrackingMode;
+  bashCoverage?: "agent-start-roots-only" | "not-tracked" | "watcher-observed";
   bashInvoked?: boolean;
   omittedWarningCount?: number;
   omittedIssueCount?: number;
   rootDetails?: FileChangeCoverageRoot[];
   issues?: FileChangeCoverageIssue[];
   limits?: {
-    maxFiles: number;
-    maxTotalBytes: number;
+    maxFiles?: number;
+    maxTotalBytes?: number;
     maxContentBytes: number;
-    maxCapturedContentBytes: number;
+    maxCapturedContentBytes?: number;
     maxRunCapturedContentBytes?: number;
     maxRoots?: number;
     maxManagedTargets?: number;
     maxChanges?: number;
-    appliesPerRootSnapshot: true;
+    appliesPerRootSnapshot?: true;
+    appliesPerObservedFile?: true;
   };
 };
 

@@ -98,6 +98,7 @@ try {
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
       permission_mode TEXT NOT NULL DEFAULT 'ask',
+      file_change_tracking_mode TEXT NOT NULL DEFAULT 'managed-tools-only',
       skill_editor_path TEXT,
       terminal_shell_path TEXT,
       updated_at TEXT NOT NULL
@@ -219,6 +220,38 @@ try {
       );
       INSERT INTO mcp_servers (id, name, command, args_json, env_json, enabled, created_at, updated_at)
       VALUES ('legacy-mcp', 'Legacy MCP', 'legacy-command', '["--stdio"]', '{}', 1, '${timestamp}', '${timestamp}');
+      CREATE TABLE file_change_captures (
+        id TEXT PRIMARY KEY, producer_capture_id TEXT, thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+        message_id TEXT REFERENCES chat_messages(id) ON DELETE SET NULL, run_id TEXT NOT NULL,
+        schema_version INTEGER NOT NULL, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, cwd TEXT NOT NULL,
+        roots_json TEXT NOT NULL DEFAULT '[]', excludes_json TEXT NOT NULL DEFAULT '[]', warnings_json TEXT NOT NULL DEFAULT '[]', coverage_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE file_changes (
+        id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES file_change_captures(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL, status TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL, root TEXT NOT NULL, relative_path TEXT NOT NULL,
+        before_sha256 TEXT, before_size INTEGER, before_media_type TEXT, before_encoding TEXT,
+        before_content TEXT, before_content_truncated INTEGER NOT NULL DEFAULT 0, before_redacted INTEGER NOT NULL DEFAULT 0,
+        after_sha256 TEXT, after_size INTEGER, after_media_type TEXT, after_encoding TEXT,
+        after_content TEXT, after_content_truncated INTEGER NOT NULL DEFAULT 0, after_redacted INTEGER NOT NULL DEFAULT 0,
+        unified_diff TEXT, diff_truncated INTEGER NOT NULL DEFAULT 0,
+        provenance TEXT NOT NULL CHECK (provenance = 'observed-between-checkpoints'),
+        before_mode TEXT, after_mode TEXT,
+        CHECK (
+          (status = 'added' AND before_sha256 IS NULL AND before_size IS NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
+          OR (status = 'modified' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NOT NULL AND after_size IS NOT NULL)
+          OR (status = 'deleted' AND before_sha256 IS NOT NULL AND before_size IS NOT NULL AND after_sha256 IS NULL AND after_size IS NULL)
+        )
+      );
+      INSERT INTO file_change_captures (
+        id, producer_capture_id, thread_id, message_id, run_id, schema_version, started_at, completed_at, cwd
+      ) VALUES ('pre-v36-capture', 'pre-v36-producer', 'legacy-thread', 'legacy-msg-2', 'pre-v36-run', 1, '${timestamp}', '${timestamp}', '${projectRoot.replaceAll("'", "''")}');
+      INSERT INTO file_changes (
+        id, capture_id, ordinal, status, kind, path, root, relative_path,
+        before_sha256, before_size, after_sha256, after_size, provenance, before_mode, after_mode
+      ) VALUES (
+        'pre-v36-change', 'pre-v36-capture', 0, 'modified', 'text', 'pre-v36.txt', '.', 'pre-v36.txt',
+        '${"1".repeat(64)}', 6, '${"2".repeat(64)}', 5, 'observed-between-checkpoints', '100644', '100755'
+      );
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
@@ -270,9 +303,14 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 33").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 34").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 35").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 36").get().exists_flag, 1);
+    assert.equal(legacyDb.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().sql.includes("status = 'added'"), false);
+    assert.deepEqual({ ...legacyDb.prepare("SELECT before_mode, after_mode FROM file_changes WHERE id = 'pre-v36-change'").get() }, { before_mode: "100644", after_mode: "100755" });
+    legacyDb.prepare("DELETE FROM file_change_captures WHERE id = 'pre-v36-capture'").run();
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_change_captures'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT permission_mode FROM app_settings WHERE id = 'default'").get().permission_mode, "ask");
+    assert.equal(legacyDb.prepare("SELECT file_change_tracking_mode FROM app_settings WHERE id = 'default'").get().file_change_tracking_mode, "managed-tools-only");
     assert.equal(legacyDb.prepare("PRAGMA table_info(app_settings)").all().some((row) => row.name === "working_notification_mode"), true);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'working_tasks'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("PRAGMA table_info(context_captures)").all().some((row) => row.name === "raw_payload_gzip"), true);
@@ -619,6 +657,48 @@ try {
     assert.equal(boundedStoredDetail.diffTruncated, true);
     legacyDb.prepare("DELETE FROM file_change_captures WHERE id = ?").run(boundedCaptureId);
 
+    const watcherCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "file-change-message",
+      runId: "file-change-run",
+      capture: {
+        producerCaptureId: "watcher-sparse-capture",
+        schemaVersion: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        cwd: projectRoot,
+        roots: [projectRoot],
+        excludes: [],
+        warnings: [],
+        coverage: { status: "complete", target: "local", trackingMode: "watcher", bashCoverage: "watcher-observed" },
+        changes: [
+          {
+            status: "modified",
+            kind: "text",
+            path: path.join(projectRoot, "watcher-after-only.txt"),
+            root: projectRoot,
+            relativePath: "watcher-after-only.txt",
+            after: { sha256: "e".repeat(64), size: 5, encoding: "utf8", content: "after" },
+            provenance: "observed-between-checkpoints"
+          },
+          {
+            status: "deleted",
+            kind: "other",
+            path: path.join(projectRoot, "watcher-path-only.txt"),
+            root: projectRoot,
+            relativePath: "watcher-path-only.txt",
+            provenance: "observed-between-checkpoints"
+          }
+        ]
+      }
+    });
+    const watcherStored = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread").find((capture) => capture.id === watcherCaptureId);
+    assert.deepEqual(watcherStored.changes.map((change) => [change.relativePath, Boolean(change.before), Boolean(change.after)]), [
+      ["watcher-after-only.txt", false, true],
+      ["watcher-path-only.txt", false, false]
+    ]);
+    legacyDb.prepare("DELETE FROM file_change_captures WHERE id = ?").run(watcherCaptureId);
+
     const captureList = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread");
     assert.equal(captureList.length, 1);
     assert.equal(captureList[0].id, fileCaptureId);
@@ -751,6 +831,7 @@ try {
     includeDetails: true
   });
   assert.equal(appSettings.getAppSettings(db).permissionMode, "ask");
+  assert.equal(appSettings.getAppSettings(db).fileChangeTrackingMode, "managed-tools-only");
   assert.deepEqual(appSettings.getAppSettings(db).brand, {
     logoDataUrl: null,
     mainTitle: "Talk to yourself.",
@@ -783,6 +864,8 @@ try {
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { workingNotifications: { mode: "never", includeDetails: false } }, timestamp);
   assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, { mode: "never", includeDetails: false });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { permissionMode: "full-access" }, timestamp);
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { fileChangeTrackingMode: "watcher" }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).fileChangeTrackingMode, "watcher");
   assert.equal(appSettings.getAppSettings(db).permissionMode, "full-access");
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { skillEditorPath: process.execPath }, timestamp);
   assert.equal(appSettings.getAppSettings(db).skillEditorPath, process.execPath);

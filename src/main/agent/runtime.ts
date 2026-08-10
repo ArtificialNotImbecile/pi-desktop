@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
+import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
@@ -59,6 +59,7 @@ type RuntimeChatRequest = ChatSendRequest & {
   askUserQuestion?: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => Promise<AskUserQuestionResponse>;
   permissionMode?: PermissionMode;
   permissionProjectRoot?: string | null;
+  fileChangeTrackingMode?: FileChangeTrackingMode;
   requestPermissionApproval?: (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => Promise<"allow-once" | "deny">;
   availableSkillPaths?: string[];
   promptTemplatePaths?: string[];
@@ -293,9 +294,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     onContextTaxonomy: (taxonomy) => {
       capturedTaxonomies.push(taxonomy);
     },
-    fileChangeRoots: request.permissionProjectRoot
-      ? [request.permissionProjectRoot]
-      : [cwd],
+    fileChangeTrackingMode: request.fileChangeTrackingMode ?? "managed-tools-only",
+    fileChangeWatchRoot: request.permissionProjectRoot ?? cwd,
     onFileChanges: (capture) => {
       const mapped = fileChangeCaptureFromPackage(capture, cwd);
       capturedFileChanges.push(mapped);
@@ -352,6 +352,7 @@ function fileChangeCaptureFromPackage(capture: PiFileChangeCapture, cwd: string)
       ...(capture.coverage.reason ? { reason: capture.coverage.reason } : {}),
       bashCoverage: capture.coverage.bashCoverage,
       bashInvoked: capture.coverage.bashInvoked,
+      trackingMode: capture.coverage.trackingMode,
       omittedWarningCount: capture.coverage.omittedWarningCount,
       omittedIssueCount: capture.coverage.omittedIssueCount,
       rootDetails: capture.coverage.roots.map((root) => ({ ...root })),
@@ -373,8 +374,8 @@ function fileChangeFromPackage(change: FileChange): FileChangeInput {
     relativePath: change.path,
     ...(before ? { before } : {}),
     ...(after ? { after } : {}),
-    ...(change.text?.unifiedDiff.text ? { unifiedDiff: change.text.unifiedDiff.text } : {}),
-    ...(change.text?.unifiedDiff.truncated ? { diffTruncated: true } : {}),
+    ...(change.text?.unifiedDiff?.text ? { unifiedDiff: change.text.unifiedDiff.text } : {}),
+    ...(change.text?.unifiedDiff?.truncated ? { diffTruncated: true } : {}),
     provenance: "observed-between-checkpoints"
   };
 }
@@ -442,7 +443,20 @@ function mockFileChangeCaptures(lastUserText: string, cwd: string, startedAtMs: 
     roots: [root],
     excludes: ["**/.git/**", "**/node_modules/**", "**/.pi/file-changes/**"],
     warnings: [],
-    coverage: { status: "complete", target: "local", scannedFiles: 3, scannedBytes: 92 },
+    coverage: {
+      status: "complete",
+      target: "local",
+      trackingMode: "watcher",
+      bashCoverage: "watcher-observed",
+      rootDetails: [{
+        id: "mock-watcher-root",
+        path: root,
+        physicalPath: root,
+        source: "watcher",
+        scope: "watcher",
+        bashCovered: true
+      }]
+    },
     changes: [
       {
         status: "added",

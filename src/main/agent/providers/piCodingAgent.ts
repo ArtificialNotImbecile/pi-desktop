@@ -5,7 +5,7 @@ import { createAgentSessionFromServices, createAgentSessionServices, defineTool,
 import type { ExtensionFactory, LoadExtensionsResult, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, ThinkingContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, PermissionMode, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
+import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, FileChangeTrackingMode, PermissionMode, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
 import type { RuntimeProviderConfig } from "../runtime.js";
 import type { RuntimeGeneratedMessage, RuntimeQueueControls } from "../runtime.js";
 import type { RuntimeSkillManifest } from "../../services/skillManifests.js";
@@ -51,7 +51,8 @@ type PiCodingAgentChatInput = {
   onQueueReady?(controls: RuntimeQueueControls): void;
   onQueueUpdate?(queue: ChatQueueState): void;
   onContextTaxonomy?(taxonomy: ContextTaxonomy): void;
-  fileChangeRoots?: string[];
+  fileChangeTrackingMode?: FileChangeTrackingMode;
+  fileChangeWatchRoot?: string;
   onFileChanges?(capture: FileChangeCapture): void;
   sessionManager?: SessionManager;
   sessionMessageIds?: string[];
@@ -290,9 +291,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const usesJasmineFileChanges = !remote && suppressStandaloneFileChangesPackage;
   if (usesJasmineFileChanges && input.onFileChanges) {
     extensionFactories.push(createFileChangeExtension({
-      roots: input.fileChangeRoots?.length
-        ? input.fileChangeRoots
-        : [input.permissionProjectRoot ?? cwd],
+      trackingMode: input.fileChangeTrackingMode ?? "managed-tools-only",
+      watchRoot: input.fileChangeWatchRoot ?? input.permissionProjectRoot ?? cwd,
       onCapture: input.onFileChanges,
       persistManifest: false,
       appendEntry: false

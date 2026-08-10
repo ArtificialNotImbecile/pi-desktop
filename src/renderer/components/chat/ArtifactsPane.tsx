@@ -152,6 +152,12 @@ function CaptureGroup(props: { capture: FileChangeCaptureSummary; onOpen(changeI
           <span>{capture.coverage.reason || "Some configured paths could not be captured."}</span>
         </div>
       ) : null}
+      {capture.coverage.trackingMode === "managed-tools-only" && capture.coverage.bashInvoked ? (
+        <div className="artifact-coverage" role="status">
+          <strong>Shell changes not tracked</strong>
+          <span>This fast mode only records approved write/edit targets. No project-wide scan was performed.</span>
+        </div>
+      ) : null}
       {capture.warnings.map((warning, index) => (
         <div className="artifact-warning" key={`${capture.id}:warning:${index}`}>{warning}</div>
       ))}
@@ -169,23 +175,24 @@ function CaptureGroup(props: { capture: FileChangeCaptureSummary; onOpen(changeI
             <span className="artifact-change-name">{fileName(change.relativePath || change.path)}</span>
             <code>{change.relativePath || change.path}</code>
             <span className="artifact-change-meta">
-              {kindLabel(change.kind)} · observed snapshot
+              {kindLabel(change.kind)} · {trackingLabel(capture.coverage.trackingMode)}
             </span>
           </Button>
         ))}
       </div>
       <details className="artifact-coverage-details">
-        <summary>Capture coverage: {capture.coverage.status === "complete" ? "complete for listed roots" : capture.coverage.status}</summary>
+        <summary>Capture coverage: {capture.coverage.status === "complete" ? trackingSummary(capture.coverage.trackingMode) : capture.coverage.status}</summary>
         {capture.coverage.rootDetails?.length ? capture.coverage.rootDetails.map((root) => (
           <div key={root.id}>
-            <strong>{root.scope === "file" ? "Exact file" : "Directory"}</strong>
+            <strong>{root.scope === "file" ? "Exact file" : root.scope === "watcher" ? "Watcher root" : "Legacy directory checkpoint"}</strong>
             <code>{root.scope === "file" ? root.requestedPath || root.requestedFilePath || root.filePath || root.path : root.path}</code>
             {root.physicalPath !== root.path ? <span>Resolved to <code>{root.physicalPath}</code></span> : null}
           </div>
         )) : (
           <div><strong>Root{capture.roots.length === 1 ? "" : "s"}</strong>{capture.roots.map((root) => <code key={root}>{root}</code>)}</div>
         )}
-        {capture.coverage.bashInvoked ? <div><strong>Shell scope</strong><span>Only listed agent-start directories were observed.</span></div> : null}
+        {capture.coverage.bashInvoked ? <div><strong>Shell scope</strong><span>{capture.coverage.bashCoverage === "watcher-observed" ? "Filesystem events were observed without guaranteed before content or tool attribution." : capture.coverage.bashCoverage === "not-tracked" ? "Shell changes were intentionally not tracked in managed-tools-only mode." : "Legacy checkpoint coverage applied only to listed directories."}</span></div> : null}
+        {capture.coverage.trackingMode === "watcher" ? <div><strong>Watcher semantics</strong><span>Event-based and fast: no initial directory scan; updates may have after-only previews.</span></div> : null}
         <div><strong>History</strong><span>Retained as run evidence; conversation edits do not roll back files.</span></div>
         {capture.excludes.length > 0 ? <div><strong>Excluded</strong><code>{capture.excludes.join(", ")}</code></div> : null}
         {capture.coverage.issues?.slice(0, 20).map((issue, index) => (
@@ -207,7 +214,7 @@ function ArtifactDetailView(props: { change: FileChangeDetail }) {
       <div className="artifact-detail-meta">
         <StatusBadge status={change.status} />
         <code>{change.path}</code>
-        <span>Observed between the run checkpoints.</span>
+        <span>Captured without a full-directory checkpoint.</span>
       </div>
       <RevisionMetadata before={change.before} after={change.after} />
       {isImage ? (
@@ -391,4 +398,16 @@ function kindLabel(kind: FileChangeDetail["kind"]): string {
   if (kind === "image") return "Image";
   if (kind === "binary") return "Binary";
   return "File";
+}
+
+function trackingLabel(mode: FileChangeCaptureSummary["coverage"]["trackingMode"]): string {
+  if (mode === "managed-tools-only") return "managed write/edit";
+  if (mode === "watcher") return "watcher event";
+  return "legacy checkpoint";
+}
+
+function trackingSummary(mode: FileChangeCaptureSummary["coverage"]["trackingMode"]): string {
+  if (mode === "managed-tools-only") return "managed write/edit targets only";
+  if (mode === "watcher") return "watcher events plus managed targets";
+  return "complete for listed legacy roots";
 }

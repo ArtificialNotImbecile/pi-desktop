@@ -8,6 +8,7 @@ import type {
   AppSettingsUpdateRequest,
   AiProvider,
   ExecutableDiscovery,
+  FileChangeTrackingMode,
   MemoryRecord,
   McpMarketplaceServer,
   McpServerCreateRequest,
@@ -458,6 +459,7 @@ function GeneralSettingsPage(props: {
   const [terminalShellDraft, setTerminalShellDraft] = useState(props.settings.terminalShellPath ?? "");
   const [brandDraft, setBrandDraft] = useState(props.settings.brand);
   const [workingNotificationsDraft, setWorkingNotificationsDraft] = useState(props.settings.workingNotifications);
+  const [fileChangeTrackingModeDraft, setFileChangeTrackingModeDraft] = useState<FileChangeTrackingMode>(props.settings.fileChangeTrackingMode);
   const [editorDiscovery, setEditorDiscovery] = useState<ExecutableDiscovery | null>(null);
   const [terminalDiscovery, setTerminalDiscovery] = useState<ExecutableDiscovery | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
@@ -477,7 +479,8 @@ function GeneralSettingsPage(props: {
     brandDraft.mainTitle.trim() !== props.settings.brand.mainTitle ||
     brandDraft.subtitle.trim() !== props.settings.brand.subtitle ||
     workingNotificationsDraft.mode !== props.settings.workingNotifications.mode ||
-    workingNotificationsDraft.includeDetails !== props.settings.workingNotifications.includeDetails;
+    workingNotificationsDraft.includeDetails !== props.settings.workingNotifications.includeDetails ||
+    fileChangeTrackingModeDraft !== props.settings.fileChangeTrackingMode;
   const brandTitleInvalid = !brandDraft.mainTitle.trim();
 
   useEffect(() => {
@@ -488,11 +491,12 @@ function GeneralSettingsPage(props: {
     setTerminalShellDraft(props.settings.terminalShellPath ?? "");
     setBrandDraft(props.settings.brand);
     setWorkingNotificationsDraft(props.settings.workingNotifications);
-  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle, props.settings.workingNotifications.mode, props.settings.workingNotifications.includeDetails]);
+    setFileChangeTrackingModeDraft(props.settings.fileChangeTrackingMode);
+  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle, props.settings.workingNotifications.mode, props.settings.workingNotifications.includeDetails, props.settings.fileChangeTrackingMode]);
 
   useEffect(() => {
     setSaveState("idle");
-  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle, workingNotificationsDraft.mode, workingNotificationsDraft.includeDetails]);
+  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle, workingNotificationsDraft.mode, workingNotificationsDraft.includeDetails, fileChangeTrackingModeDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -540,6 +544,7 @@ function GeneralSettingsPage(props: {
         subtitle: brandDraft.subtitle.trim()
       },
       workingNotifications: workingNotificationsDraft,
+      fileChangeTrackingMode: fileChangeTrackingModeDraft,
       skillEditorPath: editorPathDraft.trim(),
       terminalShellPath: terminalShellDraft.trim()
     });
@@ -551,6 +556,7 @@ function GeneralSettingsPage(props: {
       setTerminalShellDraft(result.terminalShellPath ?? "");
       setBrandDraft(result.brand);
       setWorkingNotificationsDraft(result.workingNotifications);
+      setFileChangeTrackingModeDraft(result.fileChangeTrackingMode);
       setDraftTouched(false);
     }
   }
@@ -778,6 +784,28 @@ function GeneralSettingsPage(props: {
               <span className="working-notification-detail-copy">{t("settings.general.notificationDetails")}</span>
             </div>
           </SettingsListRow>
+        </SettingsSection>
+        <SettingsSection className="general-settings-list-section" aria-label={t("settings.general.artifactTracking")}>
+          <SettingsListRow
+            className="general-artifact-tracking-row"
+            icon={<EditIcon />}
+            title={t("settings.general.artifactTracking")}
+            description={t("settings.general.artifactTrackingDescription")}
+            actions={
+              <Select
+                aria-label={t("settings.general.artifactTrackingAria")}
+                disabled={props.loading || props.saving}
+                value={fileChangeTrackingModeDraft}
+                onChange={(event) => {
+                  setDraftTouched(true);
+                  setFileChangeTrackingModeDraft(event.target.value as FileChangeTrackingMode);
+                }}
+              >
+                <option value="managed-tools-only">{t("settings.general.artifactTracking.managed")}</option>
+                <option value="watcher">{t("settings.general.artifactTracking.watcher")}</option>
+              </Select>
+            }
+          />
         </SettingsSection>
         <SettingsSection className="general-settings-list-section" aria-label={t("settings.general.utility")}>
           <SettingsListRow

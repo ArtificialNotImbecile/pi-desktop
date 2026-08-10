@@ -9,19 +9,16 @@ export const FILE_CHANGES_EXCLUDES = [
 
 export const DEFAULT_TEXT_BYTE_LIMIT = 256 * 1024;
 export const DEFAULT_DIFF_BYTE_LIMIT = 512 * 1024;
-export const DEFAULT_MAX_FILES = 20_000;
-export const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 export const DEFAULT_MAX_CONTENT_BYTES = 8 * 1024 * 1024;
-export const DEFAULT_MAX_CAPTURED_CONTENT_BYTES = 64 * 1024 * 1024;
-export const DEFAULT_MAX_RUN_CAPTURED_CONTENT_BYTES = 128 * 1024 * 1024;
-export const DEFAULT_MAX_ROOTS = 128;
+export const DEFAULT_MAX_RUN_CAPTURED_CONTENT_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_MAX_MANAGED_TARGETS = 128;
 export const DEFAULT_MAX_CHANGES = 10_000;
 
+export type FileChangeTrackingMode = "managed-tools-only" | "watcher";
 export type FileChangeStatus = "added" | "modified" | "deleted";
 export type FileContentKind = "text" | "image" | "other";
-export type CoverageRootSource = "cwd" | "configured" | "write-target";
-export type CoverageRootScope = "recursive" | "file";
+export type CoverageRootSource = "write-target" | "watcher";
+export type CoverageRootScope = "file" | "watcher";
 
 export interface FileVersionMetadata {
   sha256: string;
@@ -51,7 +48,7 @@ export interface ImageFileContent {
 export interface TextFileRepresentation {
   before: Utf8FileContent | null;
   after: Utf8FileContent | null;
-  unifiedDiff: UnifiedFileDiff;
+  unifiedDiff?: UnifiedFileDiff;
 }
 
 export interface ImageFileRepresentation {
@@ -89,7 +86,7 @@ export interface FileChangeCoverageRoot {
 }
 
 export interface FileChangeCoverageIssue {
-  code: "max-files" | "max-total-bytes" | "max-roots" | "max-managed-targets" | "max-changes" | "read-error" | "unsupported-entry" | "excluded-root";
+  code: "max-managed-targets" | "max-changes" | "read-error" | "watcher-unavailable" | "excluded-root";
   stage: "baseline" | "final";
   rootId: string;
   root: string;
@@ -98,15 +95,11 @@ export interface FileChangeCoverageIssue {
 }
 
 export interface FileChangeCoverageLimits {
-  maxFiles: number;
-  maxTotalBytes: number;
   maxContentBytes: number;
-  maxCapturedContentBytes: number;
   maxRunCapturedContentBytes: number;
-  maxRoots: number;
   maxManagedTargets: number;
   maxChanges: number;
-  appliesPerRootSnapshot: true;
+  appliesPerObservedFile: true;
 }
 
 export interface FileChangeCoverage {
@@ -120,7 +113,8 @@ export interface FileChangeCoverage {
   issues: FileChangeCoverageIssue[];
   omittedIssueCount: number;
   limits: FileChangeCoverageLimits;
-  bashCoverage: "agent-start-roots-only";
+  trackingMode: FileChangeTrackingMode;
+  bashCoverage: "not-tracked" | "watcher-observed";
   bashInvoked: boolean;
 }
 

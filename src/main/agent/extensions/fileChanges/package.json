@@ -1,7 +1,7 @@
 {
   "name": "@jasmine-ai/pi-file-changes",
-  "version": "0.1.0",
-  "description": "Deterministic filesystem change captures for Pi coding-agent runs.",
+  "version": "0.2.0",
+  "description": "Fast managed-tool and watcher file-change evidence for Pi coding-agent runs.",
   "keywords": [
     "pi-package"
   ],
@@ -49,6 +49,9 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "dependencies": {
+    "@parcel/watcher": "2.6.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",

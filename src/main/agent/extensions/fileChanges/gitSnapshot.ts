@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { deflate, inflate } from "node:zlib";
@@ -114,7 +114,7 @@ export async function removeSnapshotRepository(repository: SnapshotRepository | 
 }
 
 export async function snapshotRoot(
-  _repository: SnapshotRepository,
+  _repository: SnapshotRepository | null,
   root: string,
   options: SnapshotOptions
 ): Promise<RootSnapshot> {
@@ -123,9 +123,10 @@ export async function snapshotRoot(
   const issues: SnapshotLimitIssue[] = [];
   let capturedContentBytes = 0;
   if (!isExcludedAbsolutePath(root)) {
-    const walked = options.includeRelativePaths
-      ? await walkExactFiles(root, options.includeRelativePaths, options.maxFiles, options.warnings)
-      : await walkRoot(root, options.maxFiles, options.maxTotalBytes, options.warnings);
+    if (!options.includeRelativePaths) {
+      throw new Error("Full-root snapshots are disabled; explicit file paths are required.");
+    }
+    const walked = await walkExactFiles(root, options.includeRelativePaths, options.maxFiles, options.warnings);
     complete = walked.complete;
     issues.push(...walked.issues);
     let processedBytes = 0;
@@ -386,110 +387,6 @@ export function isExcludedAbsolutePath(absolutePath: string): boolean {
   return isExcludedRelativePath(relative);
 }
 
-async function walkRoot(
-  root: string,
-  maxFiles: number,
-  maxTotalBytes: number,
-  warnings: string[]
-): Promise<WalkResult> {
-  const issues: SnapshotLimitIssue[] = [];
-  const rootInfo = await lstat(root).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    const message = `Could not inspect root ${root}: ${errorMessage(error)}`;
-    warnings.push(message);
-    issues.push(filesystemIssue("read-error", root, message));
-    return null;
-  });
-  if (!rootInfo) return {
-    files: [],
-    complete: issues.length === 0,
-    issues: uniqueIssues(issues)
-  };
-  if (!rootInfo.isDirectory()) {
-    const issue = filesystemIssue("unsupported-entry", root, `Configured root is not a directory: ${root}`);
-    warnings.push(issue.message);
-    issues.push(issue);
-    return { files: [], complete: false, issues: uniqueIssues(issues) };
-  }
-
-  const files: WalkedFile[] = [];
-  let discoveredBytes = 0;
-  let stopped = false;
-  async function visit(directory: string, relativeDirectory: string): Promise<void> {
-    if (stopped) return;
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      const issue = filesystemIssue("read-error", directory, `Could not read directory ${directory}: ${errorMessage(error)}`);
-      warnings.push(issue.message);
-      issues.push(issue);
-      return;
-    }
-    entries.sort((left, right) => stableCompare(left.name, right.name));
-    for (const entry of entries) {
-      if (stopped) break;
-      const relativePath = relativeDirectory
-        ? `${relativeDirectory}/${entry.name}`
-        : entry.name;
-      if (isExcludedRelativePath(relativePath)) continue;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await visit(absolutePath, relativePath);
-        continue;
-      }
-      let info;
-      try {
-        info = await lstat(absolutePath);
-      } catch (error) {
-        const issue = filesystemIssue("read-error", absolutePath, `Could not inspect ${absolutePath}: ${errorMessage(error)}`);
-        warnings.push(issue.message);
-        issues.push(issue);
-        continue;
-      }
-      if (info.isFile()) {
-        if (!admitFile(root, info.size, files.length, discoveredBytes, maxFiles, maxTotalBytes, issues, warnings)) {
-          stopped = true;
-          break;
-        }
-        const file = {
-          path: relativePath,
-          absolutePath,
-          mode: process.platform === "win32" || (info.mode & 0o111) === 0 ? "100644" : "100755",
-          symlink: false,
-          size: info.size
-        };
-        files.push(file);
-        discoveredBytes += info.size;
-      } else if (info.isSymbolicLink()) {
-        if (!admitFile(root, info.size, files.length, discoveredBytes, maxFiles, maxTotalBytes, issues, warnings)) {
-          stopped = true;
-          break;
-        }
-        files.push({
-          path: relativePath,
-          absolutePath,
-          mode: "120000",
-          symlink: true,
-          size: info.size
-        });
-        discoveredBytes += info.size;
-      } else {
-        const issue = filesystemIssue("unsupported-entry", absolutePath, `Skipped unsupported filesystem entry: ${absolutePath}`);
-        warnings.push(issue.message);
-        issues.push(issue);
-      }
-    }
-  }
-
-  await visit(root, "");
-  return {
-    files,
-    complete: !stopped && !issues.some((issue) => issue.code === "read-error" || issue.code === "unsupported-entry"),
-    issues: uniqueIssues(issues)
-  };
-}
-
 async function walkExactFiles(
   root: string,
   relativePaths: readonly string[],
@@ -548,31 +445,6 @@ async function walkExactFiles(
     complete: !issues.some((issue) => issue.code === "read-error" || issue.code === "unsupported-entry"),
     issues: uniqueIssues(issues)
   };
-}
-
-function admitFile(
-  root: string,
-  size: number,
-  fileCount: number,
-  totalBytes: number,
-  maxFiles: number,
-  maxTotalBytes: number,
-  issues: SnapshotLimitIssue[],
-  warnings: string[]
-): boolean {
-  if (fileCount >= maxFiles) {
-    const issue = limitIssue("max-files", root, maxFiles);
-    issues.push(issue);
-    warnings.push(issue.message);
-    return false;
-  }
-  if (totalBytes + size > maxTotalBytes) {
-    const issue = limitIssue("max-total-bytes", root, maxTotalBytes);
-    issues.push(issue);
-    warnings.push(issue.message);
-    return false;
-  }
-  return true;
 }
 
 async function readSnapshotFile(

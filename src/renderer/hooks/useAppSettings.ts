@@ -31,7 +31,8 @@ export const defaultAppSettings: AppSettings = {
     mode: "background",
     includeDetails: true
   },
-  permissionMode: "ask"
+  permissionMode: "ask",
+  fileChangeTrackingMode: "managed-tools-only"
 };
 
 export function useAppSettings(
@@ -107,6 +108,7 @@ export function readStartupSettingsCache(): AppSettings | null {
       !["background", "always", "never"].includes(parsed.workingNotifications.mode) ||
       typeof parsed.workingNotifications.includeDetails !== "boolean" ||
       (parsed.permissionMode !== "ask" && parsed.permissionMode !== "full-access") ||
+      (parsed.fileChangeTrackingMode !== "managed-tools-only" && parsed.fileChangeTrackingMode !== "watcher") ||
       !parsed.toolModel ||
       typeof parsed.toolModel.providerId !== "string" ||
       typeof parsed.toolModel.modelId !== "string" ||

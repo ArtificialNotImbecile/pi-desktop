@@ -239,6 +239,10 @@ test.describe("Jasmine settings", () => {
     await expect(terminalRow.locator(".ui-settings-list-icon .icon")).toHaveCount(1);
     await expectExecutablePathMetadata(editorRow.locator('output[aria-label="Default text editor path"]'));
     await expectExecutablePathMetadata(terminalRow.locator('output[aria-label="Default terminal shell path"]'));
+    const artifactTrackingSelect = page.locator('select[aria-label="Artifact file tracking mode"]');
+    await expect(artifactTrackingSelect).toHaveValue("managed-tools-only");
+    await expect(artifactTrackingSelect.locator('option[value="managed-tools-only"]')).toHaveText("Managed tools only (recommended)");
+    await artifactTrackingSelect.selectOption("watcher");
     await editorSelect.selectOption(notepadPath);
     await terminalSelect.selectOption(cmdPath);
     await expect(editorRow.locator('output[aria-label="Default text editor path"]')).toHaveText(notepadPath);
@@ -246,6 +250,7 @@ test.describe("Jasmine settings", () => {
     await saveSettings(page);
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).skillEditorPath)).toBe(notepadPath);
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).terminalShellPath)).toBe(cmdPath);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).fileChangeTrackingMode)).toBe("watcher");
 
     await editorRow.getByRole("button", { name: "Choose app..." }).click();
     await terminalRow.getByRole("button", { name: "Choose app..." }).click();

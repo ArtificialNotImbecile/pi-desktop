@@ -24,6 +24,7 @@ type AppSettingsRow = {
   working_notification_mode?: string | null;
   working_notification_include_details?: number | null;
   permission_mode?: string | null;
+  file_change_tracking_mode?: string | null;
   skill_editor_path?: string | null;
   terminal_shell_path?: string | null;
   updated_at: string;
@@ -52,10 +53,11 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       working_notification_mode,
       working_notification_include_details,
       permission_mode,
+      file_change_tracking_mode,
       skill_editor_path,
       terminal_shell_path,
       updated_at
-    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, 'ask', NULL, NULL, ?)`
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, 'ask', 'managed-tools-only', NULL, NULL, ?)`
   ).run(
     DEFAULT_APPEARANCE.accent,
     DEFAULT_APPEARANCE.surface,
@@ -90,6 +92,7 @@ export function getAppSettings(db: SqlDatabase): AppSettings | null {
         working_notification_mode,
         working_notification_include_details,
         permission_mode,
+        file_change_tracking_mode,
         skill_editor_path,
         terminal_shell_path,
         updated_at
@@ -125,6 +128,7 @@ export function updateAppSettings(
     workingNotificationMode: normalizeWorkingNotificationMode(input.workingNotifications?.mode, current.workingNotifications.mode),
     workingNotificationIncludeDetails: input.workingNotifications?.includeDetails ?? current.workingNotifications.includeDetails,
     permissionMode: normalizePermissionMode(input.permissionMode, current.permissionMode),
+    fileChangeTrackingMode: normalizeFileChangeTrackingMode(input.fileChangeTrackingMode, current.fileChangeTrackingMode),
     skillEditorPath: normalizeOptionalPath(input.skillEditorPath, current.skillEditorPath),
     terminalShellPath: normalizeTerminalShellPath(input.terminalShellPath, current.terminalShellPath)
   };
@@ -148,6 +152,7 @@ export function updateAppSettings(
         working_notification_mode = ?,
         working_notification_include_details = ?,
         permission_mode = ?,
+        file_change_tracking_mode = ?,
         skill_editor_path = ?,
         terminal_shell_path = ?,
         updated_at = ?
@@ -170,6 +175,7 @@ export function updateAppSettings(
     next.workingNotificationMode,
     next.workingNotificationIncludeDetails ? 1 : 0,
     next.permissionMode,
+    next.fileChangeTrackingMode,
     next.skillEditorPath ?? null,
     next.terminalShellPath ?? null,
     timestamp
@@ -208,6 +214,7 @@ function mapAppSettings(row: AppSettingsRow): AppSettings {
       includeDetails: row.working_notification_include_details !== 0
     },
     permissionMode: normalizePermissionMode(row.permission_mode, "ask"),
+    fileChangeTrackingMode: normalizeFileChangeTrackingMode(row.file_change_tracking_mode, "managed-tools-only"),
     skillEditorPath: normalizeOptionalPath(row.skill_editor_path, undefined),
     terminalShellPath: normalizeTerminalShellPath(row.terminal_shell_path, undefined)
   };
@@ -263,6 +270,13 @@ function normalizeWorkingNotificationMode(
 
 function normalizePermissionMode(value: string | null | undefined, fallback: PermissionMode): PermissionMode {
   return value === "ask" || value === "full-access" ? value : fallback;
+}
+
+function normalizeFileChangeTrackingMode(
+  value: string | null | undefined,
+  fallback: AppSettings["fileChangeTrackingMode"]
+): AppSettings["fileChangeTrackingMode"] {
+  return value === "managed-tools-only" || value === "watcher" ? value : fallback;
 }
 
 function normalizeTerminalShellPath(value: string | null | undefined, fallback: string | undefined): string | undefined {
