@@ -148,14 +148,16 @@ test("watcher mode observes create, update, and delete paths without an initial 
     // native read is armed on a heavily loaded CI runner. Give that backend a
     // short turn, then touch the new path twice so this test verifies path
     // observation without depending on a single edge-triggered notification.
-    await delay(250);
+    await delay(500);
     const created = path.join(root, "created.txt");
     await writeFile(created, "created\n");
-    await delay(250);
+    await delay(1_000);
     await writeFile(created, "created after subscription\n");
+    await delay(1_000);
     await writeFile(updated, "after\n");
-    await rm(deleted);
     await delay(1_500);
+    await rm(deleted);
+    await delay(2_000);
     await harness.emit("agent_settled", { type: "agent_settled" });
 
     const capture = harness.capture();

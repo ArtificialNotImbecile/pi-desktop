@@ -74,8 +74,9 @@ npm.cmd run test:packaged
 ```powershell
 git switch main
 git pull --ff-only
-git tag v0.3.2
-git push origin v0.3.2
+$releaseVersion = (Get-Content package.json | ConvertFrom-Json).version
+git tag "v$releaseVersion"
+git push origin "v$releaseVersion"
 ```
 
 不要把已有公开标签强制移动到另一个提交。如果标签构建暴露了必须修改的问题，修复后递增补丁版本并发布新标签。
