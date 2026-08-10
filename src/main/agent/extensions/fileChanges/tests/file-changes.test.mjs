@@ -144,23 +144,31 @@ test("watcher mode observes create, update, and delete paths without an initial 
     await writeFile(deleted, "delete\n");
     const harness = createTrackingHarness(root, { trackingMode: "watcher", watchRoot: root });
     await harness.emit("agent_start", { type: "agent_start" });
-    await writeFile(path.join(root, "created.txt"), "created\n");
+    // ReadDirectoryChangesW can resolve the subscription just before its first
+    // native read is armed on a heavily loaded CI runner. Give that backend a
+    // short turn, then touch the new path twice so this test verifies path
+    // observation without depending on a single edge-triggered notification.
+    await delay(250);
+    const created = path.join(root, "created.txt");
+    await writeFile(created, "created\n");
+    await delay(250);
+    await writeFile(created, "created after subscription\n");
     await writeFile(updated, "after\n");
     await rm(deleted);
-    await delay(1_000);
+    await delay(1_500);
     await harness.emit("agent_settled", { type: "agent_settled" });
 
     const capture = harness.capture();
     assert.equal(capture.coverage.trackingMode, "watcher");
     assert.equal(capture.coverage.bashCoverage, "watcher-observed");
     assert.deepEqual(capture.changes.map(({ path: filePath }) => filePath), ["created.txt", "deleted.txt", "updated.txt"]);
-    const created = capture.changes.find((item) => item.path === "created.txt");
+    const createdChange = capture.changes.find((item) => item.path === "created.txt");
     const deletedChange = capture.changes.find((item) => item.path === "deleted.txt");
     const updatedChange = capture.changes.find((item) => item.path === "updated.txt");
     // Native watcher backends may coalesce a create into update, or report a
     // replacement write as create. Without an initial crawl those two event
     // classes intentionally remain approximate, while deletion is final-state exact.
-    assert.ok(["added", "modified"].includes(created.status));
+    assert.ok(["added", "modified"].includes(createdChange.status));
     assert.equal(deletedChange.status, "deleted");
     assert.ok(["added", "modified"].includes(updatedChange.status));
     const changed = capture.changes.find((item) => item.path === "updated.txt");
