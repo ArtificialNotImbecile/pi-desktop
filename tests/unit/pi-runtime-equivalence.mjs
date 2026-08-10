@@ -12,8 +12,8 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
 
-const { buildSystemPrompt, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
-const { createAskUserQuestionTool, createWebSearchTool, runPiCodingAgentChat } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
+const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
+const { buildTurnContext, createAskUserQuestionTool, createWebSearchTool, replaceWorkingDirectory, runPiCodingAgentChat } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
 const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
@@ -449,23 +449,23 @@ const ownedTagSegments = classifyTextSegments("<project_context>Jasmine repo</pr
 assert.equal(ownedTagSegments.some((segment) => segment.kind === "project_context"), true);
 assert.equal(ownedTagSegments.some((segment) => segment.kind === "skill_instructions"), true);
 
-const skillManifestPrompt = buildSystemPrompt([], [{
-  id: "skill-technical-writer",
-  name: "Technical Writer",
-  description: "Tightens explanations for technical readers.",
-  source: "local",
-  skillFilePath: path.join(tempDir, "skills", "local", "skill-technical-writer", "SKILL.md")
-}], [], true);
-assert.doesNotMatch(skillManifestPrompt, /Active user-selected skill manifests/);
-assert.doesNotMatch(skillManifestPrompt, /Technical Writer/);
-assert.doesNotMatch(skillManifestPrompt, /SKILL\.md/);
+const jasminePromptAppend = buildJasminePromptAppend();
+assert.match(jasminePromptAppend, /operating through Jasmine/);
+assert.match(jasminePromptAppend, /user's language/);
+assert.doesNotMatch(jasminePromptAppend, /Current working directory/);
+assert.equal(buildTurnContext([], []), undefined);
+assert.match(buildTurnContext(["Remember the user's preference."], []) ?? "", /relevant_memories/);
+assert.match(buildTurnContext([], [{ title: "Current result", url: "https://example.com", snippet: "Current snippet" }]) ?? "", /web_search_results/);
+assert.equal(
+  replaceWorkingDirectory("Base\nCurrent working directory: C:/repo", "C:\\repo", "Current working directory: /srv/repo"),
+  "Base\nCurrent working directory: /srv/repo"
+);
 if (process.platform === "win32") {
   const systemBashPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
   const gitBashPath = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe");
-  assert.match(skillManifestPrompt, /Git Bash or another bash\.exe/);
-  assert.match(skillManifestPrompt, /not PowerShell/);
-  assert.match(skillManifestPrompt, /Do not assume `python3` or `py` exists/);
-  assert.match(skillManifestPrompt, /Do not assume Unix paths like `\/tmp` exist/);
+  const defaultRuntimePrompt = buildLocalRuntimePromptAppend();
+  assert.match(defaultRuntimePrompt, /Git Bash or another bash\.exe/);
+  assert.match(defaultRuntimePrompt, /bash syntax/);
   assert.deepEqual(resolvePiShellRuntime(fakeBashPath), {
     kind: "bash",
     shellPath: fakeBashPath,
@@ -481,17 +481,11 @@ if (process.platform === "win32") {
     configuredPath: fakeCmdPath
   });
   assert.equal(resolvePiShellRuntime(path.join(tempDir, "missing-pwsh.exe")).kind, "unsupported");
-  const powerShellPrompt = buildSystemPrompt([], [], [], true, {
-    piShell: resolvePiShellRuntime(fakePowerShellPath)
-  });
-  assert.match(powerShellPrompt, /configured to run through the app Terminal shell/);
-  assert.match(powerShellPrompt, /Write commands for PowerShell/);
-  assert.match(powerShellPrompt, /Get-Command python/);
-  assert.match(powerShellPrompt, /\$env:TEMP/);
-  const unsupportedShellPrompt = buildSystemPrompt([], [], [], true, {
-    piShell: resolvePiShellRuntime(fakeCmdPath)
-  });
-  assert.match(unsupportedShellPrompt, /not passed to Pi/);
+  const powerShellPrompt = buildLocalRuntimePromptAppend(resolvePiShellRuntime(fakePowerShellPath));
+  assert.match(powerShellPrompt, /executes through PowerShell/);
+  assert.match(powerShellPrompt, /PowerShell syntax/);
+  const unsupportedShellPrompt = buildLocalRuntimePromptAppend(resolvePiShellRuntime(fakeCmdPath));
+  assert.match(unsupportedShellPrompt, /incompatible with Pi/);
   assert.match(unsupportedShellPrompt, /falls back to Git Bash or another bash\.exe/);
   if (await fileExists(systemBashPath)) {
     assert.equal((await resolveConfiguredExecutable("terminal", systemBashPath)).label, "WSL Bash");
@@ -504,11 +498,9 @@ if (process.platform === "win32") {
         configuredPath: systemBashPath,
         fallbackReason: "wsl-bash-launcher"
       });
-      const wslFallbackPrompt = buildSystemPrompt([], [], [], true, { piShell: wslPiShell });
+      const wslFallbackPrompt = buildLocalRuntimePromptAppend(wslPiShell);
       assert.match(wslFallbackPrompt, /WSL bash launcher/);
-      assert.match(wslFallbackPrompt, /uses Git Bash instead/);
-      assert.match(wslFallbackPrompt, /\/c\/\.\.\./);
-      assert.doesNotMatch(wslFallbackPrompt, /configured to run through the app Terminal shell/);
+      assert.match(wslFallbackPrompt, /uses Git Bash/);
     }
     const terminalDiscovery = await listExecutableDiscovery("terminal");
     assert.notEqual(terminalDiscovery.auto?.command, systemBashPath);
@@ -876,7 +868,7 @@ try {
 
   await runPiCli({
     agentDir,
-    systemPrompt,
+    appendPrompt: systemPrompt,
     message: "hello from pi"
   });
   assert.equal(captures.length, 1);
@@ -902,7 +894,7 @@ try {
     messages: [{ role: "user", content: "hello from pi" }],
     content: "hello from pi",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true
   });
@@ -910,6 +902,110 @@ try {
   const sdkPayload = normalizePayload(captures[1]);
 
   assert.deepEqual(sdkPayload, cliPayload);
+  const sdkSystemPromptText = sdkPayload.messages.find((message) => message.role === "system")?.content ?? "";
+  assert.match(sdkSystemPromptText, /You are an expert coding assistant operating inside pi/);
+  assert.match(sdkSystemPromptText, /You are Jasmine\. Keep replies concise\./);
+  assert.equal((sdkSystemPromptText.match(/Current working directory:/g) ?? []).length, 1);
+
+  const promptRegressionCwd = path.join(tempDir, "prompt-regression-workspace");
+  const promptRegressionAgentDir = path.join(tempDir, "prompt-regression-agent");
+  await mkdir(promptRegressionCwd, { recursive: true });
+  await mkdir(promptRegressionAgentDir, { recursive: true });
+  await writeFile(path.join(promptRegressionAgentDir, "APPEND_SYSTEM.md"), "PRESERVE_DISCOVERED_APPEND_SYSTEM");
+  const promptRegressionStart = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "prompt ownership regression" }],
+    content: "prompt ownership regression",
+    attachments: [],
+    jasminePromptAppend: "JASMINE_MINIMAL_APPEND",
+    localRuntimePromptAppend: "LOCAL_RUNTIME_APPEND",
+    memoryContext: ["TURN_MEMORY_MUST_NOT_BE_SYSTEM"],
+    webSearchContext: [{
+      title: "Turn web result",
+      url: "https://example.com/turn-context",
+      snippet: "TURN_WEB_MUST_NOT_BE_SYSTEM"
+    }],
+    cwd: promptRegressionCwd,
+    agentDir: promptRegressionAgentDir,
+    toolsEnabled: true
+  });
+  assert.equal(captures.length, promptRegressionStart + 1);
+  const promptRegressionPayload = captures.at(-1);
+  const promptRegressionSystem = promptRegressionPayload.messages.find((message) => message.role === "system")?.content ?? "";
+  const promptRegressionMessages = JSON.stringify(promptRegressionPayload.messages.filter((message) => message.role !== "system"));
+  assert.match(promptRegressionSystem, /You are an expert coding assistant operating inside pi/);
+  assert.match(promptRegressionSystem, /JASMINE_MINIMAL_APPEND/);
+  assert.match(promptRegressionSystem, /LOCAL_RUNTIME_APPEND/);
+  assert.match(promptRegressionSystem, /PRESERVE_DISCOVERED_APPEND_SYSTEM/);
+  assert.doesNotMatch(promptRegressionSystem, /TURN_MEMORY_MUST_NOT_BE_SYSTEM|TURN_WEB_MUST_NOT_BE_SYSTEM/);
+  assert.equal((promptRegressionSystem.match(/Current working directory:/g) ?? []).length, 1);
+  assert.match(promptRegressionMessages, /TURN_MEMORY_MUST_NOT_BE_SYSTEM/);
+  assert.match(promptRegressionMessages, /TURN_WEB_MUST_NOT_BE_SYSTEM/);
+
+  const remotePromptStart = captures.length;
+  await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "remote prompt ownership regression" }],
+    content: "remote prompt ownership regression",
+    attachments: [],
+    jasminePromptAppend: "JASMINE_MINIMAL_APPEND",
+    localRuntimePromptAppend: "LOCAL_RUNTIME_MUST_NOT_SURVIVE_REMOTE",
+    cwd: promptRegressionCwd,
+    agentDir: promptRegressionAgentDir,
+    toolsEnabled: true,
+    remoteConnection: {
+      id: "remote-prompt-regression",
+      name: "Prompt regression remote",
+      host: "example.internal",
+      user: "tester",
+      remotePath: "/srv/jasmine",
+      source: "manual",
+      active: true,
+      status: "connected",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+  });
+  assert.equal(captures.length, remotePromptStart + 1);
+  const remotePromptPayload = captures.at(-1);
+  const remotePromptSystem = remotePromptPayload.messages.find((message) => message.role === "system")?.content ?? "";
+  assert.match(remotePromptSystem, /You are an expert coding assistant operating inside pi/);
+  assert.match(remotePromptSystem, /tools operate on the SSH target tester@example\.internal:\/srv\/jasmine/);
+  assert.match(remotePromptSystem, /Current working directory: \/srv\/jasmine \(via SSH:/);
+  assert.doesNotMatch(remotePromptSystem, /LOCAL_RUNTIME_MUST_NOT_SURVIVE_REMOTE/);
+  assert.doesNotMatch(remotePromptSystem, new RegExp(`Current working directory: ${escapeRegExp(promptRegressionCwd.replace(/\\/g, "/"))}`));
+  assert.equal((remotePromptSystem.match(/Current working directory:/g) ?? []).length, 1);
 
   const captureThinkingPayload = async (provider, reasoningEffort, content) => {
     const captureCount = captures.length;
@@ -918,7 +1014,7 @@ try {
       messages: [{ role: "user", content }],
       content,
       attachments: [],
-      systemPrompt,
+      jasminePromptAppend: systemPrompt,
       agentDir,
       toolsEnabled: false,
       reasoningEffort
@@ -997,7 +1093,7 @@ try {
     ],
     content: "answers for streaming regression",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     onUpdate: (update) => streamingUpdates.push(update)
@@ -1039,7 +1135,7 @@ try {
     messages: [{ role: "user", content: "queue runtime start" }],
     content: "queue runtime start",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     onQueueReady: (controls) => {
@@ -1120,7 +1216,7 @@ try {
       messages: [{ role: "user", content: `reasoning replay regression ${provider.providerName}` }],
       content: `reasoning replay regression ${provider.providerName}`,
       attachments: [],
-      systemPrompt: "Use the read tool and then answer.",
+      jasminePromptAppend: "Use the read tool and then answer.",
       cwd: tempDir,
       agentDir,
       toolsEnabled: true,
@@ -1240,7 +1336,7 @@ try {
     messages: [{ role: "user", content: "foreign reasoning history regression" }],
     content: "foreign reasoning history regression",
     attachments: [],
-    systemPrompt: "Answer the regression prompt.",
+    jasminePromptAppend: "Answer the regression prompt.",
     cwd: tempDir,
     agentDir,
     toolsEnabled: true,
@@ -1286,7 +1382,7 @@ try {
     messages: [{ role: "user", content: "deepseek content-only thinking fallback" }],
     content: "deepseek content-only thinking fallback",
     attachments: [],
-    systemPrompt: "Use the read tool and then answer.",
+    jasminePromptAppend: "Use the read tool and then answer.",
     cwd: tempDir,
     agentDir,
     toolsEnabled: true,
@@ -1440,7 +1536,7 @@ try {
     messages: [{ role: "user", content: "use the selected skill" }],
     content: "use the selected skill",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     skillContext: [{
@@ -1503,7 +1599,7 @@ try {
     messages: [{ role: "user", content: "hello without tools" }],
     content: "hello without tools",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: false
   });
@@ -1592,7 +1688,7 @@ try {
     messages: [{ role: "user", content: "hello with fixture plugin" }],
     content: "hello with fixture plugin",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     packageSkillPaths
@@ -1632,7 +1728,7 @@ try {
     messages: [{ role: "user", content: "hello after disabled fixture plugin" }],
     content: "hello after disabled fixture plugin",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     packageSkillPaths
@@ -1663,7 +1759,7 @@ try {
     messages: [{ role: "user", content: "hello with temporary fixture plugin" }],
     content: "hello with temporary fixture plugin",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     packageExtensionPaths: temporaryFixtureRuntimeSources
@@ -1697,7 +1793,7 @@ try {
     messages: [{ role: "user", content: "hello with pi web access" }],
     content: "hello with pi web access",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     packageSkillPaths
@@ -1766,7 +1862,7 @@ try {
     messages: [{ role: "user", content: "hello with legacy pi web access source" }],
     content: "hello with legacy pi web access source",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir: legacyPiWebAccessAgentDir,
     toolsEnabled: true,
     packageSkillPaths: legacyPackageSkillPaths
@@ -1810,7 +1906,7 @@ try {
     messages: [{ role: "user", content: "hello with chrome" }],
     content: "hello with chrome",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     packageSkillPaths
@@ -1857,7 +1953,7 @@ try {
     messages: [{ role: "user", content: "/summarize jasmine docs" }],
     content: "/summarize jasmine docs",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true,
     promptTemplatePaths: [promptTemplateDir]
@@ -1902,7 +1998,7 @@ try {
     ],
     content: "follow up after restored tool context",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true
   });
@@ -1947,7 +2043,7 @@ try {
     ],
     content: "continue after stopped tool run",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true
   });
@@ -1992,7 +2088,7 @@ try {
     ],
     content: "follow up after restored attachment",
     attachments: [],
-    systemPrompt,
+    jasminePromptAppend: systemPrompt,
     agentDir,
     toolsEnabled: true
   });
@@ -2037,7 +2133,7 @@ try {
       ],
       content: "follow up after restored image",
       attachments: [],
-      systemPrompt,
+      jasminePromptAppend: systemPrompt,
       agentDir,
       toolsEnabled: true
     }),
@@ -2080,7 +2176,8 @@ try {
     );
     assert.equal(currentPromptItems.length, 1);
     const systemPromptItem = mockReply.contextTaxonomy.items.find((item) => item.source === "jasmine.systemPrompt");
-    assert.match(String(systemPromptItem?.text ?? ""), new RegExp(escapeRegExp(`Current working directory: ${scopedCwd}`)));
+    assert.match(String(systemPromptItem?.text ?? ""), new RegExp(escapeRegExp(`Current working directory: ${scopedCwd.replace(/\\/g, "/")}`)));
+    assert.equal((String(systemPromptItem?.text ?? "").match(/Current working directory:/g) ?? []).length, 1);
   } finally {
     if (previousMockFlag === undefined) delete process.env.JASMINE_E2E_MOCK_AI;
     else process.env.JASMINE_E2E_MOCK_AI = previousMockFlag;
@@ -2090,7 +2187,7 @@ try {
   await rm(tempDir, { recursive: true, force: true });
 }
 
-function runPiCli({ agentDir, systemPrompt, message }) {
+function runPiCli({ agentDir, appendPrompt, message }) {
   const cliPath = path.join(rootDir, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -2105,8 +2202,8 @@ function runPiCli({ agentDir, systemPrompt, message }) {
         "jasmine-mock",
         "--model",
         "jasmine-test",
-        "--system-prompt",
-        systemPrompt,
+        "--append-system-prompt",
+        appendPrompt,
         message
       ],
       {
