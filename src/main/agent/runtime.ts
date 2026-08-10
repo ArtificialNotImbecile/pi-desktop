@@ -107,10 +107,9 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   assertSupportedAttachments(parsed.messages, request.attachments ?? [], parsed.content, provider);
   const piShell = resolvePiShellRuntime(request.terminalShellPath);
   const cwd = request.cwd?.trim() || process.cwd();
-  const systemPrompt = buildSystemPrompt(request.memoryContext ?? [], request.skillContext ?? [], request.webSearchContext ?? [], request.toolsEnabled ?? true, {
-    cwd,
-    piShell
-  });
+  const jasminePromptAppend = buildJasminePromptAppend();
+  const localRuntimePromptAppend = buildLocalRuntimePromptAppend(piShell);
+  const fallbackSystemPrompt = buildFallbackSystemPrompt(jasminePromptAppend, localRuntimePromptAppend, cwd);
   if (process.env.JASMINE_E2E_MOCK_AI === "1") {
     const mockSession = prepareMockSession(request, provider, parsed.content);
     const mockQueue = createMockQueueControls(options);
@@ -190,7 +189,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         webSearchUsed: request.webSearchContext ?? [],
         contextTaxonomy: buildAssemblyTaxonomy({
           provider,
-          systemPrompt,
+          systemPrompt: fallbackSystemPrompt,
           messages: request.messages,
           content: parsed.content,
           attachments: request.attachments ?? [],
@@ -209,7 +208,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       : null;
     const mockTaxonomy = structuredTaxonomy ?? buildAssemblyTaxonomy({
       provider,
-      systemPrompt,
+      systemPrompt: fallbackSystemPrompt,
       messages: request.messages,
       content: parsed.content,
       attachments: request.attachments ?? [],
@@ -240,7 +239,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     messages: request.messages,
     content: parsed.content,
     attachments: request.attachments ?? [],
-    systemPrompt,
+    jasminePromptAppend,
+    localRuntimePromptAppend,
     cwd,
     agentDir: request.piAgentDir,
     toolsEnabled: request.toolsEnabled ?? true,
@@ -248,6 +248,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     webSearchTool: request.webSearchTool,
     askUserQuestion: request.askUserQuestion,
     skillContext: request.skillContext ?? [],
+    memoryContext: request.memoryContext ?? [],
+    webSearchContext: request.webSearchContext ?? [],
     packageSkillPaths: request.packageSkillPaths ?? [],
     packageExtensionPaths: request.packageExtensionPaths ?? [],
     promptTemplatePaths: request.promptTemplatePaths,
@@ -276,7 +278,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   const fallbackTaxonomy = capturedTaxonomies.length === 0
     ? buildAssemblyTaxonomy({
         provider,
-        systemPrompt,
+        systemPrompt: fallbackSystemPrompt,
         messages: request.messages,
         content: parsed.content,
         attachments: request.attachments ?? [],
@@ -289,7 +291,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     model: provider.modelId,
     elapsedMs: Date.now() - startedAt,
     timeline: normalizedResult.timeline,
-    webSearchUsed: result.webSearchUsed,
+    webSearchUsed: mergeWebSearchResults(request.webSearchContext ?? [], result.webSearchUsed),
     contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
     contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
     generatedMessages: result.generatedMessages
@@ -1144,71 +1146,38 @@ export function resolvePiShellRuntime(terminalShellPath?: string): PiShellRuntim
   return { kind: "unsupported", configuredPath };
 }
 
-export function buildSystemPrompt(
-  memoryContext: string[],
-  _skillContext: RuntimeSkillManifest[],
-  webSearchContext: WebSearchResult[],
-  _toolsEnabled = true,
-  options: { piShell?: PiShellRuntime; cwd?: string } = {}
-): string {
-  const base = "You are Jasmine, a calm local-first personal AI assistant. Be concise, practical, and answer in the user's language.";
-  const sections = [base, ...environmentGuidance(options.piShell)];
-  if (options.cwd) {
-    sections.push("", `Current working directory: ${options.cwd}`);
-  }
-  if (memoryContext.length > 0) {
-    sections.push(
-      "",
-      "Relevant local memories, explicitly saved by the user:",
-      ...memoryContext.map((memory, index) => `${index + 1}. ${memory}`)
-    );
-  }
-  if (webSearchContext.length > 0) {
-    sections.push(
-      "",
-      "Web search results fetched for this request. Use them only when relevant, cite source URLs inline, and say when the results are insufficient:",
-      ...webSearchContext.map((result, index) => `${index + 1}. ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet}`)
-    );
-  }
-  return sections.join("\n");
+export function buildJasminePromptAppend(): string {
+  return "You are operating through Jasmine. Answer in the user's language.";
 }
 
-function environmentGuidance(piShell: PiShellRuntime = { kind: "default-bash" }): string[] {
-  if (process.platform !== "win32") return [];
+export function buildLocalRuntimePromptAppend(piShell: PiShellRuntime = { kind: "default-bash" }): string {
+  if (process.platform !== "win32") return "";
   if (piShell.kind === "powershell") {
-    return [
-      "",
-      "Runtime environment guidance:",
-      `- The Pi tool named \`bash\` is configured to run through the app Terminal shell: ${piShell.shellPath}. Write commands for PowerShell, even though the tool label remains \`bash\`.`,
-      "- Prefer Windows absolute paths such as `C:\\Users\\...` when referencing user files. Do not assume Unix paths like `/tmp` exist; use `$env:TEMP` or another verified Windows path.",
-      "- Do not assume `python3` or `py` exists. Probe `Get-Command python`, `python --version`, and `python -c \"print('ok')\"` before using Python packages; if a command exits with only a code and no output, treat it as a shell/PATH issue and try an explicit Windows executable path."
-    ];
+    return `Runtime: the Pi tool named \`bash\` executes through PowerShell (${piShell.shellPath}); use PowerShell syntax and Windows paths.`;
   }
   if (piShell.kind === "bash") {
     if (piShell.fallbackReason === "wsl-bash-launcher" && piShell.configuredPath && piShell.shellPath) {
-      return [
-        "",
-        "Runtime environment guidance:",
-        `- The configured app Terminal shell is Windows' WSL bash launcher (${piShell.configuredPath}), so it is not passed to Pi. The Pi tool named \`bash\` uses Git Bash instead: ${piShell.shellPath}. Write commands for Git Bash.`,
-        "- Prefer Windows absolute paths such as `C:\\Users\\...` when referencing user files. In Git Bash, Windows drives are available as `/c/...`; do not use WSL-only paths like `/mnt/c/...` unless you have verified them in this shell.",
-        "- Do not assume `python3` or `py` exists. Probe `command -v python`, `python --version`, and `python -c \"print('ok')\"` before using Python packages; if a command exits with only a code and no output, treat it as a shell/PATH issue and try an explicit Windows executable path."
-      ];
+      return `Runtime: the configured WSL bash launcher (${piShell.configuredPath}) is not passed to Pi; the \`bash\` tool uses Git Bash (${piShell.shellPath}), so use Git Bash syntax and Windows paths.`;
     }
-    return [
-      "",
-      "Runtime environment guidance:",
-      `- The Pi tool named \`bash\` is configured to run through the app Terminal shell: ${piShell.shellPath}. Write commands for bash/Git Bash.`,
-      "- Prefer verified Windows absolute paths when referencing user files. Do not assume Unix paths like `/tmp` exist; use `%TEMP%` or `$TEMP` after verifying.",
-      "- Do not assume `python3` or `py` exists. Probe `command -v python`, `python --version`, and `python -c \"print('ok')\"` before using Python packages; if a command exits with only a code and no output, treat it as a shell/PATH issue and try an explicit Windows executable path."
-    ];
+    return `Runtime: the Pi \`bash\` tool uses ${piShell.shellPath}; use bash syntax and verified Windows paths.`;
   }
+  return piShell.kind === "unsupported"
+    ? "Runtime: the configured app Terminal shell is incompatible with Pi, so the `bash` tool falls back to Git Bash or another bash.exe; use bash syntax and verified Windows paths."
+    : "Runtime: the Pi `bash` tool uses Git Bash or another bash.exe on Windows; use bash syntax and verified Windows paths.";
+}
+
+function buildFallbackSystemPrompt(jasminePromptAppend: string, runtimePromptAppend: string, cwd: string): string {
   return [
-    "",
-    "Runtime environment guidance:",
-    piShell.kind === "unsupported"
-      ? "- The app Terminal shell is not passed to Pi because it is not compatible with Pi's `shellPath` execution contract. The `bash` tool falls back to Git Bash or another bash.exe on Windows."
-      : "- The `bash` tool runs through Git Bash or another bash.exe on Windows, not PowerShell and not the app's interactive Terminal setting.",
-    "- Prefer verified Windows absolute paths when referencing user files. Do not assume Unix paths like `/tmp` exist; use `%TEMP%` or `$TEMP` after verifying.",
-    "- Do not assume `python3` or `py` exists. Probe `command -v python`, `python --version`, and `python -c \"print('ok')\"` before using Python packages; if a command exits with only a code and no output, treat it as a shell/PATH issue and try an explicit Windows executable path."
-  ];
+    jasminePromptAppend,
+    runtimePromptAppend,
+    `Current working directory: ${cwd.replace(/\\/g, "/")}`
+  ].filter(Boolean).join("\n\n");
+}
+
+function mergeWebSearchResults(first: WebSearchResult[], second: WebSearchResult[]): WebSearchResult[] {
+  const merged: WebSearchResult[] = [];
+  for (const result of [...first, ...second]) {
+    if (!merged.some((candidate) => candidate.url === result.url)) merged.push(result);
+  }
+  return merged;
 }

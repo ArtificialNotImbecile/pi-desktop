@@ -200,7 +200,7 @@ test.describe("Jasmine threads and projects", () => {
       return { thread, systemPromptText };
     }, project.id);
     expect(scopedMessageState.thread.projectId).toBe(project.id);
-    expect(scopedMessageState.systemPromptText).toContain(project.rootPath);
+    expect(scopedMessageState.systemPromptText).toContain(project.rootPath.replace(/\\/g, "/"));
 
     const scratchCwd = await page.evaluate(async () => {
       const session = await window.jasmine.startTerminal({ projectId: null, cols: 80, rows: 8 });
