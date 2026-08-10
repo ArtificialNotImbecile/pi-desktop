@@ -1103,7 +1103,12 @@ async function createDirectoryLink(target, link, t) {
 }
 
 async function withTempDirectory(run) {
-  const directory = await mkdtemp(path.join(tmpdir(), "pi-file-changes-test-"));
+  const createdDirectory = await mkdtemp(path.join(tmpdir(), "pi-file-changes-test-"));
+  // GitHub's Windows runner can expose os.tmpdir() through an 8.3 alias such
+  // as RUNNER~1, while realpath() correctly expands exact write targets to the
+  // long path. Give every assertion and injected predicate the same canonical
+  // root that the tracker uses so the tests exercise identity, not alias text.
+  const directory = await realpath(createdDirectory);
   try {
     await run(directory);
   } finally {
