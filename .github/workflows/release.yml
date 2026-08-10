@@ -93,7 +93,7 @@ jobs:
         run: ${{ matrix.smoke }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.id }}
           path: ${{ matrix.assets }}
@@ -117,7 +117,7 @@ jobs:
           node-version: 22
 
       - name: Download platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release-assets

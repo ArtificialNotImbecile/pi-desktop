@@ -32,6 +32,8 @@ try {
     "all platform build jobs must disable electron-builder's implicit CI publishing");
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-x86_64.AppImage"));
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-amd64.deb"));
+  assert.ok(releaseWorkflow.includes("actions/upload-artifact@v7"));
+  assert.ok(releaseWorkflow.includes("actions/download-artifact@v8"));
 
   const mockSpawnHelper = path.join(mockMacApp, "Contents", "Resources", "app.asar.unpacked", "node_modules", "node-pty", "prebuilds", "darwin-arm64", "spawn-helper");
   await mkdir(path.dirname(mockSpawnHelper), { recursive: true });
