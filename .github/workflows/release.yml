@@ -1,0 +1,162 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            label: Windows x64
+            os: windows-latest
+            npm: npm.cmd
+            package: npx.cmd electron-builder --win nsis --x64
+            smoke: npm.cmd run test:packaged
+            assets: |
+              release/v*/Jasmine-Setup-*.exe
+              release/v*/Jasmine-Setup-*.exe.blockmap
+              release/v*/latest.yml
+          - id: linux-x64
+            label: Linux x64
+            os: ubuntu-latest
+            npm: npm
+            package: npx electron-builder --linux AppImage deb --x64
+            smoke: xvfb-run -a npm run test:packaged
+            assets: |
+              release/v*/Jasmine-*-linux-x64.AppImage
+              release/v*/Jasmine-*-linux-x64.deb
+          - id: mac-arm64
+            label: macOS Apple Silicon
+            os: macos-latest
+            npm: npm
+            package: npx electron-builder --mac dmg --arm64
+            smoke: npm run test:packaged
+            assets: release/v*/Jasmine-*-mac-arm64.dmg
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release version
+        run: node scripts/validate-release-version.mjs
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+      - name: Install dependencies
+        run: ${{ matrix.npm }} ci
+
+      - name: Install Linux runtime dependencies
+        if: matrix.id == 'linux-x64'
+        run: npx playwright install-deps
+
+      - name: Build application
+        run: ${{ matrix.npm }} run build
+
+      - name: Run unit tests
+        run: ${{ matrix.npm }} run test:unit
+
+      - name: Run Windows release checks
+        if: matrix.id == 'windows-x64'
+        run: |
+          npm.cmd run harness:check
+          npm.cmd run test:e2e:smoke
+
+      - name: Package application
+        run: ${{ matrix.package }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Smoke-test packaged application
+        run: ${{ matrix.smoke }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.id }}
+          path: ${{ matrix.assets }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify and checksum release assets
+        run: node scripts/prepare-release-assets.mjs --source release-assets --output release-ready --version "${{ github.ref_name }}"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          generated_notes="$(mktemp)"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${tag}" --jq '.body' > "${generated_notes}"
+
+          {
+            echo "Jasmine ${version} is built and smoke-tested on Windows, Linux, and Apple Silicon macOS."
+            echo
+            echo "## Downloads"
+            echo
+            echo "- Windows x64: \`Jasmine-Setup-${version}-x64.exe\` (unsigned; SmartScreen may warn)"
+            echo "- Linux x64: \`Jasmine-${version}-linux-x64.AppImage\` or \`.deb\`"
+            echo "- Apple Silicon macOS: \`Jasmine-${version}-mac-arm64.dmg\`"
+            echo
+            echo "The macOS builds use ad-hoc signing and are not notarized. On first launch, trusted users may need to choose **System Settings → Privacy & Security → Open Anyway**. Verify assets against \`SHA256SUMS.txt\`."
+            echo
+            echo "## Changes"
+            echo
+            cat "${generated_notes}"
+          } > release-notes.md
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" release-ready/* --clobber
+            gh release edit "${tag}" --title "Jasmine ${version}" --notes-file release-notes.md
+          else
+            gh release create "${tag}" release-ready/* \
+              --verify-tag \
+              --title "Jasmine ${version}" \
+              --notes-file release-notes.md
+          fi

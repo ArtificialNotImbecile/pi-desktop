@@ -8,12 +8,20 @@ const { DatabaseSync } = require("node:sqlite");
 
 const rootDir = process.cwd();
 const packageManifest = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
-const packageOutput = packageManifest.build?.directories?.output || path.join("release", `v${packageManifest.version}`);
-const executablePath = path.resolve(process.argv[2] || path.join(rootDir, packageOutput, "win-unpacked", "Jasmine.exe"));
+const packageOutput = (packageManifest.build?.directories?.output || path.join("release", `v${packageManifest.version}`))
+  .replace(/\$\{version\}/g, packageManifest.version);
+const defaultExecutables = process.platform === "win32"
+  ? [path.join(rootDir, packageOutput, "win-unpacked", "Jasmine.exe")]
+  : process.platform === "darwin"
+    ? [path.join(rootDir, packageOutput, "mac-arm64", "Jasmine.app", "Contents", "MacOS", "Jasmine")]
+    : [path.join(rootDir, packageOutput, "linux-unpacked", "jasmine")];
+const executablePath = path.resolve(process.argv[2] || await firstExistingPath(defaultExecutables));
 const executableInfo = await stat(executablePath).catch(() => null);
 if (!executableInfo?.isFile()) throw new Error(`Packaged Jasmine executable not found: ${executablePath}`);
 
-const resourcesRoot = path.join(path.dirname(executablePath), "resources", "jasmine-resources");
+const resourcesRoot = process.platform === "darwin"
+  ? path.resolve(path.dirname(executablePath), "..", "Resources", "jasmine-resources")
+  : path.join(path.dirname(executablePath), "resources", "jasmine-resources");
 for (const requiredPath of [
   path.join(resourcesRoot, "chrome-extension", "manifest.json"),
   path.join(resourcesRoot, "builtin-skills", "code-reviewer", "SKILL.md"),
@@ -142,4 +150,11 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await app.close().catch(() => undefined);
+}
+
+async function firstExistingPath(candidates) {
+  for (const candidate of candidates) {
+    if (await stat(candidate).catch(() => null)) return candidate;
+  }
+  return candidates[0];
 }

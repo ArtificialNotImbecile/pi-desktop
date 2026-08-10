@@ -69,17 +69,20 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 
 </details>
 
-## Requirements
+## Install
 
-- Windows 10 or later
+Download the appropriate asset from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest) and verify it against the published `SHA256SUMS.txt`.
+
+- **Windows x64:** use `Jasmine-Setup-<version>-x64.exe`. The installer is not code-signed, so Windows may show a SmartScreen warning. The in-app updater currently supports Windows releases.
+- **Linux x64:** use the `.AppImage` for a portable launch or the `.deb` package on Debian-based distributions. The AppImage may need `chmod +x` before its first launch.
+- **Apple Silicon macOS:** use `Jasmine-<version>-mac-arm64.dmg`.
+
+The macOS builds use ad-hoc signing and are not notarized. Trusted users may need to try opening Jasmine once, then choose **System Settings → Privacy & Security → Open Anyway**. Managed Macs may prohibit this override.
+
+## Requirements for local development
+
 - Node.js 22
 - npm
-
-## Install on Windows
-
-Download the current x64 installer from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest). The `v0.3.1` installer is not code-signed, so Windows may show a SmartScreen warning. Verify the published SHA-256 checksum before running it.
-
-After installation, open **About** to check GitHub Releases, download an available update with visible progress, and restart Jasmine into the installer.
 
 ## Run locally
 
@@ -120,13 +123,13 @@ npm.cmd run test:e2e:smoke
 
 Run `npm.cmd run test:e2e` for the full Electron suite in background/off-screen mode. It keeps test windows transparent, non-focusable, and out of the taskbar; use `npm.cmd run test:e2e:headed` only for intentional foreground debugging. Run `npm.cmd run harness:release` for the complete local release gate; its final acceptance stage is intentionally headed. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
 
-Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`.
+Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`. Linux and macOS packages are built and smoke-tested on their native GitHub Actions runners during a release.
 
 See [docs/harness.md](docs/harness.md) for the test map and verification policy.
 
 ## Documentation
 
-Start with the [Jasmine documentation](docs/README.md) for Pi session behavior, storage, reasoning context, and desktop development workflows.
+Start with the [Jasmine documentation](docs/README.md) for Pi session behavior, storage, reasoning context, and desktop development workflows. Maintainers should read the [development and release guide](docs/development-and-release.md) before publishing a version.
 
 ## Contributing and security
 

@@ -12,6 +12,7 @@ Jasmine is a community-built project and is not affiliated with or endorsed by P
 - [Import Pi sessions](pi_session_import.md) — preview and import existing Pi coding-agent sessions.
 - [Reasoning context retention](reasoning_context_retention.md) — provider-specific reasoning replay behavior.
 - [UI harness](harness.md) — build, test, visual inspection, and release verification.
+- [开发与发版流程](development-and-release.md) — 普通提交 CI、手动跨平台预构建和正式 Release 的职责边界与操作步骤。
 - [UI inventory](ui_inventory.md) — visible product surfaces and their automated evidence.
 - [Workflow inventory](workflow_inventory.md) — multi-step desktop workflows and coverage.
 

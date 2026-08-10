@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const rootDir = process.cwd();
+const manifest = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
+const version = manifest.version;
+const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "jasmine-release-workflow-"));
+const sourceDirectory = path.join(temporaryRoot, "source");
+const outputDirectory = path.join(temporaryRoot, "output");
+const expectedNames = [
+  `Jasmine-Setup-${version}-x64.exe`,
+  `Jasmine-Setup-${version}-x64.exe.blockmap`,
+  "latest.yml",
+  `Jasmine-${version}-linux-x64.AppImage`,
+  `Jasmine-${version}-linux-x64.deb`,
+  `Jasmine-${version}-mac-arm64.dmg`
+];
+
+try {
+  const validTag = spawnSync(process.execPath, ["scripts/validate-release-version.mjs"], {
+    cwd: rootDir,
+    env: { ...process.env, RELEASE_TAG: `v${version}` },
+    encoding: "utf8"
+  });
+  assert.equal(validTag.status, 0, validTag.stderr);
+
+  const invalidTag = spawnSync(process.execPath, ["scripts/validate-release-version.mjs"], {
+    cwd: rootDir,
+    env: { ...process.env, RELEASE_TAG: "v999.0.0" },
+    encoding: "utf8"
+  });
+  assert.notEqual(invalidTag.status, 0, "a mismatched tag must fail validation");
+
+  await Promise.all(expectedNames.map(async (name, index) => {
+    const nestedDirectory = path.join(sourceDirectory, `platform-${index % 4}`);
+    await mkdir(nestedDirectory, { recursive: true });
+    await writeFile(path.join(nestedDirectory, name), `asset:${name}\n`, "utf8");
+  }));
+
+  const prepared = spawnSync(process.execPath, [
+    "scripts/prepare-release-assets.mjs",
+    "--source", sourceDirectory,
+    "--output", outputDirectory,
+    "--version", `v${version}`
+  ], { cwd: rootDir, encoding: "utf8" });
+  assert.equal(prepared.status, 0, prepared.stderr);
+
+  const outputNames = (await readdirNames(outputDirectory)).sort();
+  assert.deepEqual(outputNames, [...expectedNames, "SHA256SUMS.txt"].sort());
+  const checksums = await readFile(path.join(outputDirectory, "SHA256SUMS.txt"), "utf8");
+  for (const name of expectedNames) assert.match(checksums, new RegExp(`  ${escapeRegExp(name)}(?:\\r?\\n|$)`));
+
+  await rm(path.join(sourceDirectory, "platform-0", expectedNames[0]));
+  const missingAsset = spawnSync(process.execPath, [
+    "scripts/prepare-release-assets.mjs",
+    "--source", sourceDirectory,
+    "--output", outputDirectory,
+    "--version", version
+  ], { cwd: rootDir, encoding: "utf8" });
+  assert.notEqual(missingAsset.status, 0, "a missing platform asset must fail release preparation");
+  assert.match(missingAsset.stderr, /Missing release assets/);
+} finally {
+  await rm(temporaryRoot, { recursive: true, force: true });
+}
+
+async function readdirNames(directory) {
+  const { readdir } = await import("node:fs/promises");
+  return readdir(directory);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+console.log(`Release workflow validation passed for Jasmine ${version}.`);

@@ -27,6 +27,7 @@ const tasks = [
   { name: "chrome-extension-id", steps: [["node", "--no-warnings", "tests/unit/chrome-extension-id.mjs"]] },
   { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
   { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
+  { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
   {
     name: "context-capture",
     steps: [

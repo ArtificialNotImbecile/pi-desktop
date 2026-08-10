@@ -16,7 +16,9 @@ Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generate
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
 - `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.
 - `npm run dist:win`: builds the Windows x64 NSIS installer under the versioned output directory configured in `package.json`.
-- `npm run test:packaged`: launches the current version's `win-unpacked/Jasmine.exe` and verifies the packaged renderer and bundled resources.
+- `npm run dist:linux`: builds Linux x64 AppImage and deb packages. Run it on Linux.
+- `npm run dist:mac:arm64`: builds the Apple Silicon macOS DMG. Run it on macOS.
+- `npm run test:packaged`: launches the current platform's unpacked Jasmine executable and verifies the packaged renderer, bundled resources, database migration, and terminal.
 
 Use `npm.cmd` and `npx.cmd` on Windows.
 
@@ -48,4 +50,5 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - Restart Electron for persistence changes.
 - Run `harness:visual` after material visual changes and inspect the generated matrix locally.
 - Run `harness:accept` before a release; `harness:release` enforces its current generated result.
+- A tagged release must also pass the native packaged smoke in `.github/workflows/release.yml` for Windows, Linux, and Apple Silicon macOS before GitHub Release publication.
 - Keep every checked inventory/workflow row backed by a test file or executable command.
