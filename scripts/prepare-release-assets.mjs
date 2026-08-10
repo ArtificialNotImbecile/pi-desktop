@@ -28,8 +28,8 @@ const expectedNames = [
   `Jasmine-Setup-${version}-x64.exe`,
   `Jasmine-Setup-${version}-x64.exe.blockmap`,
   "latest.yml",
-  `Jasmine-${version}-linux-x64.AppImage`,
-  `Jasmine-${version}-linux-x64.deb`,
+  `Jasmine-${version}-linux-x86_64.AppImage`,
+  `Jasmine-${version}-linux-amd64.deb`,
   `Jasmine-${version}-mac-arm64.dmg`
 ];
 

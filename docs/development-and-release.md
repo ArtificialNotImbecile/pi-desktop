@@ -85,7 +85,7 @@ git push origin v0.3.2
 标签触发以下并行任务：
 
 - Windows x64：NSIS 安装包、blockmap 和 `latest.yml`；
-- Linux x64：AppImage 和 deb；
+- Linux x64：`Jasmine-<version>-linux-x86_64.AppImage` 和 `Jasmine-<version>-linux-amd64.deb`；
 - Apple Silicon macOS：arm64 DMG；
 
 每个任务均执行构建、单元测试、原生打包和 `test:packaged`。Linux 中涉及 Electron 窗口的测试通过 `xvfb-run` 使用虚拟显示。Windows 任务另外执行 Harness 检查与 E2E smoke。只有三个平台全部成功，Publish Job 才会继续。

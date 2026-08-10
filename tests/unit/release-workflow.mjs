@@ -7,6 +7,7 @@ import path from "node:path";
 const rootDir = process.cwd();
 const manifest = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
 const version = manifest.version;
+const releaseWorkflow = await readFile(path.join(rootDir, ".github", "workflows", "release.yml"), "utf8");
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "jasmine-release-workflow-"));
 const sourceDirectory = path.join(temporaryRoot, "source");
 const outputDirectory = path.join(temporaryRoot, "output");
@@ -14,12 +15,20 @@ const expectedNames = [
   `Jasmine-Setup-${version}-x64.exe`,
   `Jasmine-Setup-${version}-x64.exe.blockmap`,
   "latest.yml",
-  `Jasmine-${version}-linux-x64.AppImage`,
-  `Jasmine-${version}-linux-x64.deb`,
+  `Jasmine-${version}-linux-x86_64.AppImage`,
+  `Jasmine-${version}-linux-amd64.deb`,
   `Jasmine-${version}-mac-arm64.dmg`
 ];
 
 try {
+  assert.equal(manifest.desktopName, manifest.build.appId, "Linux desktopName must match the Electron app id");
+  assert.ok(manifest.build.linux.maintainer, "Linux deb packaging requires a maintainer");
+  assert.equal(manifest.build.linux.syncDesktopName, true);
+  assert.equal((releaseWorkflow.match(/--publish never/g) || []).length, 3,
+    "all platform build jobs must disable electron-builder's implicit CI publishing");
+  assert.ok(releaseWorkflow.includes("Jasmine-*-linux-x86_64.AppImage"));
+  assert.ok(releaseWorkflow.includes("Jasmine-*-linux-amd64.deb"));
+
   const validTag = spawnSync(process.execPath, ["scripts/validate-release-version.mjs"], {
     cwd: rootDir,
     env: { ...process.env, RELEASE_TAG: `v${version}` },

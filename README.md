@@ -74,7 +74,7 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 Download the appropriate asset from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest) and verify it against the published `SHA256SUMS.txt`.
 
 - **Windows x64:** use `Jasmine-Setup-<version>-x64.exe`. The installer is not code-signed, so Windows may show a SmartScreen warning. The in-app updater currently supports Windows releases.
-- **Linux x64:** use the `.AppImage` for a portable launch or the `.deb` package on Debian-based distributions. The AppImage may need `chmod +x` before its first launch.
+- **Linux x64:** use `Jasmine-<version>-linux-x86_64.AppImage` for a portable launch or `Jasmine-<version>-linux-amd64.deb` on Debian-based distributions. The AppImage may need `chmod +x` before its first launch.
 - **Apple Silicon macOS:** use `Jasmine-<version>-mac-arm64.dmg`.
 
 The macOS builds use ad-hoc signing and are not notarized. Trusted users may need to try opening Jasmine once, then choose **System Settings → Privacy & Security → Open Anyway**. Managed Macs may prohibit this override.

@@ -3,6 +3,7 @@
   "version": "0.3.2",
   "description": "Jasmine — an independent desktop GUI for the Pi coding agent.",
   "author": "ArtificialNotImbecile",
+  "desktopName": "ai.jasmine.desktop",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -44,10 +45,10 @@
     "lint:ui": "node scripts/check-ui-primitives.mjs && node scripts/check-theme-colors.mjs",
     "verify": "npm run build && npm run test:unit && npm run harness:inspect && npm run harness:check && npm run test:e2e",
     "readme:capture": "npm run build && node scripts/capture-readme-gallery.mjs && node scripts/record-context-taxonomy-gif.mjs",
-    "dist:win": "npm run build && electron-builder --win nsis --x64",
-    "dist:win:dir": "npm run build && electron-builder --win dir --x64",
-    "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64",
-    "dist:mac:arm64": "npm run build && electron-builder --mac dmg --arm64",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "dist:win:dir": "npm run build && electron-builder --win dir --x64 --publish never",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --publish never",
+    "dist:mac:arm64": "npm run build && electron-builder --mac dmg --arm64 --publish never",
     "test:packaged": "node scripts/smoke-packaged-app.mjs",
     "import:pi-sessions": "node --no-warnings scripts/import-pi-sessions.mjs",
     "start": "electron ."
@@ -152,6 +153,8 @@
       "icon": "resources/jasmine-logo.png",
       "category": "Development",
       "synopsis": "The desktop app for Pi",
+      "maintainer": "ArtificialNotImbecile <10048576+ArtificialNotImbecile@users.noreply.github.com>",
+      "syncDesktopName": true,
       "artifactName": "Jasmine-${version}-linux-${arch}.${ext}"
     },
     "mac": {
