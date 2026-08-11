@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   baseLaunchEnv,
   clickCenter,
+  closeWindowFromTitleBar,
   createExternalSkillFixture,
   createPiPluginFixture,
   createProjectFolderFixture,
@@ -78,6 +79,39 @@ test.describe("Jasmine app shell", () => {
 
   test("window controls maximize, restore, and minimize", async () => {
     const { app, page } = harness;
+
+    // macOS draws native traffic lights instead of the in-page control strip,
+    // so there is nothing to click; the equivalent contract there is that the
+    // native chrome still reaches the renderer through window:state-changed.
+    if (process.platform === "darwin") {
+      await expect(page.locator(".window-controls")).toHaveCount(0);
+      await page.evaluate(() => {
+        const scope = window as Window & { __windowStates: Array<{ maximized: boolean }> };
+        scope.__windowStates = [];
+        window.jasmine.onWindowStateChanged((state) => scope.__windowStates.push(state));
+      });
+      const lastMaximized = () => page.evaluate(() => {
+        const scope = window as Window & { __windowStates: Array<{ maximized: boolean }> };
+        return scope.__windowStates.at(-1)?.maximized ?? null;
+      });
+
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.maximize());
+      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(true);
+      await expect.poll(lastMaximized).toBe(true);
+
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.unmaximize());
+      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(false);
+      await expect.poll(lastMaximized).toBe(false);
+
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.minimize());
+      await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMinimized())).toBe(true);
+      await app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        win?.restore();
+        win?.focus();
+      });
+      return;
+    }
 
     await clickCenter(page.getByRole("button", { name: "Maximize" }));
     await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(true);
@@ -358,7 +392,10 @@ test.describe("Jasmine app shell", () => {
 
     await page.getByRole("button", { name: "New chat" }).first().click();
     await expect(page.locator(".empty-state")).toBeVisible();
-    await page.getByRole("button", { name: "Maximize" }).click();
+    // Maximize natively rather than through the caption button: this test is
+    // about menu anchoring, and macOS has no in-page button to click. It already
+    // unmaximizes the same way below.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.maximize());
     await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMaximized())).toBe(true);
 
     await page.locator(".model-pill").click();
@@ -383,7 +420,7 @@ test.describe("Jasmine app shell", () => {
   });
 
   test("window close minimizes to the tray and only tray exit quits the app", async () => {
-    await harness.page.getByRole("button", { name: "Close", exact: true }).click();
+    await closeWindowFromTitleBar(harness.page);
     // Closing hides the window into the system tray; the app stays resident so
     // global shortcuts and the tray keep working instead of leaving a zombie.
     await expect
