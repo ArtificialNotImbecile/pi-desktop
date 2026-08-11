@@ -439,6 +439,17 @@ test.describe("Jasmine app shell", () => {
     expect(size!.height).toBeLessThanOrEqual(32);
   });
 
+  test("clicking the macOS status item opens its menu instead of the window", async () => {
+    // A Windows notification-area icon opens the app on a left click and keeps
+    // the menu on the right button, so the app binds those clicks itself. macOS
+    // gives its one click to the menu, and binding it here as well opened the
+    // window before Open Jasmine could be read.
+    const listeners = await harness.app.evaluate(() =>
+      (globalThis as Record<string, any>).__jasmineTray?.clickListenerCount?.() as number
+    );
+    expect(listeners).toBe(process.platform === "darwin" ? 0 : 2);
+  });
+
   test("window close minimizes to the tray and only tray exit quits the app", async () => {
     await closeWindowFromTitleBar(harness.page);
     // Closing hides the window into the system tray; the app stays resident so
