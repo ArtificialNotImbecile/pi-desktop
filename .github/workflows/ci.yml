@@ -38,18 +38,21 @@ jobs:
             npm: npm
             unit: xvfb-run -a npm run test:unit
             smoke: xvfb-run -a npm run test:e2e:smoke
+            ime: xvfb-run -a npx playwright test -c tests/playwright.config.ts -g "rich composer preserves plain-text editing"
           - id: windows-x64
             label: Windows x64
             os: windows-latest
             npm: npm.cmd
             unit: npm.cmd run test:unit
             smoke: npm.cmd run test:e2e:smoke
+            ime: npx.cmd playwright test -c tests/playwright.config.ts -g "rich composer preserves plain-text editing"
           - id: mac-arm64
             label: macOS Apple Silicon
             os: macos-latest
             npm: npm
             unit: npm run test:unit
             smoke: npm run test:e2e:smoke
+            ime: npx playwright test -c tests/playwright.config.ts -g "rich composer preserves plain-text editing"
     steps:
       - uses: actions/checkout@v5
 
@@ -73,6 +76,14 @@ jobs:
 
       - name: Run E2E smoke tests
         run: ${{ matrix.smoke }}
+        env:
+          JASMINE_E2E_OFFSCREEN: "1"
+          JASMINE_E2E_WORKERS: "1"
+
+      # TEMPORARY: proves the reworked IME case on every runner. CI only runs
+      # @smoke specs, so this one is otherwise never executed anywhere.
+      - name: Verify the composer IME case
+        run: ${{ matrix.ime }}
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
