@@ -11,9 +11,17 @@ if (process.env.JASMINE_E2E_OFFSCREEN === undefined) {
 // dir (single-instance lock is disabled under JASMINE_E2E_HARNESS), so tests
 // are safe to run in parallel. Override with JASMINE_E2E_WORKERS=1 when
 // debugging a single flaky test.
+//
+// macOS runs serially. Concurrent Electron launches there starve the heavier
+// specs of their 45s budget: four workers failed ten specs on an 8-core Mac,
+// including a shell that never became visible within 30s, and two still failed
+// three. The same specs pass serially, at 5.3m against 3.9m for a two-worker
+// run that has to be re-read for which failures were real. CI is unaffected
+// either way, since it pins the count to 1.
+const defaultWorkers = process.platform === "darwin" ? 1 : 4;
 const workers = process.env.JASMINE_E2E_WORKERS
   ? Number(process.env.JASMINE_E2E_WORKERS)
-  : 4;
+  : defaultWorkers;
 
 // The cold-start tests assert wall-clock startup budgets (first frame < 3.5s,
 // settings-independent shell < 4s). They must not share the machine with a
