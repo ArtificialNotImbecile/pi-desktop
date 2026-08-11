@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
+import { _electron as electron, type CDPSession, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -170,6 +170,52 @@ export async function expectComposerDraft(page: Page, expected: string): Promise
 
 export async function expectComposerEditorText(editor: Locator, expected: string): Promise<void> {
   await expect.poll(() => editor.evaluate((node) => (((node as HTMLElement).innerText || node.textContent || "").replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").replace(/\n$/, "")))).toBe(expected);
+}
+
+/**
+ * Waits until the composer's DOM and caret stop moving.
+ *
+ * Draft assertions pass the moment the text matches, which for a cleared editor
+ * is before Lexical has finished rebuilding the empty paragraph and placing the
+ * caret in it. Text written in that gap lands in a node the reconciler is about
+ * to replace and disappears with it, so anything that writes into a just-cleared
+ * composer has to wait for this first.
+ */
+export async function waitForComposerSettled(page: Page): Promise<void> {
+  await expect.poll(async () => page.locator(".rich-composer-editor").evaluate(async (node) => {
+    const read = () => {
+      const selection = window.getSelection();
+      return JSON.stringify({
+        html: node.innerHTML,
+        offset: selection?.anchorOffset ?? null,
+        inEditor: selection?.anchorNode ? node.contains(selection.anchorNode) : false
+      });
+    };
+    const before = read();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    return before === read();
+  })).toBe(true);
+}
+
+/**
+ * Types `text` through the browser's own IME, leaving it uncommitted so the run
+ * observes what the composer does mid-composition. Commit it with
+ * {@link commitImeComposition}.
+ *
+ * Dispatching CompositionEvent by hand instead races Lexical: the editor listens
+ * for those events too, so a hand-made compositionstart convinces it an IME owns
+ * the DOM, and the text a subsequent insertText writes is then reconciled away
+ * about half the time, leaving only its placeholder zero-width spaces behind.
+ */
+export async function startImeComposition(app: ElectronApplication, page: Page, text: string): Promise<CDPSession> {
+  const cdp = await app.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+  return cdp;
+}
+
+export async function commitImeComposition(cdp: CDPSession, text: string): Promise<void> {
+  await cdp.send("Input.insertText", { text });
 }
 
 export async function expectExecutablePathMetadata(output: Locator): Promise<void> {

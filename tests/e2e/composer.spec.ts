@@ -7,6 +7,7 @@ import {
   appendThreadPiCompaction,
   baseLaunchEnv,
   clickCenter,
+  commitImeComposition,
   createExternalSkillFixture,
   createPiPluginFixture,
   createProjectFolderFixture,
@@ -42,9 +43,11 @@ import {
   seedThreadPiContextUsage,
   stableChatLayoutSnapshot,
   startEmptyThread,
+  startImeComposition,
   testProvider,
   type HarnessApp,
   waitForAppShellPage,
+  waitForComposerSettled,
   waitForChildExit,
   waitForStableAssistant
 } from "./helpers";
@@ -113,6 +116,7 @@ test.describe("Jasmine composer", () => {
     await editor.press("ControlOrMeta+A");
     await page.keyboard.press("Backspace");
     await expectComposerDraft(page, "");
+    await waitForComposerSettled(page);
     await page.keyboard.insertText("你说");
     await expectComposerDraft(page, "你说");
     await editor.evaluate((node) => {
@@ -132,15 +136,11 @@ test.describe("Jasmine composer", () => {
     await editor.press("ControlOrMeta+A");
     await page.keyboard.press("Backspace");
     await expectComposerDraft(page, "");
-    await editor.evaluate((node) => {
-      node.focus();
-      node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "$" }));
-    });
-    await page.keyboard.insertText("$tech");
+    await waitForComposerSettled(page);
+    await editor.click();
+    const composition = await startImeComposition(harness.app, page, "$tech");
     await expect(page.locator(".skill-command-menu")).toHaveCount(0);
-    await editor.evaluate((node) => {
-      node.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "$tech" }));
-    });
+    await commitImeComposition(composition, "$tech");
     await expect(page.locator(".skill-command-menu")).toBeVisible();
     await page.keyboard.press("Escape");
   });
