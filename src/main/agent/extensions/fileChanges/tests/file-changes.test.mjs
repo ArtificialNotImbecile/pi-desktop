@@ -142,6 +142,8 @@ test("watcher mode observes create, update, and delete paths without an initial 
     const deleted = path.join(root, "deleted.txt");
     await writeFile(updated, "before\n");
     await writeFile(deleted, "delete\n");
+    // Subscribe immediately. macOS only replays creates for entries of a directory
+    // as young as this one, so any pause here removes the very condition under test.
     const harness = createTrackingHarness(root, { trackingMode: "watcher", watchRoot: root });
     await harness.emit("agent_start", { type: "agent_start" });
     // ReadDirectoryChangesW can resolve the subscription just before its first
