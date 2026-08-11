@@ -299,13 +299,25 @@ test.describe("Jasmine app shell", () => {
       };
     })).toEqual({ resizable: true, movable: true, minimizable: true, maximizable: true });
 
-    await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.setSize(1420, 920);
+    // Clamp to the work area: the OS refuses to size a window past it, so a
+    // fixed 1420x920 is unreachable on any smaller display (e.g. a 1440x900 Mac).
+    const largeSize = await app.evaluate(({ screen }) => {
+      const { workArea } = screen.getPrimaryDisplay();
+      return { width: Math.min(1420, workArea.width), height: Math.min(920, workArea.height) };
     });
-    await expect.poll(() => page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))).toEqual({ width: 1420, height: 920 });
+    await app.evaluate(({ BrowserWindow }, size) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win?.setSize(size.width, size.height);
+    }, largeSize);
+    await expect.poll(() => page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))).toEqual(largeSize);
     await expect(page.locator(".window-drag-region")).toHaveCSS("-webkit-app-region", "drag");
-    await expect(page.getByRole("button", { name: "Maximize" })).toHaveCSS("-webkit-app-region", "no-drag");
+    // macOS keeps its native traffic lights, so the self-drawn strip is absent
+    // there; every other platform draws and owns the caption buttons.
+    if (process.platform === "darwin") {
+      await expect(page.locator(".window-controls")).toHaveCount(0);
+    } else {
+      await expect(page.getByRole("button", { name: "Maximize" })).toHaveCSS("-webkit-app-region", "no-drag");
+    }
 
     await page.evaluate(async () => {
       for (let index = 0; index < 75; index += 1) {

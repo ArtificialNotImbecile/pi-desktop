@@ -601,13 +601,12 @@ export function seedMarkdownThreadMessages(userDataDir: string, threadId: string
 }
 
 export function resolveElectronExecutable(): string {
-  return path.join(
-    rootDir,
-    "node_modules",
-    "electron",
-    "dist",
-    process.platform === "win32" ? "electron.exe" : "electron"
-  );
+  const dist = path.join(rootDir, "node_modules", "electron", "dist");
+  // macOS ships the binary inside an .app bundle rather than beside dist/.
+  if (process.platform === "darwin") {
+    return path.join(dist, "Electron.app", "Contents", "MacOS", "Electron");
+  }
+  return path.join(dist, process.platform === "win32" ? "electron.exe" : "electron");
 }
 
 export async function quitElectron(electronApp: ElectronApplication): Promise<void> {

@@ -1343,6 +1343,7 @@ export type ThreadContextUsage = {
 
 export type WindowState = {
   maximized: boolean;
+  fullScreen: boolean;
 };
 
 export type SpotlightCommandId = "open-thread" | "new-chat" | "open-settings";
@@ -1375,6 +1376,7 @@ export type SpotlightExecuteRequest = {
 };
 
 export type JasmineApi = {
+  platform: NodeJS.Platform;
   listThreads(): Promise<ChatThread[]>;
   createThread(input?: ThreadCreateRequest): Promise<ChatThread>;
   renameThread(request: ThreadRenameRequest): Promise<ChatThread>;

@@ -68,6 +68,7 @@ import type {
 } from "../shared/ipc.js";
 
 const api: JasmineApi = {
+  platform: process.platform,
   listThreads() {
     return ipcRenderer.invoke("threads:list");
   },

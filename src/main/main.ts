@@ -7,6 +7,7 @@ import os from "node:os";
 import { DEFAULT_APPEARANCE } from "../shared/theme.js";
 import type { AppLanguage, SpotlightExecuteRequest, WorkingNavigationTarget } from "../shared/ipc.js";
 import type { JasmineDatabase } from "./db/database.js";
+import { attachWindowStateEvents } from "./ipc/window.js";
 import { stopChromeBridge } from "./services/chromeBridge.js";
 import { WorkingRegistry, type WorkingNotification } from "./services/workingRegistry.js";
 
@@ -84,6 +85,12 @@ function createWindow() {
     minHeight: 600,
     title: "Jasmine — The desktop app for Pi",
     titleBarStyle: "hidden",
+    // macOS keeps its native traffic lights under "hidden", and their default
+    // spot straddles the sidebar card's rounded top-left corner. Center them in
+    // that card's 46px toolbar row instead: x clears the 10px card margin, y is
+    // the row's midline (10 margin + 1 border + 46/2) minus half a 12pt button.
+    // Windows/Linux ignore this and draw their own controls (WindowControls).
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 28 } } : {}),
     resizable: true,
     movable: true,
     maximizable: true,
@@ -108,6 +115,7 @@ function createWindow() {
     }
   });
   mainWindow = win;
+  attachWindowStateEvents(win);
   win.on("close", (event) => {
     if (isQuitting || !tray) return;
     event.preventDefault();

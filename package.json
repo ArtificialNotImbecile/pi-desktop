@@ -49,6 +49,7 @@
     "dist:win:dir": "npm run build && electron-builder --win dir --x64 --publish never",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --publish never",
     "dist:mac:arm64": "npm run build && electron-builder --mac dmg --arm64 --publish never",
+    "dist:mac": "npm run build && electron-builder --mac dir --publish never",
     "test:packaged": "node scripts/smoke-packaged-app.mjs",
     "import:pi-sessions": "node --no-warnings scripts/import-pi-sessions.mjs",
     "start": "electron ."
@@ -171,7 +172,7 @@
           ]
         }
       ],
-      "icon": "resources/jasmine-logo.png",
+      "icon": "resources/jasmine-logo.icns",
       "artifactName": "Jasmine-${version}-mac-${arch}.${ext}",
       "identity": "-",
       "hardenedRuntime": false
