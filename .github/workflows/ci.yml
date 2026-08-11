@@ -9,20 +9,70 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 30
+  static:
+    name: Repository rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      # Harness and UI lint rules read only docs and source, use no npm
+      # dependencies, and cannot differ by operating system. They run once here
+      # instead of three times in the platform matrix, and report in seconds
+      # without waiting for an install or a build.
+      - run: npm run harness:check
+
+  verify:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            label: Linux x64
+            os: ubuntu-latest
+            npm: npm
+            unit: xvfb-run -a npm run test:unit
+            smoke: xvfb-run -a npm run test:e2e:smoke
+          - id: windows-x64
+            label: Windows x64
+            os: windows-latest
+            npm: npm.cmd
+            unit: npm.cmd run test:unit
+            smoke: npm.cmd run test:e2e:smoke
+          - id: mac-arm64
+            label: macOS Apple Silicon
+            os: macos-latest
+            npm: npm
+            unit: npm run test:unit
+            smoke: npm run test:e2e:smoke
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
-      - run: npm.cmd ci
-      - run: npm.cmd run build
-      - run: npm.cmd run test:unit
-      - run: npm.cmd run harness:check
-      - run: npm.cmd run test:e2e:smoke
+
+      - name: Install dependencies
+        run: ${{ matrix.npm }} ci
+
+      - name: Install Linux runtime dependencies
+        if: matrix.id == 'linux-x64'
+        run: npx playwright install-deps
+
+      - name: Build application
+        run: ${{ matrix.npm }} run build
+
+      - name: Run unit tests
+        run: ${{ matrix.unit }}
+
+      - name: Run E2E smoke tests
+        run: ${{ matrix.smoke }}
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
