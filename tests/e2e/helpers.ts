@@ -2,6 +2,7 @@ import { expect } from "@playwright/test";
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -627,11 +628,26 @@ export async function quitElectron(electronApp: ElectronApplication): Promise<vo
   await electronApp.close().catch(() => undefined);
 }
 
+type ExecutableFixture = { label: string; command: string };
+
+// Discovery hands the first candidate straight to node-pty as the auto-detected
+// shell, so a path that does not exist reproduces the posix_spawnp failure this
+// fixture exists to avoid. POSIX hosts vary too much to hardcode -- zsh is the
+// macOS default but is absent from most Linux installs, and slim images ship
+// only /bin/sh -- so keep the preference order but take what is actually there.
+function presentFixtures(kind: string, candidates: ExecutableFixture[]): ExecutableFixture[] {
+  const present = candidates.filter((candidate) => existsSync(candidate.command));
+  if (present.length < 2) {
+    throw new Error(
+      `E2E needs two ${kind} candidates that exist on this host; only ${present.length} of ` +
+      `${candidates.map((candidate) => candidate.command).join(", ")} were found.`
+    );
+  }
+  return present.slice(0, 2);
+}
+
 // The executable pickers are seeded with fixed candidates so discovery never
-// depends on what happens to be installed. The first entry becomes the
-// auto-detected pick, and terminal tests spawn a real pty against it, so these
-// commands must exist on the host platform -- Windows paths make node-pty fail
-// with posix_spawnp on macOS/Linux.
+// depends on what happens to be installed.
 export const executableFixtures = process.platform === "win32"
   ? (() => {
       const systemRoot = process.env.SystemRoot || "C:\\Windows";
@@ -647,14 +663,17 @@ export const executableFixtures = process.platform === "win32"
       };
     })()
   : {
-      editors: [
+      editors: presentFixtures("editor", [
         { label: "VS Code", command: process.execPath },
-        { label: "Vi", command: "/usr/bin/vi" }
-      ],
-      terminals: [
+        { label: "Vi", command: "/usr/bin/vi" },
+        { label: "Vim", command: "/usr/bin/vim" },
+        { label: "Nano", command: "/usr/bin/nano" }
+      ]),
+      terminals: presentFixtures("terminal shell", [
         { label: "Zsh", command: "/bin/zsh" },
-        { label: "Bash", command: "/bin/bash" }
-      ]
+        { label: "Bash", command: "/bin/bash" },
+        { label: "Sh", command: "/bin/sh" }
+      ])
     };
 
 export function baseLaunchEnv(userDataDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
