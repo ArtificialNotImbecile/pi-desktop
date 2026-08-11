@@ -14,6 +14,11 @@ export function WindowControls() {
     void window.jasmine?.windowAction(name);
   };
 
+  // macOS already draws native traffic-light controls for this window
+  // (titleBarStyle: "hidden" keeps them); only Windows/Linux need this
+  // self-drawn set, since Electron ignores titleBarStyle there.
+  if (window.jasmine?.platform === "darwin") return null;
+
   return (
     <div className="window-controls" aria-label={t("window.controls")}>
       <button className="window-control minimize" type="button" onClick={() => action("minimize")} aria-label={t("window.minimize")} title={t("window.minimize")}>

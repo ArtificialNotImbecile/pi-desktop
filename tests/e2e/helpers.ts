@@ -303,6 +303,17 @@ export async function clickCenter(locator: Locator): Promise<void> {
   await locator.page().mouse.click((box?.x ?? 0) + (box?.width ?? 0) / 2, (box?.y ?? 0) + (box?.height ?? 0) / 2);
 }
 
+// macOS keeps native traffic lights, so there is no role-addressable Close
+// button to click there (see WindowControls.tsx). Drive the same IPC the button
+// invokes instead, so tray/close coverage stays identical on every platform.
+export async function closeWindowFromTitleBar(page: Page): Promise<void> {
+  if (process.platform === "darwin") {
+    await page.evaluate(() => window.jasmine.windowAction("close"));
+    return;
+  }
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+}
+
 export async function modelMenuGeometry(page: Page) {
   return page.evaluate(() => {
     const trigger = document.querySelector(".model-pill")?.getBoundingClientRect();
@@ -601,13 +612,12 @@ export function seedMarkdownThreadMessages(userDataDir: string, threadId: string
 }
 
 export function resolveElectronExecutable(): string {
-  return path.join(
-    rootDir,
-    "node_modules",
-    "electron",
-    "dist",
-    process.platform === "win32" ? "electron.exe" : "electron"
-  );
+  const dist = path.join(rootDir, "node_modules", "electron", "dist");
+  // macOS ships the binary inside an .app bundle rather than beside dist/.
+  if (process.platform === "darwin") {
+    return path.join(dist, "Electron.app", "Contents", "MacOS", "Electron");
+  }
+  return path.join(dist, process.platform === "win32" ? "electron.exe" : "electron");
 }
 
 export async function quitElectron(electronApp: ElectronApplication): Promise<void> {

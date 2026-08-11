@@ -1255,6 +1255,27 @@ select:focus-visible {
   }
 }
 
+/* Title-bar inset tokens. Each platform reserves top-row space on its own side:
+   macOS for its native traffic lights (left), Windows/Linux for the self-drawn
+   .window-controls (right). Every piece of top-row chrome reads these instead
+   of hardcoding one platform's geometry, so the two never collide again.
+   Left values are measured from the window edge; consumers inside the sidebar
+   card subtract its 10px margin themselves. */
+:root {
+  --titlebar-inset-left: 0px;
+  --titlebar-inset-right: 138px; /* 3 x 46px Windows 11 caption buttons */
+}
+
+:root.platform-darwin {
+  --titlebar-inset-left: 80px; /* 18px origin + 52px light cluster + 10px gap */
+  --titlebar-inset-right: 0px;
+}
+
+/* Fullscreen hides the macOS traffic lights, so the reserve becomes dead space. */
+:root.platform-darwin.is-fullscreen {
+  --titlebar-inset-left: 0px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 256px minmax(0, 1fr);
@@ -1273,8 +1294,11 @@ select:focus-visible {
 .sidebar-restore {
   position: absolute;
   top: 14px;
-  left: 14px;
-  z-index: 15;
+  /* Sits to the right of the macOS traffic lights when the sidebar is hidden;
+     stays flush left on Windows/Linux, where the inset is 0. */
+  left: max(14px, var(--titlebar-inset-left));
+  /* Above .window-drag-region (20), which otherwise swallows its clicks. */
+  z-index: 30;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1358,12 +1382,15 @@ select:focus-visible {
   justify-content: flex-end;
   gap: 14px;
   height: 46px;
-  padding: 10px 14px;
+  /* macOS traffic lights are centered in this row; keep the icon cluster clear
+     of them. The card's own 10px margin already covers part of the reserve. */
+  padding: 10px 14px 10px max(14px, calc(var(--titlebar-inset-left) - 10px));
   border-bottom: 0;
   -webkit-app-region: drag;
 }
 
 .side-top button,
+.sidebar-restore,
 .sidebar-feature-list button,
 .window-controls,
 .window-controls *,
@@ -1820,7 +1847,9 @@ select:focus-visible {
   position: absolute;
   top: 0;
   left: 256px;
-  right: 124px;
+  /* Clears the self-drawn controls on Windows/Linux; macOS reclaims the full
+     strip because its controls live on the left instead. */
+  right: var(--titlebar-inset-right);
   height: 44px;
   z-index: 20;
   -webkit-app-region: drag;
@@ -1830,13 +1859,17 @@ select:focus-visible {
   left: 56px;
 }
 
+/* Windows/Linux only — macOS renders nothing here (see WindowControls.tsx).
+   Flush to the corner at Windows 11 caption metrics (46x32, square, no gap):
+   3 x 46px is exactly the --titlebar-inset-right the rest of the top row
+   reserves, so the strip and the reserve can never drift apart. */
 .window-controls {
   position: fixed;
-  top: 6px;
-  right: 8px;
+  top: 0;
+  right: 0;
   z-index: 40;
   display: flex;
-  gap: 2px;
+  gap: 0;
   color: var(--ink);
   -webkit-app-region: no-drag;
   pointer-events: auto;
@@ -1847,8 +1880,8 @@ select:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 30px;
+  width: 46px;
+  height: 32px;
   border: 0;
   border-radius: 0;
   color: inherit;
@@ -1858,10 +1891,11 @@ select:focus-visible {
 
 .window-controls button:hover {
   background: var(--soft);
-  box-shadow: 0 8px 18px rgba(var(--ink-rgb), 0.16);
 }
 
-.window-controls button[aria-label="Close"]:hover {
+/* Class-based, not aria-label-based: the label is translated, so matching on
+   its English text silently drops the red hover in other languages. */
+.window-control.close:hover {
   color: var(--on-danger);
   background: var(--danger);
 }
@@ -1932,7 +1966,9 @@ select:focus-visible {
   height: 44px;
   color: var(--muted);
   font-size: 12px;
-  padding-right: 132px;
+  /* Keeps the centered title from sliding under the self-drawn controls; on
+     macOS the reserve is 0, so the title centers on the real chat column. */
+  padding-right: var(--titlebar-inset-right);
   pointer-events: none;
 }
 

@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("jasmine", {
+  platform: process.platform,
   listThreads() {
     return ipcRenderer.invoke("threads:list");
   },

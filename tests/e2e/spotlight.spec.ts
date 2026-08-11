@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { closeWindowFromTitleBar, resolveElectronExecutable } from "./helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,7 +104,7 @@ test.describe("Spotlight quick launcher", () => {
 
       // Close the window via the title-bar control; it must hide to the tray,
       // not destroy the window or quit the app.
-      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await closeWindowFromTitleBar(page);
       await expect
         .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainAlive?.())))
         .toBe(true);
@@ -230,16 +231,6 @@ async function waitForSpotlightPage(app: ElectronApplication, timeoutMs: number)
     urls: BrowserWindow.getAllWindows().map((w) => ({ url: w.webContents.getURL(), visible: w.isVisible() }))
   }));
   throw new Error(`Spotlight window did not appear. diag=${JSON.stringify(diag)}`);
-}
-
-function resolveElectronExecutable(): string {
-  return path.join(
-    rootDir,
-    "node_modules",
-    "electron",
-    "dist",
-    process.platform === "win32" ? "electron.exe" : "electron"
-  );
 }
 
 async function launchJasmine(label: string): Promise<SpotlightHarness> {
