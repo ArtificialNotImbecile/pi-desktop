@@ -59,7 +59,9 @@ export function useAppUpdater() {
   }, []);
 
   const openDownloadPage = useCallback(async () => {
-    await getBridge().openAppUpdateDownloadPage();
+    const next = await getBridge().openAppUpdateDownloadPage();
+    setState(next);
+    return next;
   }, []);
 
   return { state, loading, check, download, install, openDownloadPage };

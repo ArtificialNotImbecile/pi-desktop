@@ -1476,7 +1476,7 @@ export type JasmineApi = {
   checkForAppUpdate(): Promise<AppUpdateState>;
   downloadAppUpdate(): Promise<AppUpdateState>;
   installAppUpdate(): Promise<AppUpdateState>;
-  openAppUpdateDownloadPage(): Promise<void>;
+  openAppUpdateDownloadPage(): Promise<AppUpdateState>;
   onAppUpdateStateChanged(callback: (state: AppUpdateState) => void): () => void;
   resolveTerminalShell(): Promise<TerminalShellInfo>;
   startTerminal(request?: TerminalStartRequest): Promise<TerminalSession>;

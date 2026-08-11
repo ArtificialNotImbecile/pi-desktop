@@ -66,6 +66,18 @@ test.describe("Jasmine app updater", () => {
     await expect
       .poll(() => harness.app.evaluate(() => (globalThis as Record<string, string[]>).__openedExternally ?? []))
       .toEqual(["https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest"]);
+
+    // A browser hand-off that fails leaves the user with no other route, so the
+    // destination has to stay visible rather than vanish into a dropped promise.
+    await harness.app.evaluate(({ shell }) => {
+      shell.openExternal = async () => {
+        throw new Error("no usable browser handler");
+      };
+    });
+    await page.getByRole("button", { name: "Open download page" }).click();
+    const failure = page.locator(".about-update-error");
+    await expect(failure).toContainText("https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest");
+    await expect(failure).toContainText("no usable browser handler");
   });
 
   test("About reports an up-to-date installed build", async ({}, testInfo) => {

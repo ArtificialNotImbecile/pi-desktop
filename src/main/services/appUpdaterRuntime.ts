@@ -6,6 +6,7 @@ import type { AppUpdateInstallMode, AppUpdateState } from "../../shared/ipc.js";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  isUpdaterUsable,
   type AppUpdaterAdapter
 } from "./appUpdater.js";
 
@@ -67,10 +68,10 @@ async function resolveUpdater(): Promise<ResolvedUpdater> {
     const updater = (updaterModule.autoUpdater as AppUpdaterAdapter | undefined) ?? defaultExport?.autoUpdater ?? null;
     if (!updater) return { updater: null, installMode: "automatic" };
     applyFeedOverride(updater);
-    // A Linux build launched outside its AppImage, or any installation the
-    // platform updater refuses, reports itself inactive. Treat that as
-    // unsupported so About offers no dead "Check for updates" button.
-    if (updater.isUpdaterActive?.() === false) return { updater: null, installMode: "automatic" };
+    // A Linux build launched outside its AppImage is the one installation the
+    // platform updaters disown. Treat it as unsupported so About offers no dead
+    // "Check for updates" button. deb/rpm installs stay usable.
+    if (!isUpdaterUsable(updater)) return { updater: null, installMode: "automatic" };
     return { updater, installMode: await installModePromise };
   } catch (error) {
     console.warn("Failed to initialize Jasmine auto-update support:", error);

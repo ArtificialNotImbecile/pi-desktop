@@ -9,5 +9,13 @@ export function registerAppUpdaterIpc(): void {
   ipcMain.handle("updater:install", (): AppUpdateState => getAppUpdater().installUpdate());
   // The destination is fixed here rather than passed in, so the renderer cannot
   // turn this into a general "open any URL" capability.
-  ipcMain.handle("updater:openDownloadPage", (): Promise<void> => shell.openExternal(RELEASES_PAGE_URL));
+  ipcMain.handle("updater:openDownloadPage", async (): Promise<AppUpdateState> => {
+    const updater = getAppUpdater();
+    try {
+      await shell.openExternal(RELEASES_PAGE_URL);
+      return updater.getState();
+    } catch (error) {
+      return updater.reportDownloadPageFailure(error, RELEASES_PAGE_URL);
+    }
+  });
 }

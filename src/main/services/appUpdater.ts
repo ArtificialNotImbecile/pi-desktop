@@ -215,6 +215,14 @@ export class AppUpdateService {
     return this.getState();
   }
 
+  // The download page is the only route a manual-install build has, so a failed
+  // hand-off to the browser has to surface rather than vanish into a dropped
+  // promise. The destination rides along so it can still be copied by hand.
+  reportDownloadPageFailure(error: unknown, url: string): AppUpdateState {
+    this.setError(new Error(`Could not open the download page. Visit ${url} — ${safeUpdateError(error)}`));
+    return this.getState();
+  }
+
   private setError(error: unknown): void {
     this.updateState({ phase: "error", error: safeUpdateError(error) });
   }
@@ -223,6 +231,16 @@ export class AppUpdateService {
     this.state = { ...this.state, ...patch };
     this.options.broadcast(this.getState());
   }
+}
+
+// Only electron-updater's AppImageUpdater reports itself inactive, and only
+// when the build was started outside its AppImage. A deb install resolves to
+// DebUpdater, which inherits the base "packaged is enough" answer, so it stays
+// usable; Windows and macOS updaters do not implement the probe at all. Absent
+// means usable — never treat a missing probe as a refusal.
+export function isUpdaterUsable(updater: AppUpdaterAdapter | null): boolean {
+  if (!updater) return false;
+  return updater.isUpdaterActive?.() !== false;
 }
 
 export function createInitialState(

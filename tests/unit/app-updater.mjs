@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  isUpdaterUsable,
   safeUpdateError
 } from "../../dist/main/main/services/appUpdater.js";
 
@@ -10,6 +11,8 @@ await testManualUpdateLifecycle();
 await testUpToDateAndRetryableError();
 await testInactiveInstallationCheck();
 await testManualInstallMode();
+await testDownloadPageFailureIsVisible();
+testUpdaterUsability();
 testSecretRedaction();
 
 console.log("app updater unit smoke passed");
@@ -137,6 +140,35 @@ async function testInactiveInstallationCheck() {
   assert.equal(checked.phase, "error");
   assert.match(checked.error || "", /cannot install updates automatically/);
   assert.equal((await service.checkForUpdates()).phase, "error");
+}
+
+// Only an AppImage build started outside its AppImage disowns itself. A deb
+// install resolves to DebUpdater, which never implements the probe and must stay
+// usable, and the Windows/macOS updaters do not implement it either -- so a
+// missing probe can never be read as a refusal.
+function testUpdaterUsability() {
+  assert.equal(isUpdaterUsable(null), false);
+  assert.equal(isUpdaterUsable(new FakeAppUpdater("available")), true, "an adapter without the probe stays usable");
+  assert.equal(isUpdaterUsable({ isUpdaterActive: () => true }), true);
+  assert.equal(isUpdaterUsable({ isUpdaterActive: () => false }), false, "only an explicit refusal disables updates");
+}
+
+// The download page is a manual-install build's only route forward, so a failed
+// hand-off to the browser has to reach the user instead of vanishing.
+async function testDownloadPageFailureIsVisible() {
+  const service = new AppUpdateService({
+    updater: new FakeAppUpdater("available", "2.0.0"),
+    currentVersion: "1.2.3",
+    installMode: "manual",
+    broadcast() {}
+  });
+  const failed = service.reportDownloadPageFailure(
+    new Error("no handler"),
+    "https://example.test/releases/latest"
+  );
+  assert.equal(failed.phase, "error");
+  assert.match(failed.error || "", /https:\/\/example\.test\/releases\/latest/);
+  assert.match(failed.error || "", /no handler/);
 }
 
 function testSecretRedaction() {
