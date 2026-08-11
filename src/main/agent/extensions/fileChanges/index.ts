@@ -107,7 +107,13 @@ interface WatchCandidate {
 interface RunState {
   cwd: string;
   startedAt: string;
-  /** Wall clock at run start, sub-millisecond, for comparison against file birth times. */
+  /**
+   * Wall clock at run start, for comparison against file birth times. It has to be
+   * read from the same clock the filesystem stamps files with, so a reading derived
+   * from performance.timeOrigin cannot be used however much finer it looks: that one
+   * is anchored at process start and keeps drifting away from the wall clock every
+   * time the system clock is adjusted underneath it.
+   */
   watchBaselineMs: number;
   mode: FileChangeTrackingMode;
   watchRoot?: string;
@@ -252,7 +258,7 @@ async function beginRun(
   const run: RunState = {
     cwd: path.resolve(ctx.cwd),
     startedAt: new Date().toISOString(),
-    watchBaselineMs: performance.timeOrigin + performance.now(),
+    watchBaselineMs: Date.now(),
     mode: options.trackingMode ?? "managed-tools-only",
     watchCandidates: new Map(),
     repository: null,
@@ -595,10 +601,19 @@ function recordWatchEvent(run: RunState, eventPath: string, type: "create" | "up
  * path is still on disk, which holds for a replayed create: the delete that would
  * remove it arrives later. A filesystem that does not record a birth time reports
  * 0, and that stays out of the comparison so the create is taken at face value.
+ *
+ * The grace period covers files written in the moments around the run start, where
+ * timestamp resolution and clock skew decide the comparison rather than the actual
+ * order of events. It resolves that ambiguity toward pre-existing, because a file
+ * wrongly read as created loses its deletion from the capture without a trace,
+ * while one wrongly read as pre-existing at worst reports a short-lived file that
+ * a reader can see and dismiss. Tool-written files land far outside this window.
  */
+const WATCH_BIRTH_GRACE_MS = 250;
+
 function existedBeforeRun(run: RunState, stats: Stats | undefined): boolean {
   if (!stats) return false;
-  return stats.birthtimeMs > 0 && stats.birthtimeMs < run.watchBaselineMs;
+  return stats.birthtimeMs > 0 && stats.birthtimeMs < run.watchBaselineMs + WATCH_BIRTH_GRACE_MS;
 }
 
 function watcherStatus(candidate: WatchCandidate, exists: boolean): "added" | "modified" | "deleted" | null {
