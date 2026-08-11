@@ -270,7 +270,8 @@ async function startApplication(): Promise<void> {
         isMainVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
         isMainAlive: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
         hasTray: () => Boolean(tray),
-        iconSize: () => trayIconSize
+        iconSize: () => trayIconSize,
+        clickListenerCount: () => (tray ? tray.listenerCount("click") + tray.listenerCount("double-click") : 0)
       };
       (globalThis as { __jasmineWorkingNotifications?: unknown }).__jasmineWorkingNotifications = {
         list: () => harnessWorkingNotifications.map((item) => item.notification),
@@ -398,8 +399,15 @@ function createTray(): void {
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("Jasmine");
   refreshTrayMenu();
-  tray.on("click", () => showMainWindow());
-  tray.on("double-click", () => showMainWindow());
+  // Windows notification-area icons open the app on a left click and keep the
+  // menu on the right button, so the app has to bind the click itself. A macOS
+  // status item carries no such split: one click belongs to the menu, which
+  // already offers Open Jasmine, and opening the window from here as well took
+  // that choice away from the menu before it could be read.
+  if (process.platform !== "darwin") {
+    tray.on("click", () => showMainWindow());
+    tray.on("double-click", () => showMainWindow());
+  }
 }
 
 function refreshTrayMenu(): void {
