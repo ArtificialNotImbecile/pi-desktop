@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AppUpdateState } from "../../shared/ipc.js";
+import type { AppUpdateInstallMode, AppUpdateState } from "../../shared/ipc.js";
 
 type UpdateInfo = {
   version: string;
@@ -29,11 +29,17 @@ export interface AppUpdaterAdapter {
   checkForUpdates(): Promise<UpdateCheckResult>;
   downloadUpdate(): Promise<string[]>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  // Present on electron-updater's per-platform updaters. It reports whether the
+  // running installation can install updates at all — a Linux build started
+  // outside its AppImage answers false and silently resolves checks to null.
+  isUpdaterActive?(): boolean;
+  setFeedURL?(options: unknown): void;
 }
 
 export type AppUpdateServiceOptions = {
   updater: AppUpdaterAdapter | null;
   currentVersion: string;
+  installMode?: AppUpdateInstallMode;
   broadcast(state: AppUpdateState): void;
   beforeInstall?(): void;
 };
@@ -44,7 +50,11 @@ export class AppUpdateService {
   private downloadPromise: Promise<AppUpdateState> | null = null;
 
   constructor(private readonly options: AppUpdateServiceOptions) {
-    this.state = createInitialState(options.currentVersion, Boolean(options.updater));
+    this.state = createInitialState(
+      options.currentVersion,
+      Boolean(options.updater),
+      options.installMode ?? "automatic"
+    );
     if (!options.updater) return;
 
     options.updater.autoDownload = false;
@@ -113,21 +123,27 @@ export class AppUpdateService {
       .then((result) => {
         // The real updater emits the availability event before this promise
         // resolves. This fallback keeps deterministic adapters equally useful.
-        if (this.state.phase === "checking" && result) {
-          this.updateState(result.isUpdateAvailable
-            ? {
-                phase: "available",
-                availableVersion: result.updateInfo.version,
-                lastCheckedAt: new Date().toISOString(),
-                error: null
-              }
-            : {
-                phase: "up-to-date",
-                availableVersion: null,
-                lastCheckedAt: new Date().toISOString(),
-                error: null
-              });
+        if (this.state.phase !== "checking") return this.getState();
+        if (!result) {
+          // electron-updater resolves null instead of raising when the running
+          // installation cannot update itself; without this the UI would hang
+          // on "checking" forever.
+          this.setError(new Error("This installation cannot install updates automatically."));
+          return this.getState();
         }
+        this.updateState(result.isUpdateAvailable
+          ? {
+              phase: "available",
+              availableVersion: result.updateInfo.version,
+              lastCheckedAt: new Date().toISOString(),
+              error: null
+            }
+          : {
+              phase: "up-to-date",
+              availableVersion: null,
+              lastCheckedAt: new Date().toISOString(),
+              error: null
+            });
         return this.getState();
       })
       .catch((error: unknown) => {
@@ -143,6 +159,10 @@ export class AppUpdateService {
   async downloadUpdate(): Promise<AppUpdateState> {
     if (!this.options.updater) return this.getState();
     if (this.downloadPromise) return this.downloadPromise;
+    if (this.state.installMode === "manual") {
+      this.setError(new Error("This build cannot install updates itself; download the new version instead."));
+      return this.getState();
+    }
     if (this.state.phase !== "available") {
       this.setError(new Error("Check for an available update before downloading."));
       return this.getState();
@@ -175,6 +195,10 @@ export class AppUpdateService {
 
   installUpdate(): AppUpdateState {
     if (!this.options.updater) return this.getState();
+    if (this.state.installMode === "manual") {
+      this.setError(new Error("This build cannot install updates itself; download the new version instead."));
+      return this.getState();
+    }
     if (this.state.phase !== "downloaded") {
       this.setError(new Error("Download the update before installing it."));
       return this.getState();
@@ -191,6 +215,14 @@ export class AppUpdateService {
     return this.getState();
   }
 
+  // The download page is the only route a manual-install build has, so a failed
+  // hand-off to the browser has to surface rather than vanish into a dropped
+  // promise. The destination rides along so it can still be copied by hand.
+  reportDownloadPageFailure(error: unknown, url: string): AppUpdateState {
+    this.setError(new Error(`Could not open the download page. Visit ${url} — ${safeUpdateError(error)}`));
+    return this.getState();
+  }
+
   private setError(error: unknown): void {
     this.updateState({ phase: "error", error: safeUpdateError(error) });
   }
@@ -201,10 +233,25 @@ export class AppUpdateService {
   }
 }
 
-export function createInitialState(currentVersion: string, supported: boolean): AppUpdateState {
+// Only electron-updater's AppImageUpdater reports itself inactive, and only
+// when the build was started outside its AppImage. A deb install resolves to
+// DebUpdater, which inherits the base "packaged is enough" answer, so it stays
+// usable; Windows and macOS updaters do not implement the probe at all. Absent
+// means usable — never treat a missing probe as a refusal.
+export function isUpdaterUsable(updater: AppUpdaterAdapter | null): boolean {
+  if (!updater) return false;
+  return updater.isUpdaterActive?.() !== false;
+}
+
+export function createInitialState(
+  currentVersion: string,
+  supported: boolean,
+  installMode: AppUpdateInstallMode = "automatic"
+): AppUpdateState {
   return {
     phase: supported ? "idle" : "unsupported",
     supported,
+    installMode,
     currentVersion,
     availableVersion: null,
     progressPercent: null,

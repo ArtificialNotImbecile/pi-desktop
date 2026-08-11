@@ -73,11 +73,25 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 
 Download the appropriate asset from [GitHub Releases](https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest) and verify it against the published `SHA256SUMS.txt`.
 
-- **Windows x64:** use `Jasmine-Setup-<version>-x64.exe`. The installer is not code-signed, so Windows may show a SmartScreen warning. The in-app updater currently supports Windows releases.
+- **Windows x64:** use `Jasmine-Setup-<version>-x64.exe`. The installer is not code-signed, so Windows may show a SmartScreen warning.
 - **Linux x64:** use `Jasmine-<version>-linux-x86_64.AppImage` for a portable launch or `Jasmine-<version>-linux-amd64.deb` on Debian-based distributions. The AppImage may need `chmod +x` before its first launch.
 - **Apple Silicon macOS:** use `Jasmine-<version>-mac-arm64.dmg`.
 
 The macOS builds use ad-hoc signing and are not notarized. Trusted users may need to try opening Jasmine once, then choose **System Settings → Privacy & Security → Open Anyway**. Managed Macs may prohibit this override.
+
+### Software updates
+
+**Settings → About** checks GitHub Releases on every installed platform. What it can do from there depends on how the platform installs updates:
+
+| Platform | Check | Download and install in place |
+| --- | --- | --- |
+| Windows (NSIS installer) | yes | yes |
+| Linux (AppImage, deb) | yes | yes |
+| macOS | yes | no — opens the download page instead |
+
+macOS is the exception because Squirrel.Mac validates a downloaded bundle against the running app's designated code-signing requirement. Jasmine's ad-hoc signature pins that requirement to one build's `cdhash`, so every later version is rejected with `SQRLCodeSignatureErrorDomain`. Signing the macOS build with a Developer ID identity is the only fix; the app detects a properly signed bundle at startup and switches itself to in-place installation with no further changes.
+
+A Linux build launched outside its AppImage cannot replace itself either, and reports updates as unsupported rather than offering a button that cannot work.
 
 ## Requirements for local development
 

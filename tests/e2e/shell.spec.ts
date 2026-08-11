@@ -425,6 +425,20 @@ test.describe("Jasmine app shell", () => {
     expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.viewportHeight - 4);
   });
 
+  test("the tray icon stays a status-area icon instead of the full-size app logo", async () => {
+    // Windows scales its .ico down on its own and keeps the untouched icon.
+    test.skip(process.platform === "win32", "Windows sizes tray icons itself");
+    // macOS and most Linux panels render the tray image at its own size, so the
+    // 1024px app logo stretched the status item across the whole menu bar.
+    const size = await harness.app.evaluate(() =>
+      (globalThis as Record<string, any>).__jasmineTray?.iconSize?.() as { width: number; height: number } | null
+    );
+    expect(size).not.toBeNull();
+    expect(size!.width).toBeGreaterThan(0);
+    expect(size!.width).toBeLessThanOrEqual(32);
+    expect(size!.height).toBeLessThanOrEqual(32);
+  });
+
   test("window close minimizes to the tray and only tray exit quits the app", async () => {
     await closeWindowFromTitleBar(harness.page);
     // Closing hides the window into the system tray; the app stays resident so

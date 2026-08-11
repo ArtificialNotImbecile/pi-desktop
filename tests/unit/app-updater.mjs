@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  isUpdaterUsable,
   safeUpdateError
 } from "../../dist/main/main/services/appUpdater.js";
 
 await testUnsupportedDevelopmentBuild();
 await testManualUpdateLifecycle();
 await testUpToDateAndRetryableError();
+await testInactiveInstallationCheck();
+await testManualInstallMode();
+await testDownloadPageFailureIsVisible();
+testUpdaterUsability();
 testSecretRedaction();
 
 console.log("app updater unit smoke passed");
@@ -21,6 +26,7 @@ async function testUnsupportedDevelopmentBuild() {
   assert.deepEqual(service.getState(), {
     phase: "unsupported",
     supported: false,
+    installMode: "automatic",
     currentVersion: "1.2.3",
     availableVersion: null,
     progressPercent: null,
@@ -83,6 +89,86 @@ async function testUpToDateAndRetryableError() {
   assert.equal(failed.phase, "error");
   assert.match(failed.error || "", /Fake update check failed/);
   assert.equal((await failing.checkForUpdates()).phase, "error");
+}
+
+// An ad-hoc signed macOS build can see a new version but cannot install it, so
+// About sends the user to the download page. Both in-place steps must refuse
+// rather than leave a half-applied update behind.
+async function testManualInstallMode() {
+  const updater = new FakeAppUpdater("available", "2.0.0");
+  const service = new AppUpdateService({
+    updater,
+    currentVersion: "1.2.3",
+    installMode: "manual",
+    broadcast() {}
+  });
+
+  assert.equal(service.getState().installMode, "manual");
+  const checked = await service.checkForUpdates();
+  assert.equal(checked.phase, "available");
+  assert.equal(checked.availableVersion, "2.0.0");
+
+  const downloaded = await service.downloadUpdate();
+  assert.equal(downloaded.phase, "error");
+  assert.match(downloaded.error || "", /cannot install updates itself/);
+  assert.equal(service.installUpdate().phase, "error");
+  assert.equal(updater.quitAndInstallCalls, 0);
+}
+
+// electron-updater resolves null rather than raising when the installation
+// cannot update itself — a Linux build started outside its AppImage, say. The
+// check must settle on a retryable error instead of hanging on "checking".
+async function testInactiveInstallationCheck() {
+  const service = new AppUpdateService({
+    updater: {
+      autoDownload: true,
+      autoInstallOnAppQuit: true,
+      allowPrerelease: true,
+      on() {},
+      async checkForUpdates() {
+        return null;
+      },
+      async downloadUpdate() {
+        return [];
+      },
+      quitAndInstall() {}
+    },
+    currentVersion: "1.2.3",
+    broadcast() {}
+  });
+  const checked = await service.checkForUpdates();
+  assert.equal(checked.phase, "error");
+  assert.match(checked.error || "", /cannot install updates automatically/);
+  assert.equal((await service.checkForUpdates()).phase, "error");
+}
+
+// Only an AppImage build started outside its AppImage disowns itself. A deb
+// install resolves to DebUpdater, which never implements the probe and must stay
+// usable, and the Windows/macOS updaters do not implement it either -- so a
+// missing probe can never be read as a refusal.
+function testUpdaterUsability() {
+  assert.equal(isUpdaterUsable(null), false);
+  assert.equal(isUpdaterUsable(new FakeAppUpdater("available")), true, "an adapter without the probe stays usable");
+  assert.equal(isUpdaterUsable({ isUpdaterActive: () => true }), true);
+  assert.equal(isUpdaterUsable({ isUpdaterActive: () => false }), false, "only an explicit refusal disables updates");
+}
+
+// The download page is a manual-install build's only route forward, so a failed
+// hand-off to the browser has to reach the user instead of vanishing.
+async function testDownloadPageFailureIsVisible() {
+  const service = new AppUpdateService({
+    updater: new FakeAppUpdater("available", "2.0.0"),
+    currentVersion: "1.2.3",
+    installMode: "manual",
+    broadcast() {}
+  });
+  const failed = service.reportDownloadPageFailure(
+    new Error("no handler"),
+    "https://example.test/releases/latest"
+  );
+  assert.equal(failed.phase, "error");
+  assert.match(failed.error || "", /https:\/\/example\.test\/releases\/latest/);
+  assert.match(failed.error || "", /no handler/);
 }
 
 function testSecretRedaction() {

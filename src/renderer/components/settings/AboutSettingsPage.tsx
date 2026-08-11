@@ -1,4 +1,4 @@
-import type { AppUpdatePhase } from "../../../shared/ipc";
+import type { AppUpdateInstallMode, AppUpdatePhase } from "../../../shared/ipc";
 import { useAppUpdater } from "../../hooks/useAppUpdater";
 import { useI18n, type I18nKey } from "../../i18n";
 import { Button } from "../ui";
@@ -9,7 +9,7 @@ export function AboutSettingsPage() {
   const { t } = useI18n();
   const updater = useAppUpdater();
   const { state } = updater;
-  const statusKey = updateStatusKey(state.phase);
+  const statusKey = updateStatusKey(state.phase, state.installMode);
   const progress = state.progressPercent === null ? 0 : Math.min(100, Math.max(0, state.progressPercent));
   const version = state.currentVersion || t("app.loading");
 
@@ -62,6 +62,15 @@ export function AboutSettingsPage() {
 
   function renderUpdateAction() {
     if (state.phase === "available") {
+      // Builds that cannot replace themselves still report the new version;
+      // the download page is the only action that can finish the job.
+      if (state.installMode === "manual") {
+        return (
+          <Button size="sm" variant="primary" onClick={() => void updater.openDownloadPage()}>
+            {t("settings.about.openDownloadPage")}
+          </Button>
+        );
+      }
       return (
         <Button size="sm" variant="primary" onClick={() => void updater.download()}>
           {t("settings.about.downloadUpdate")}
@@ -96,7 +105,8 @@ export function AboutSettingsPage() {
   }
 }
 
-function updateStatusKey(phase: AppUpdatePhase): I18nKey {
+function updateStatusKey(phase: AppUpdatePhase, installMode: AppUpdateInstallMode): I18nKey {
+  if (phase === "available" && installMode === "manual") return "settings.about.updateAvailableManual";
   const keys: Record<AppUpdatePhase, I18nKey> = {
     unsupported: "settings.about.updateUnsupported",
     idle: "settings.about.updateIdle",

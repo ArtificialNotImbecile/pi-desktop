@@ -5,6 +5,7 @@ import { getBridge } from "../desktopApi";
 const INITIAL_STATE: AppUpdateState = {
   phase: "idle",
   supported: false,
+  installMode: "automatic",
   currentVersion: "",
   availableVersion: null,
   progressPercent: null,
@@ -57,5 +58,11 @@ export function useAppUpdater() {
     return next;
   }, []);
 
-  return { state, loading, check, download, install };
+  const openDownloadPage = useCallback(async () => {
+    const next = await getBridge().openAppUpdateDownloadPage();
+    setState(next);
+    return next;
+  }, []);
+
+  return { state, loading, check, download, install, openDownloadPage };
 }
