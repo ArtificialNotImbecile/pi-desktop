@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { statSync, type Stats } from "node:fs";
 import { lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -106,6 +107,8 @@ interface WatchCandidate {
 interface RunState {
   cwd: string;
   startedAt: string;
+  /** Wall clock at run start, sub-millisecond, for comparison against file birth times. */
+  watchBaselineMs: number;
   mode: FileChangeTrackingMode;
   watchRoot?: string;
   watchPhysicalRoot?: string;
@@ -249,6 +252,7 @@ async function beginRun(
   const run: RunState = {
     cwd: path.resolve(ctx.cwd),
     startedAt: new Date().toISOString(),
+    watchBaselineMs: performance.timeOrigin + performance.now(),
     mode: options.trackingMode ?? "managed-tools-only",
     watchCandidates: new Map(),
     repository: null,
@@ -568,11 +572,33 @@ function recordWatchEvent(run: RunState, eventPath: string, type: "create" | "up
   const key = normalizePathForIdentity(absolutePath);
   const current = run.watchCandidates.get(key);
   if (!current) {
-    run.watchCandidates.set(key, { path: absolutePath, first: type, last: type, deletedAfterCreate: false });
+    const stats = statSync(absolutePath, { throwIfNoEntry: false });
+    // The replay below also announces the watch root itself. A directory is a
+    // container for changes, never one of them, so it must not become a candidate.
+    if (stats?.isDirectory()) return;
+    // A create event does not prove the path appeared during this run. macOS
+    // FSEvents keeps no index of what a watched directory already held, so the
+    // first batch after subscribe replays a create for the root and for every
+    // entry inside it. Trusting that would file a pre-existing file as created,
+    // and its later deletion would then be dropped as a net create-then-delete.
+    // The file's own birth time is the ground truth for when it appeared.
+    const first = type === "create" && existedBeforeRun(run, stats) ? "update" : type;
+    run.watchCandidates.set(key, { path: absolutePath, first, last: type, deletedAfterCreate: false });
     return;
   }
   current.deletedAfterCreate = current.first === "create" && type === "delete";
   current.last = type;
+}
+
+/**
+ * Whether a path already existed when the run started. Only answerable while the
+ * path is still on disk, which holds for a replayed create: the delete that would
+ * remove it arrives later. A filesystem that does not record a birth time reports
+ * 0, and that stays out of the comparison so the create is taken at face value.
+ */
+function existedBeforeRun(run: RunState, stats: Stats | undefined): boolean {
+  if (!stats) return false;
+  return stats.birthtimeMs > 0 && stats.birthtimeMs < run.watchBaselineMs;
 }
 
 function watcherStatus(candidate: WatchCandidate, exists: boolean): "added" | "modified" | "deleted" | null {

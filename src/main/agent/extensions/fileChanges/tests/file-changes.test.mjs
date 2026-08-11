@@ -180,6 +180,31 @@ test("watcher mode observes create, update, and delete paths without an initial 
   });
 });
 
+test("watcher mode suppresses a file created and deleted inside one run and never reports the watch root", async () => {
+  await withTempDirectory(async (root) => {
+    const survivor = path.join(root, "survivor.txt");
+    await writeFile(survivor, "before\n");
+    const harness = createTrackingHarness(root, { trackingMode: "watcher", watchRoot: root });
+    await harness.emit("agent_start", { type: "agent_start" });
+    await delay(500);
+    // Born after the run started, so this one really is a net no-op. The
+    // pre-existing file next to it proves the two are told apart by birth time
+    // rather than by a create event macOS replays for both.
+    const transient = path.join(root, "transient.txt");
+    await writeFile(transient, "temporary\n");
+    await delay(1_000);
+    await rm(transient);
+    await delay(1_000);
+    await writeFile(survivor, "after\n");
+    await delay(1_500);
+    await harness.emit("agent_settled", { type: "agent_settled" });
+
+    const capture = harness.capture();
+    assert.deepEqual(capture.changes.map(({ path: filePath }) => filePath), ["survivor.txt"]);
+    assert.equal(capture.changes[0].status, "modified");
+  });
+});
+
 test("managed evidence wins over a duplicate watcher event", async () => {
   await withTempDirectory(async (root) => {
     const target = path.join(root, "both.txt");
