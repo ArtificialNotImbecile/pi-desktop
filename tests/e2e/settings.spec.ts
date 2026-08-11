@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import path from "node:path";
 import {
   baseLaunchEnv,
   clickCenter,
@@ -13,6 +12,7 @@ import {
   createRedSquarePng,
   createSshConfigFixture,
   enableWebSearchFallback,
+  executableFixtures,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -214,10 +214,10 @@ test.describe("Jasmine settings", () => {
 
   test("General language setting switches the shell between English and Chinese", async () => {
     const { page } = harness;
-    const systemRoot = process.env.SystemRoot || "C:\\Windows";
-    const notepadPath = path.join(systemRoot, "System32", "notepad.exe");
-    const powershellPath = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    const cmdPath = process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe");
+    // Same fixture the harness seeds discovery with, so these assertions stay
+    // true on every platform instead of hardcoding one OS's shell paths.
+    const [autoEditor, altEditor] = executableFixtures.editors;
+    const [autoTerminal, altTerminal] = executableFixtures.terminals;
 
     await startEmptyThread(page);
     await expect(page.locator(".empty-state h1")).toHaveText("Talk to yourself.");
@@ -227,12 +227,12 @@ test.describe("Jasmine settings", () => {
     const terminalRow = page.locator(".general-executable-row", { hasText: "Terminal shell" });
     const editorSelect = editorRow.locator('select[aria-label="Default text editor"]');
     const terminalSelect = terminalRow.locator('select[aria-label="Default terminal shell"]');
-    await expect(editorSelect.locator("option").first()).toHaveText("Auto-detect (VS Code)");
-    await expect(terminalSelect.locator("option").first()).toHaveText("Auto-detect (PowerShell)");
-    expect(await editorSelect.locator("option").allTextContents()).toEqual(expect.arrayContaining(["Auto-detect (VS Code)", "Notepad"]));
-    expect(await terminalSelect.locator("option").allTextContents()).toEqual(expect.arrayContaining(["Auto-detect (PowerShell)", "Command Prompt"]));
+    await expect(editorSelect.locator("option").first()).toHaveText(`Auto-detect (${autoEditor.label})`);
+    await expect(terminalSelect.locator("option").first()).toHaveText(`Auto-detect (${autoTerminal.label})`);
+    expect(await editorSelect.locator("option").allTextContents()).toEqual(expect.arrayContaining([`Auto-detect (${autoEditor.label})`, altEditor.label]));
+    expect(await terminalSelect.locator("option").allTextContents()).toEqual(expect.arrayContaining([`Auto-detect (${autoTerminal.label})`, altTerminal.label]));
     await expect(editorRow.locator('output[aria-label="Default text editor path"]')).toHaveText(process.execPath);
-    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(powershellPath);
+    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(autoTerminal.command);
     await expect(editorRow.locator('input[aria-label="Default text editor path"]')).toHaveCount(0);
     await expect(terminalRow.locator('input[aria-label="Default terminal shell path"]')).toHaveCount(0);
     await expect(editorRow.locator(".ui-settings-list-icon .icon")).toHaveCount(1);
@@ -243,13 +243,13 @@ test.describe("Jasmine settings", () => {
     await expect(artifactTrackingSelect).toHaveValue("managed-tools-only");
     await expect(artifactTrackingSelect.locator('option[value="managed-tools-only"]')).toHaveText("Managed tools only (recommended)");
     await artifactTrackingSelect.selectOption("watcher");
-    await editorSelect.selectOption(notepadPath);
-    await terminalSelect.selectOption(cmdPath);
-    await expect(editorRow.locator('output[aria-label="Default text editor path"]')).toHaveText(notepadPath);
-    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(cmdPath);
+    await editorSelect.selectOption(altEditor.command);
+    await terminalSelect.selectOption(altTerminal.command);
+    await expect(editorRow.locator('output[aria-label="Default text editor path"]')).toHaveText(altEditor.command);
+    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(altTerminal.command);
     await saveSettings(page);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).skillEditorPath)).toBe(notepadPath);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).terminalShellPath)).toBe(cmdPath);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).skillEditorPath)).toBe(altEditor.command);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).terminalShellPath)).toBe(altTerminal.command);
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).fileChangeTrackingMode)).toBe("watcher");
 
     await editorRow.getByRole("button", { name: "Choose app..." }).click();
@@ -262,7 +262,7 @@ test.describe("Jasmine settings", () => {
     await editorSelect.selectOption("");
     await terminalSelect.selectOption("");
     await expect(editorRow.locator('output[aria-label="Default text editor path"]')).toHaveText(process.execPath);
-    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(powershellPath);
+    await expect(terminalRow.locator('output[aria-label="Default terminal shell path"]')).toHaveText(autoTerminal.command);
 
     const languageSelect = page.locator('.settings-detail select[aria-label="Interface language"]');
     await expect(languageSelect).toHaveValue("en");

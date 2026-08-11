@@ -67,7 +67,13 @@ if (!singleInstanceLock) {
   app.quit();
 } else if (useSingleInstanceLock) {
   app.on("second-instance", () => {
-    showMainWindow();
+    // A repeat launch can land while this instance is still booting, and
+    // showing the window then throws "Cannot create BrowserWindow before app
+    // is ready". whenReady() resolves immediately once the app is up, so the
+    // common case still shows the window synchronously enough.
+    void app.whenReady().then(() => {
+      showMainWindow();
+    });
   });
 }
 
@@ -160,7 +166,11 @@ app.on("will-quit", () => {
   void stopChromeBridge().catch((error) => {
     console.warn("Failed to clean up Chrome bridge:", error);
   });
-  globalShortcut.unregisterAll();
+  // A launch that loses the single-instance lock quits before the app is ready,
+  // and globalShortcut throws when it is touched that early -- which surfaces
+  // as an "A JavaScript error occurred in the main process" dialog on what
+  // should be a silent handoff to the running instance.
+  if (app.isReady()) globalShortcut.unregisterAll();
   spotlightShortcutRegistered = false;
   if (tray) {
     tray.destroy();

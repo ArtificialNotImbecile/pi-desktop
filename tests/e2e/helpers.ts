@@ -2,6 +2,7 @@ import { expect } from "@playwright/test";
 import { _electron as electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -627,6 +628,54 @@ export async function quitElectron(electronApp: ElectronApplication): Promise<vo
   await electronApp.close().catch(() => undefined);
 }
 
+type ExecutableFixture = { label: string; command: string };
+
+// Discovery hands the first candidate straight to node-pty as the auto-detected
+// shell, so a path that does not exist reproduces the posix_spawnp failure this
+// fixture exists to avoid. POSIX hosts vary too much to hardcode -- zsh is the
+// macOS default but is absent from most Linux installs, and slim images ship
+// only /bin/sh -- so keep the preference order but take what is actually there.
+function presentFixtures(kind: string, candidates: ExecutableFixture[]): ExecutableFixture[] {
+  const present = candidates.filter((candidate) => existsSync(candidate.command));
+  if (present.length < 2) {
+    throw new Error(
+      `E2E needs two ${kind} candidates that exist on this host; only ${present.length} of ` +
+      `${candidates.map((candidate) => candidate.command).join(", ")} were found.`
+    );
+  }
+  return present.slice(0, 2);
+}
+
+// The executable pickers are seeded with fixed candidates so discovery never
+// depends on what happens to be installed.
+export const executableFixtures = process.platform === "win32"
+  ? (() => {
+      const systemRoot = process.env.SystemRoot || "C:\\Windows";
+      return {
+        editors: [
+          { label: "VS Code", command: process.execPath },
+          { label: "Notepad", command: path.join(systemRoot, "System32", "notepad.exe") }
+        ],
+        terminals: [
+          { label: "PowerShell", command: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") },
+          { label: "Command Prompt", command: process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe") }
+        ]
+      };
+    })()
+  : {
+      editors: presentFixtures("editor", [
+        { label: "VS Code", command: process.execPath },
+        { label: "Vi", command: "/usr/bin/vi" },
+        { label: "Vim", command: "/usr/bin/vim" },
+        { label: "Nano", command: "/usr/bin/nano" }
+      ]),
+      terminals: presentFixtures("terminal shell", [
+        { label: "Zsh", command: "/bin/zsh" },
+        { label: "Bash", command: "/bin/bash" },
+        { label: "Sh", command: "/bin/sh" }
+      ])
+    };
+
 export function baseLaunchEnv(userDataDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -645,18 +694,8 @@ export async function launchJasmine(label: string, existingUserDataDir?: string,
   const redSquarePath = await createRedSquarePng(userDataDir);
   const sshConfigPath = await createSshConfigFixture(userDataDir);
   const projectFolderPath = await createProjectFolderFixture(userDataDir);
-  const systemRoot = process.env.SystemRoot || "C:\\Windows";
-  const powershellPath = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const cmdPath = process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe");
-  const notepadPath = path.join(systemRoot, "System32", "notepad.exe");
-  const editorCandidates = JSON.stringify([
-    { label: "VS Code", command: process.execPath },
-    { label: "Notepad", command: notepadPath }
-  ]);
-  const terminalCandidates = JSON.stringify([
-    { label: "PowerShell", command: powershellPath },
-    { label: "Command Prompt", command: cmdPath }
-  ]);
+  const editorCandidates = JSON.stringify(executableFixtures.editors);
+  const terminalCandidates = JSON.stringify(executableFixtures.terminals);
 
   const executablePath = resolveElectronExecutable();
 
