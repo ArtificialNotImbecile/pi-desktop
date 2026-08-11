@@ -6,11 +6,20 @@
 
 | 流程 | 触发方式 | 运行内容 | 是否产生公开版本 |
 | --- | --- | --- | --- |
-| 普通 CI | 提交到 `main`，或创建/更新 Pull Request | Windows 编译、单元测试、Harness 规则和 E2E smoke | 否 |
+| 普通 CI | 提交到 `main`，或创建/更新 Pull Request | 仓库规则检查一次；Windows、Linux、Apple Silicon macOS 各自编译、单元测试和 E2E smoke | 否 |
 | 手动 Release 预构建 | GitHub Actions 中手动运行 `Release` | Windows、Linux、Apple Silicon macOS 原生构建、单元测试、安装包冒烟测试 | 否，只保留 7 天的 Actions Artifacts |
 | 正式 Release | 推送与 `package.json` 版本一致的 `v*.*.*` 标签 | 与手动预构建相同；三个目标平台全部通过后校验产物、生成 SHA-256 并创建 GitHub Release | 是 |
 
 普通提交不生成 NSIS、AppImage、deb 或 DMG。它负责尽快发现编译和核心回归，配置位于 `.github/workflows/ci.yml`。正式安装包由 `.github/workflows/release.yml` 生成，两套工作流不要合并成“每次提交都打全平台安装包”。
+
+普通 CI 分成两类 Job，边界是“结果会不会随操作系统变化”：
+
+- `Repository rules` 只跑 `harness:check`。这些检查只读 `docs/` 和源码，不依赖任何 npm 包，也不依赖编译产物，因此不安装依赖、不构建，跑一次即可，几十秒内就能报出文档与 UI 规则违规。
+- `Linux x64`、`Windows x64`、`macOS Apple Silicon` 三个 Job 跑 `npm ci`、`build`、`test:unit` 和 `test:e2e:smoke`。原生依赖必须在目标平台编译，路径解析、文件监听、终端和 Electron 窗口行为都随平台变化，这些必须逐平台重复执行，不要为了省时间合并成一个。
+
+不要把 `test:unit` 按“平台相关/无关”拆开。整个单元套件并行跑完只需十几秒，拆分省不下时间，却要求每个新增测试都正确归类，漏标就会静默地跑错 Job 或者哪个 Job 都不跑。
+
+在只有 Windows Job 的时期，macOS 专属缺陷只能等到发版才可能暴露，且未必暴露：`fileChanges` 的 watcher 在 macOS 上丢弃删除事件的缺陷在 v0.3.3 中已经存在，而当时的 macOS 发版 Job 恰好通过了。
 
 ## 日常开发
 
