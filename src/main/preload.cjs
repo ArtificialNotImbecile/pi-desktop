@@ -294,6 +294,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   installAppUpdate() {
     return ipcRenderer.invoke("updater:install");
   },
+  openAppUpdateDownloadPage() {
+    return ipcRenderer.invoke("updater:openDownloadPage");
+  },
   onAppUpdateStateChanged(callback) {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("updater:changed", listener);

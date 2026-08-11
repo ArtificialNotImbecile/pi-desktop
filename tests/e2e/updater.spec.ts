@@ -46,11 +46,26 @@ test.describe("Jasmine app updater", () => {
     });
     const { page } = harness;
 
+    // Stub the shell so the click is exercised for real without opening a
+    // browser. Asserting only that the button renders would miss a bridge that
+    // never reaches the main process.
+    await harness.app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as Record<string, unknown>).__openedExternally = opened;
+      shell.openExternal = async (url: string) => {
+        opened.push(url);
+      };
+    });
+
     await openSettings(page, "About");
     await page.getByRole("button", { name: "Check for updates" }).click();
     await expect(page.getByText("Version 9.9.9 is available on GitHub Releases.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open download page" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Download update" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Open download page" }).click();
+    await expect
+      .poll(() => harness.app.evaluate(() => (globalThis as Record<string, string[]>).__openedExternally ?? []))
+      .toEqual(["https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest"]);
   });
 
   test("About reports an up-to-date installed build", async ({}, testInfo) => {
