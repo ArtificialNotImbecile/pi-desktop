@@ -19,6 +19,7 @@ let workingRegistry: WorkingRegistry | null = null;
 let ipcRegistered = false;
 let mainWindow: BrowserWindow | null = null;
 let spotlightWindow: BrowserWindow | null = null;
+let trayIconSize: { width: number; height: number } | null = null;
 let spotlightShortcutRegistered = false;
 let focusOnWindowCreate = false;
 let tray: Tray | null = null;
@@ -268,7 +269,8 @@ async function startApplication(): Promise<void> {
         quit: () => quitApplication(),
         isMainVisible: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
         isMainAlive: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
-        hasTray: () => Boolean(tray)
+        hasTray: () => Boolean(tray),
+        iconSize: () => trayIconSize
       };
       (globalThis as { __jasmineWorkingNotifications?: unknown }).__jasmineWorkingNotifications = {
         list: () => harnessWorkingNotifications.map((item) => item.notification),
@@ -391,7 +393,8 @@ function quitApplication(): void {
 
 function createTray(): void {
   if (tray) return;
-  const icon = loadAppIcon();
+  const icon = loadTrayIcon();
+  trayIconSize = icon.isEmpty() ? null : icon.getSize();
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("Jasmine");
   refreshTrayMenu();
@@ -576,6 +579,31 @@ function resolvePreloadPath(): string {
     path.join(__dirname, "preload.js")
   ];
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
+}
+
+// Menu-bar/status-area icons are sized in points, and neither macOS nor most
+// Linux panels shrink an oversized source: handing them the 1024px app logo
+// stretches the status item across the whole bar. Windows scales its .ico down
+// on its own, so it keeps the untouched icon.
+const TRAY_ICON_POINTS = 18;
+
+function loadTrayIcon() {
+  const icon = loadAppIcon();
+  if (icon.isEmpty() || process.platform === "win32") return icon;
+
+  const scaled = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2]) {
+    const pixels = TRAY_ICON_POINTS * scaleFactor;
+    const representation = icon.resize({ width: pixels, height: pixels, quality: "best" });
+    if (representation.isEmpty()) continue;
+    scaled.addRepresentation({
+      scaleFactor,
+      width: TRAY_ICON_POINTS,
+      height: TRAY_ICON_POINTS,
+      dataURL: representation.toDataURL()
+    });
+  }
+  return scaled.isEmpty() ? icon.resize({ width: TRAY_ICON_POINTS, height: TRAY_ICON_POINTS }) : scaled;
 }
 
 function loadAppIcon() {
