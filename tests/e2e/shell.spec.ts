@@ -309,7 +309,13 @@ test.describe("Jasmine app shell", () => {
     await page.getByRole("button", { name: "Close settings" }).click();
     await expect.poll(() => navigationPath(page)).toMatch(/^\/(?:chats|projects)\//);
 
+    const routeBeforeNewChat = await navigationPath(page);
     await page.locator(".side-top").getByRole("button", { name: "New chat" }).click();
+    // The route keeps pointing at the previous thread for a tick after the
+    // click, and the generic /chats/ shape below matches that stale value too,
+    // so it cannot be used to synchronize. Wait for the switch to the new draft
+    // thread before pinning the right-panel routes to it.
+    await expect.poll(() => navigationPath(page)).not.toBe(routeBeforeNewChat);
     await expect.poll(() => navigationPath(page)).toMatch(/^\/(?:chats|projects)\//);
     const currentThreadRoute = await navigationPath(page);
 

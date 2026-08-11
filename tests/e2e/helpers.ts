@@ -627,6 +627,36 @@ export async function quitElectron(electronApp: ElectronApplication): Promise<vo
   await electronApp.close().catch(() => undefined);
 }
 
+// The executable pickers are seeded with fixed candidates so discovery never
+// depends on what happens to be installed. The first entry becomes the
+// auto-detected pick, and terminal tests spawn a real pty against it, so these
+// commands must exist on the host platform -- Windows paths make node-pty fail
+// with posix_spawnp on macOS/Linux.
+export const executableFixtures = process.platform === "win32"
+  ? (() => {
+      const systemRoot = process.env.SystemRoot || "C:\\Windows";
+      return {
+        editors: [
+          { label: "VS Code", command: process.execPath },
+          { label: "Notepad", command: path.join(systemRoot, "System32", "notepad.exe") }
+        ],
+        terminals: [
+          { label: "PowerShell", command: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") },
+          { label: "Command Prompt", command: process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe") }
+        ]
+      };
+    })()
+  : {
+      editors: [
+        { label: "VS Code", command: process.execPath },
+        { label: "Vi", command: "/usr/bin/vi" }
+      ],
+      terminals: [
+        { label: "Zsh", command: "/bin/zsh" },
+        { label: "Bash", command: "/bin/bash" }
+      ]
+    };
+
 export function baseLaunchEnv(userDataDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -645,18 +675,8 @@ export async function launchJasmine(label: string, existingUserDataDir?: string,
   const redSquarePath = await createRedSquarePng(userDataDir);
   const sshConfigPath = await createSshConfigFixture(userDataDir);
   const projectFolderPath = await createProjectFolderFixture(userDataDir);
-  const systemRoot = process.env.SystemRoot || "C:\\Windows";
-  const powershellPath = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const cmdPath = process.env.ComSpec || path.join(systemRoot, "System32", "cmd.exe");
-  const notepadPath = path.join(systemRoot, "System32", "notepad.exe");
-  const editorCandidates = JSON.stringify([
-    { label: "VS Code", command: process.execPath },
-    { label: "Notepad", command: notepadPath }
-  ]);
-  const terminalCandidates = JSON.stringify([
-    { label: "PowerShell", command: powershellPath },
-    { label: "Command Prompt", command: cmdPath }
-  ]);
+  const editorCandidates = JSON.stringify(executableFixtures.editors);
+  const terminalCandidates = JSON.stringify(executableFixtures.terminals);
 
   const executablePath = resolveElectronExecutable();
 

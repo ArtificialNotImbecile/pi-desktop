@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { closeWindowFromTitleBar, resolveElectronExecutable } from "./helpers.js";
+import { closeWindowFromTitleBar, resolveElectronExecutable } from "./helpers";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
