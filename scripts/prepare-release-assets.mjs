@@ -24,13 +24,20 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error(`A semantic version is required via --version; received ${JSON.stringify(version)}.`);
 }
 
+// The `latest*.yml` manifests are the in-app updater's feed: Windows reads
+// latest.yml, macOS latest-mac.yml (which requires the zip, not the dmg), and
+// Linux latest-linux.yml. Dropping one silently disables updates for that
+// platform, so they are verified alongside the installers.
 const expectedNames = [
   `Jasmine-Setup-${version}-x64.exe`,
   `Jasmine-Setup-${version}-x64.exe.blockmap`,
   "latest.yml",
   `Jasmine-${version}-linux-x86_64.AppImage`,
   `Jasmine-${version}-linux-amd64.deb`,
-  `Jasmine-${version}-mac-arm64.dmg`
+  "latest-linux.yml",
+  `Jasmine-${version}-mac-arm64.dmg`,
+  `Jasmine-${version}-mac-arm64.zip`,
+  "latest-mac.yml"
 ];
 
 const sourceFiles = await listFiles(sourceDirectory);

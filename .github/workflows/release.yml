@@ -43,14 +43,18 @@ jobs:
             assets: |
               release/v*/Jasmine-*-linux-x86_64.AppImage
               release/v*/Jasmine-*-linux-amd64.deb
+              release/v*/latest-linux.yml
           - id: mac-arm64
             label: macOS Apple Silicon
             os: macos-latest
             npm: npm
             unit: npm run test:unit
-            package: npx electron-builder --mac dmg --arm64 --publish never
+            package: npx electron-builder --mac dmg zip --arm64 --publish never
             smoke: npm run test:packaged
-            assets: release/v*/Jasmine-*-mac-arm64.dmg
+            assets: |
+              release/v*/Jasmine-*-mac-arm64.dmg
+              release/v*/Jasmine-*-mac-arm64.zip
+              release/v*/latest-mac.yml
 
     steps:
       - uses: actions/checkout@v5

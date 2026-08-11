@@ -525,9 +525,16 @@ export type AppUpdatePhase =
   | "installing"
   | "error";
 
+// "automatic" installs the update in place. "manual" means the platform can
+// report a newer version but cannot install it — macOS builds signed ad-hoc
+// rather than with a Developer ID identity, which Squirrel.Mac rejects — so the
+// app sends the user to the download page instead.
+export type AppUpdateInstallMode = "automatic" | "manual";
+
 export type AppUpdateState = {
   phase: AppUpdatePhase;
   supported: boolean;
+  installMode: AppUpdateInstallMode;
   currentVersion: string;
   availableVersion: string | null;
   progressPercent: number | null;
@@ -1469,6 +1476,7 @@ export type JasmineApi = {
   checkForAppUpdate(): Promise<AppUpdateState>;
   downloadAppUpdate(): Promise<AppUpdateState>;
   installAppUpdate(): Promise<AppUpdateState>;
+  openAppUpdateDownloadPage(): Promise<void>;
   onAppUpdateStateChanged(callback: (state: AppUpdateState) => void): () => void;
   resolveTerminalShell(): Promise<TerminalShellInfo>;
   startTerminal(request?: TerminalStartRequest): Promise<TerminalSession>;

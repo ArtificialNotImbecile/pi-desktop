@@ -18,7 +18,10 @@ const expectedNames = [
   "latest.yml",
   `Jasmine-${version}-linux-x86_64.AppImage`,
   `Jasmine-${version}-linux-amd64.deb`,
-  `Jasmine-${version}-mac-arm64.dmg`
+  "latest-linux.yml",
+  `Jasmine-${version}-mac-arm64.dmg`,
+  `Jasmine-${version}-mac-arm64.zip`,
+  "latest-mac.yml"
 ];
 
 try {
@@ -32,6 +35,13 @@ try {
     "all platform build jobs must disable electron-builder's implicit CI publishing");
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-x86_64.AppImage"));
   assert.ok(releaseWorkflow.includes("Jasmine-*-linux-amd64.deb"));
+  // The in-app updater reads a per-platform manifest; macOS additionally needs
+  // the zip, because Squirrel.Mac cannot install from a dmg.
+  assert.ok(releaseWorkflow.includes("--mac dmg zip --arm64"), "macOS packaging must emit the updater's zip artifact");
+  assert.ok(manifest.build.mac.target.some((target) => target.target === "zip"));
+  for (const manifestName of ["latest.yml", "latest-mac.yml", "latest-linux.yml"]) {
+    assert.ok(releaseWorkflow.includes(`release/v*/${manifestName}`), `${manifestName} must be uploaded`);
+  }
   assert.ok(releaseWorkflow.includes("actions/upload-artifact@v7"));
   assert.ok(releaseWorkflow.includes("actions/download-artifact@v8"));
 

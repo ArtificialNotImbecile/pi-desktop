@@ -8,6 +8,8 @@ import {
 await testUnsupportedDevelopmentBuild();
 await testManualUpdateLifecycle();
 await testUpToDateAndRetryableError();
+await testInactiveInstallationCheck();
+await testManualInstallMode();
 testSecretRedaction();
 
 console.log("app updater unit smoke passed");
@@ -21,6 +23,7 @@ async function testUnsupportedDevelopmentBuild() {
   assert.deepEqual(service.getState(), {
     phase: "unsupported",
     supported: false,
+    installMode: "automatic",
     currentVersion: "1.2.3",
     availableVersion: null,
     progressPercent: null,
@@ -83,6 +86,57 @@ async function testUpToDateAndRetryableError() {
   assert.equal(failed.phase, "error");
   assert.match(failed.error || "", /Fake update check failed/);
   assert.equal((await failing.checkForUpdates()).phase, "error");
+}
+
+// An ad-hoc signed macOS build can see a new version but cannot install it, so
+// About sends the user to the download page. Both in-place steps must refuse
+// rather than leave a half-applied update behind.
+async function testManualInstallMode() {
+  const updater = new FakeAppUpdater("available", "2.0.0");
+  const service = new AppUpdateService({
+    updater,
+    currentVersion: "1.2.3",
+    installMode: "manual",
+    broadcast() {}
+  });
+
+  assert.equal(service.getState().installMode, "manual");
+  const checked = await service.checkForUpdates();
+  assert.equal(checked.phase, "available");
+  assert.equal(checked.availableVersion, "2.0.0");
+
+  const downloaded = await service.downloadUpdate();
+  assert.equal(downloaded.phase, "error");
+  assert.match(downloaded.error || "", /cannot install updates itself/);
+  assert.equal(service.installUpdate().phase, "error");
+  assert.equal(updater.quitAndInstallCalls, 0);
+}
+
+// electron-updater resolves null rather than raising when the installation
+// cannot update itself — a Linux build started outside its AppImage, say. The
+// check must settle on a retryable error instead of hanging on "checking".
+async function testInactiveInstallationCheck() {
+  const service = new AppUpdateService({
+    updater: {
+      autoDownload: true,
+      autoInstallOnAppQuit: true,
+      allowPrerelease: true,
+      on() {},
+      async checkForUpdates() {
+        return null;
+      },
+      async downloadUpdate() {
+        return [];
+      },
+      quitAndInstall() {}
+    },
+    currentVersion: "1.2.3",
+    broadcast() {}
+  });
+  const checked = await service.checkForUpdates();
+  assert.equal(checked.phase, "error");
+  assert.match(checked.error || "", /cannot install updates automatically/);
+  assert.equal((await service.checkForUpdates()).phase, "error");
 }
 
 function testSecretRedaction() {

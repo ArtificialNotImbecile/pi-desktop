@@ -38,6 +38,21 @@ test.describe("Jasmine app updater", () => {
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppUpdateState()).phase)).toBe("installing");
   });
 
+  test("About offers the download page when the build cannot install updates itself", async ({}, testInfo) => {
+    harness = await launchJasmine(testInfo.title.replace(/\W+/g, "-"), undefined, {
+      JASMINE_E2E_FAKE_UPDATER: "available",
+      JASMINE_E2E_FAKE_UPDATE_VERSION: "9.9.9",
+      JASMINE_E2E_UPDATE_INSTALL_MODE: "manual"
+    });
+    const { page } = harness;
+
+    await openSettings(page, "About");
+    await page.getByRole("button", { name: "Check for updates" }).click();
+    await expect(page.getByText("Version 9.9.9 is available on GitHub Releases.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open download page" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download update" })).toHaveCount(0);
+  });
+
   test("About reports an up-to-date installed build", async ({}, testInfo) => {
     harness = await launchJasmine(testInfo.title.replace(/\W+/g, "-"), undefined, {
       JASMINE_E2E_FAKE_UPDATER: "up-to-date"

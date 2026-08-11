@@ -48,7 +48,7 @@
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "dist:win:dir": "npm run build && electron-builder --win dir --x64 --publish never",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --x64 --publish never",
-    "dist:mac:arm64": "npm run build && electron-builder --mac dmg --arm64 --publish never",
+    "dist:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64 --publish never",
     "dist:mac": "npm run build && electron-builder --mac dir --publish never",
     "test:packaged": "node scripts/smoke-packaged-app.mjs",
     "import:pi-sessions": "node --no-warnings scripts/import-pi-sessions.mjs",
@@ -167,6 +167,12 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "arm64"
           ]

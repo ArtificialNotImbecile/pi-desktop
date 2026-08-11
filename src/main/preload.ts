@@ -361,6 +361,9 @@ const api: JasmineApi = {
   installAppUpdate() {
     return ipcRenderer.invoke("updater:install");
   },
+  openAppUpdateDownloadPage() {
+    return ipcRenderer.invoke("updater:openDownloadPage");
+  },
   onAppUpdateStateChanged(callback: (state: AppUpdateState) => void) {
     const listener = (_event: Electron.IpcRendererEvent, payload: AppUpdateState) => callback(payload);
     ipcRenderer.on("updater:changed", listener);
