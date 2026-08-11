@@ -145,6 +145,37 @@ test.describe("Jasmine providers and models", () => {
     await testProvider(page);
   });
 
+  test("provider rows keep their label column and fill their control column in both API key modes", async () => {
+    const { page } = harness;
+
+    await openProviderSettings(page);
+    for (const mode of ["Env var", "Direct key"]) {
+      await page.getByRole("group", { name: "API key input type" }).getByRole("button", { name: mode, exact: true }).click();
+      const geometry = await page.evaluate(() => {
+        const row = Array.from(document.querySelectorAll(".settings-row")).find((candidate) => candidate.querySelector(".api-key-control"));
+        const copy = row?.querySelector(".ui-settings-row-copy") as HTMLElement | undefined;
+        const control = row?.querySelector(".settings-row-actions") as HTMLElement | undefined;
+        if (!copy || !control) return null;
+        return { copy: copy.getBoundingClientRect().width, gap: control.getBoundingClientRect().left - copy.getBoundingClientRect().right };
+      });
+      // The control column used to size to its content, and the longer Direct key
+      // hint then took the whole row: the label column collapsed to 0 and spilled
+      // its description across the control.
+      expect(geometry).not.toBeNull();
+      expect(geometry!.copy, `${mode} label column collapsed`).toBeGreaterThan(80);
+      expect(geometry!.gap, `${mode} label overlaps its control`).toBeGreaterThanOrEqual(0);
+    }
+
+    // A content-sized column also left inputs at the width an input asks for by
+    // default, which truncated the base URL.
+    const baseUrl = await page.locator("#provider-base-url").evaluate((node: HTMLInputElement) => ({
+      truncated: node.scrollWidth > node.clientWidth,
+      width: node.getBoundingClientRect().width
+    }));
+    expect(baseUrl.truncated).toBe(false);
+    expect(baseUrl.width).toBeGreaterThan(200);
+  });
+
   test("provider direct key saves masked and persists", async () => {
     const { page } = harness;
 

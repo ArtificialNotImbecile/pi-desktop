@@ -6933,6 +6933,13 @@ button.attachment-chip-main:hover span {
   user-select: none;
 }
 
+/* Maximized, the panel reaches the window's own top-left, where macOS draws its
+   traffic lights over anything beneath them. Only this state needs the reserve;
+   a floating panel sits clear of them and keeps its title where it belongs. */
+:root.platform-darwin .settings-panel.maximized .settings-window-bar {
+  padding-left: var(--titlebar-inset-left);
+}
+
 .settings-window-bar > strong {
   color: var(--ink);
   font-size: 12px;
@@ -7259,7 +7266,13 @@ button.attachment-chip-main:hover span {
 
 .settings-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* The control column is capped rather than auto. Sized to its content it took
+     whatever its widest child asked for -- a long hint under the API key control
+     took 447px of a 465px row -- and the label beside it, free to shrink to zero,
+     collapsed to exactly that and spilled its text across the control. The cap
+     also gives inputs a column to fill: at content width they settled on the
+     ~170px an input asks for by default, which truncated the base URL. */
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
   align-items: center;
   gap: 18px;
   min-height: 68px;
@@ -7271,7 +7284,11 @@ button.attachment-chip-main:hover span {
   border-bottom: 0;
 }
 
-.settings-row > div {
+/* Stacks the label over its description. The control cell is excluded because
+   this selector outranks .settings-row-actions below on specificity, and turning
+   that cell into a single auto-width grid column is what kept its inputs at the
+   ~170px an input asks for by default instead of filling the column. */
+.settings-row > div:not(.settings-row-actions) {
   display: grid;
   gap: 4px;
   min-width: 0;
