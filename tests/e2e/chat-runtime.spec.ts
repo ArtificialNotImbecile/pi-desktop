@@ -164,7 +164,7 @@ test.describe("Jasmine chat runtime", () => {
     expect(geometry.overlapsDelete).toBe(false);
   });
 
-  test("running composer queues editable follow-ups, deletes pending rows, steers after queueing, and ignores nearby non-control clicks @desktop-session", async () => {
+  test("running composer queues editable follow-ups, deletes pending rows, steers after queueing, and ignores nearby non-control clicks", async () => {
     const { page, userDataDir } = harness;
     await startEmptyThread(page);
 
