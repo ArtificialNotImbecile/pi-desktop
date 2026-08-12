@@ -147,8 +147,13 @@ export function addFileChangeCapture(db: SqlDatabase, input: AddFileChangeCaptur
     const before = revisionForStorage(change.before, redacted);
     const after = revisionForStorage(change.after, redacted);
     const diff = redacted ? { value: undefined, truncated: false } : boundText(change.unifiedDiff, FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
-    // Counted here so the list query never has to read diff text back out.
-    const lineStats = diff.value === undefined ? undefined : countDiffLines(diff.value);
+    // Counted here so the list query never has to read diff text back out, and
+    // counted from the diff as received: the storage cap below must not shrink
+    // the reported total. A producer that already truncated its own diff leaves
+    // no complete total to report, so none is stored.
+    const lineStats = redacted || change.unifiedDiff === undefined || change.diffTruncated
+      ? undefined
+      : countDiffLines(change.unifiedDiff);
     insertChange.run(
       randomUUID(),
       id,

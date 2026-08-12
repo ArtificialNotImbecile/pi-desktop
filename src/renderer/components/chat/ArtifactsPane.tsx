@@ -263,17 +263,22 @@ function CaptureBasisNote(props: { captures: FileChangeCaptureSummary[] }) {
   // An absent mode is not watcher evidence: it is a legacy checkpoint capture
   // or a target that was never tracked, which trackingLabel also keeps distinct.
   const modes = new Set(props.captures.map((capture) => capture.coverage.trackingMode));
-  const roots = uniqueStrings(props.captures.flatMap((capture) => (
-    capture.coverage.rootDetails?.length
-      ? capture.coverage.rootDetails.map((root) => root.physicalPath || root.path)
-      : capture.roots
-  )));
+  // A failed or unsupported capture still carries the paths it was asked
+  // about, but it observed none of them, so listing those as watched would
+  // promise evidence that was never collected.
+  const roots = uniqueStrings(props.captures
+    .filter((capture) => capture.coverage.status === "complete" || capture.coverage.status === "partial")
+    .flatMap((capture) => (
+      capture.coverage.rootDetails?.length
+        ? capture.coverage.rootDetails.map((root) => root.physicalPath || root.path)
+        : capture.roots
+    )));
   const excludes = uniqueStrings(props.captures.flatMap((capture) => capture.excludes));
   return (
     <div className="artifact-note" role="status">
       {modes.has("watcher") ? <p>Watcher mode is event-based: no initial directory scan runs, so an update can have an after-only preview.</p> : null}
       {modes.has("managed-tools-only") ? <p>Managed mode records approved write and edit targets only. Shell changes are not tracked.</p> : null}
-      {modes.has(undefined) ? <p>Captures with no recorded tracking mode reach only the roots listed on them.</p> : null}
+      {modes.has(undefined) ? <p>Some captures recorded no tracking mode. What they cover is whatever their own coverage state reports.</p> : null}
       <p>Captures are kept as run evidence. Editing the conversation does not roll files back.</p>
       {roots.length > 0 ? <p><strong>Watched</strong> <code>{roots.join(", ")}</code></p> : null}
       {excludes.length > 0 ? <p><strong>Excluded</strong> <code>{excludes.join(", ")}</code></p> : null}

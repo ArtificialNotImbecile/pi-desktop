@@ -630,6 +630,8 @@ try {
     const ingestOversizedText = "t".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 1);
     const ingestOversizedBase64 = "A".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 4);
     const ingestOversizedDiff = "d".repeat(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS + 1);
+    const oversizedDiffAddedLines = Math.ceil(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS / 3) + 10;
+    const completeOversizedDiff = `@@ -0,0 +1,${oversizedDiffAddedLines} @@\n${"+x\n".repeat(oversizedDiffAddedLines)}`;
     const boundedCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
       threadId: "legacy-thread",
       messageId: "file-change-message",
@@ -653,13 +655,49 @@ try {
           after: { sha256: "0".repeat(64), size: ingestOversizedBase64.length, encoding: "base64", content: ingestOversizedBase64 },
           unifiedDiff: ingestOversizedDiff,
           provenance: "observed-between-checkpoints"
+        },
+        {
+          status: "added",
+          kind: "text",
+          path: path.join(projectRoot, "oversized-complete.txt"),
+          root: projectRoot,
+          relativePath: "oversized-complete.txt",
+          after: { sha256: "9".repeat(64), size: completeOversizedDiff.length, encoding: "utf8", content: "x\n" },
+          unifiedDiff: completeOversizedDiff,
+          provenance: "observed-between-checkpoints"
+        },
+        {
+          status: "added",
+          kind: "text",
+          path: path.join(projectRoot, "producer-truncated.txt"),
+          root: projectRoot,
+          relativePath: "producer-truncated.txt",
+          after: { sha256: "8".repeat(64), size: 6, encoding: "utf8", content: "x\n" },
+          unifiedDiff: "@@ -0,0 +1,2 @@\n+x\n+y",
+          diffTruncated: true,
+          provenance: "observed-between-checkpoints"
         }]
       }
     });
+    const boundedChanges = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread")
+      .find((capture) => capture.id === boundedCaptureId).changes;
+    const completeOversized = boundedChanges.find((change) => change.relativePath === "oversized-complete.txt");
+    assert.equal(completeOversized.diffTruncated, true, "the storage cap must still be reported");
+    assert.deepEqual(
+      completeOversized.lineStats,
+      { added: oversizedDiffAddedLines, deleted: 0 },
+      "counts come from the diff as received, so the storage cap cannot shrink the reported total"
+    );
+    const producerTruncated = boundedChanges.find((change) => change.relativePath === "producer-truncated.txt");
+    assert.equal(
+      Object.hasOwn(producerTruncated, "lineStats"),
+      false,
+      "a diff the producer already cut short has no complete total to report"
+    );
     const boundedStored = legacyDb.prepare(`
       SELECT before_content, before_content_truncated, after_content, after_content_truncated,
              length(unified_diff) AS diff_chars, diff_truncated
-      FROM file_changes WHERE capture_id = ?
+      FROM file_changes WHERE capture_id = ? AND relative_path = 'oversized.dat'
     `).get(boundedCaptureId);
     assert.equal(boundedStored.before_content, null);
     assert.equal(boundedStored.before_content_truncated, 1);
@@ -667,8 +705,7 @@ try {
     assert.equal(boundedStored.after_content_truncated, 1);
     assert.equal(boundedStored.diff_chars, fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
     assert.equal(boundedStored.diff_truncated, 1);
-    const boundedStoredChangeId = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread")
-      .find((capture) => capture.id === boundedCaptureId).changes[0].id;
+    const boundedStoredChangeId = boundedChanges.find((change) => change.relativePath === "oversized.dat").id;
     const boundedStoredDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", boundedStoredChangeId);
     assert.equal(Object.hasOwn(boundedStoredDetail.before, "content"), false);
     assert.equal(boundedStoredDetail.before.contentTruncated, true);
