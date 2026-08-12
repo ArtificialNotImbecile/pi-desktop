@@ -40,3 +40,32 @@ For a localized change, run:
 Run the full `npm.cmd run test:e2e` when a change touches shared app shell, IPC contracts, persistence, provider/model behavior, chat runtime, or multiple workflows. Run `npm.cmd run harness:release` before a release.
 
 For app-level changes, launch Electron and confirm the page is nonblank. For persistence changes, restart Electron and verify restoration. For asynchronous refreshes, wait for the refreshed value rather than pre-existing DOM.
+
+## Change workflow
+
+Land every change through a pull request; do not commit to `main` directly.
+
+1. Open the PR, then request a review by commenting `@codex review`.
+2. Fix what the review finds, push, and request another review.
+3. Repeat until a review reports no findings on the current head commit.
+4. Merge only when that clean review and every CI check are green.
+
+### Reading Codex review results
+
+Codex reports through two different GitHub surfaces, and which one it uses depends on the outcome. Check both, every time:
+
+| Outcome | Where it lands | API |
+| --- | --- | --- |
+| Findings | a PR review whose findings are inline comments | `/pulls/:n/reviews` and `/pulls/:n/comments` |
+| No findings | an issue comment, `Codex Review: Didn't find any major issues` | `/issues/:n/comments` |
+
+Two failure modes follow from that split, and both have caused wrong conclusions:
+
+- A review's own body is boilerplate ("Here are some automated review suggestions"). Its findings live only in the inline comments, so a review is not clean just because its body says nothing.
+- A clean pass never adds an entry to the reviews list. Waiting for the review count to grow means waiting for a signal that cannot arrive.
+
+Decide by the `Reviewed commit:` SHA in the comment body, which tells you which head the result applies to. Never decide by a counter.
+
+## Compatibility
+
+Jasmine is pre-1.0 and in active development, so backward compatibility is not a design constraint. Migrations may drop retired tables and columns outright, removed features need no data-preservation path, and state a removed feature owned can go with it. Prefer the simplest change that leaves the app correct going forward over machinery that preserves data nothing reads.
