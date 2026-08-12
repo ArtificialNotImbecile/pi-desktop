@@ -170,6 +170,11 @@ test.describe("Jasmine chat runtime", () => {
 
     await page.locator(".rich-composer-editor").fill("slow response slow timeline queue base");
     await page.getByRole("button", { name: "Send" }).click();
+    // Split from the Stop assertion below on purpose. Send and Stop are the same
+    // button under two names, so a single "Stop response" expectation cannot say
+    // whether the send never registered or the reply already finished -- which
+    // is why the CI-only failure here was undiagnosable from the report alone.
+    await expect(page.locator(".user-bubble")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
 
     await page.locator(".rich-composer-editor").fill("queued follow up request");
