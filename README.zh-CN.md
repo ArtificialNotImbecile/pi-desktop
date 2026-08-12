@@ -62,10 +62,8 @@ Artifacts 面板把每次捕获保存为运行级别的观测账本，并在存�
 | ![外观设置](docs/assets/screenshots/settings-appearance.png) | ![记忆设置](docs/assets/screenshots/settings-memory.png) |
 | 技能 | 包 |
 | ![技能设置](docs/assets/screenshots/settings-skills.png) | ![包设置](docs/assets/screenshots/settings-packages.png) |
-| 提示词模板 | |
-| ![提示词模板设置](docs/assets/screenshots/settings-prompt-templates.png) | |
-| 活动 | 联网搜索 |
-| ![活动设置](docs/assets/screenshots/settings-activity.png) | ![联网搜索设置](docs/assets/screenshots/settings-web-search.png) |
+| 提示词模板 | 活动 |
+| ![提示词模板设置](docs/assets/screenshots/settings-prompt-templates.png) | ![活动设置](docs/assets/screenshots/settings-activity.png) |
 | 关于 | |
 | ![关于 Jasmine](docs/assets/screenshots/settings-about.png) | |
 
