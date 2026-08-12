@@ -30,7 +30,7 @@ export function registerIpc(context: IpcContext): void {
   registerMemoryIpc(context);
   registerPromptTemplateIpc(context);
   registerSkillIpc(context);
-  registerPluginIpc();
+  registerPluginIpc(context);
   registerAppSettingsIpc(context);
   registerAppUpdaterIpc();
   registerActivityIpc(context);

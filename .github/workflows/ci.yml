@@ -107,24 +107,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Bare Xvfb ships no window manager, and Electron's maximize, restore, and
+      # minimize are requests to one: without it isMaximized() and isMinimized()
+      # simply stay false. Openbox is the smallest thing that answers them.
       - name: Install Linux runtime dependencies
-        run: npx playwright install-deps
+        run: |
+          npx playwright install-deps
+          sudo apt-get update
+          sudo apt-get install -y openbox
 
       - name: Build application
         run: npm run build
 
-      # One worker, and not as an oversight. Two workers on this runner finished
-      # in 3.6m instead of 5.4m and failed five specs that pass serially --
-      # window maximize/restore, model-menu anchoring, message paging, and the
-      # Working notification, none of them touched by the change under test.
-      # That is the same starvation the Playwright config records for parallel
-      # Electron on macOS: each test drives its own Electron window against a
-      # 45s budget, and four vCPUs cannot give two of them a real one. The
-      # suite is serial by necessity, not by neglect, and a flaky gate is worth
-      # less than a slow one. Any future attempt to parallelize has to make the
-      # window-state specs robust first.
+      # One worker. Two finished in 3.6m against 5.4m but changed nothing else:
+      # the same five specs failed either way, so parallelism was never what
+      # broke them. Keep the slower, boring setting until the window-state specs
+      # are proven green here.
       - name: Run full E2E suite
-        run: xvfb-run -a npm run test:e2e
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" bash -c "openbox --sm-disable & npm run test:e2e"
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"

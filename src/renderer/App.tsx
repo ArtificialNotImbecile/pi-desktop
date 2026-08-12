@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WebSearchSettingsUpdateRequest, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
@@ -132,6 +132,15 @@ function App(props: { initialAppSettings: AppSettings }) {
     onError: setAppError,
     onToast: showToast
   });
+  // Saving Web Search moves the pi-web-access package in main, so the already
+  // loaded Packages list would keep showing its previous state until a manual
+  // refresh. Both controls have to agree the moment either one is used.
+  const updateWebSearchAndPackages = useCallback(async (request: WebSearchSettingsUpdateRequest) => {
+    const next = await webSearch.updateSettings(request);
+    if (next) await plugins.refresh();
+    return next;
+  }, [plugins.refresh, webSearch.updateSettings]);
+
   const askUserQuestion = useAskUserQuestion({
     onError: setAppError
   });
@@ -768,7 +777,7 @@ function App(props: { initialAppSettings: AppSettings }) {
             onTest={providers.testProvider}
             onFetchModels={providers.fetchProviderModels}
             onUpdateModel={providers.updateProviderModel}
-            onUpdateWebSearch={webSearch.updateSettings}
+            onUpdateWebSearch={updateWebSearchAndPackages}
           />
         </Suspense>
       )}

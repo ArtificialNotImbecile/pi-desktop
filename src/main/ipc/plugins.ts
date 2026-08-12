@@ -14,6 +14,7 @@ import {
 } from "../../shared/schemas.js";
 import {
   installPluginPackage,
+  isPiWebAccessSource,
   listPluginPackages,
   listPluginSkills,
   removePluginPackage,
@@ -21,7 +22,9 @@ import {
   setPluginPackageEnabled,
   updatePluginPackage
 } from "../services/plugins.js";
-export function registerPluginIpc(): void {
+import type { IpcContext } from "./context.js";
+
+export function registerPluginIpc(context: IpcContext): void {
   ipcMain.handle("plugins:list", async (): Promise<PluginPackageRecord[]> => {
     return listPluginPackages({
       userDataDir: app.getPath("userData")
@@ -51,7 +54,13 @@ export function registerPluginIpc(): void {
 
   ipcMain.handle("plugins:setEnabled", async (_event, request: PluginPackageEnableRequest): Promise<PluginPackageRecord[]> => {
     const parsed = pluginPackageEnableSchema.parse(request);
-    return setPluginPackageEnabled({ userDataDir: app.getPath("userData") }, parsed.source, parsed.enabled, parsed.scope);
+    const records = await setPluginPackageEnabled({ userDataDir: app.getPath("userData") }, parsed.source, parsed.enabled, parsed.scope);
+    // Web Search owns this package and every send re-syncs from that setting,
+    // so without this write-back, enabling here is reverted on the next turn.
+    if (isPiWebAccessSource(parsed.source)) {
+      context.getDatabase().updateWebSearchSettings({ enabled: parsed.enabled });
+    }
+    return records;
   });
 
   ipcMain.handle("plugins:resolveResources", async (): Promise<PluginResolveResourcesResponse> => {

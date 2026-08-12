@@ -728,7 +728,7 @@ function canonicalPluginSource(source: string): string {
   return source;
 }
 
-function isPiWebAccessSource(source: string | PackageSource): boolean {
+export function isPiWebAccessSource(source: string | PackageSource): boolean {
   const sourceValue = packageSourceString(source);
   const normalized = normalizeSourceForComparison(sourceValue);
   if (normalized === PI_WEB_ACCESS_PACKAGE_NAME || normalized.startsWith(`${PI_WEB_ACCESS_PACKAGE_NAME}@`)) return true;
