@@ -403,6 +403,7 @@ test.describe("Jasmine panels and tools", () => {
     await page.getByRole("button", { name: "About file change capture" }).click();
     await expect(page.locator(".artifact-note")).toContainText("no initial directory scan");
     await expect(page.locator(".artifact-note")).toContainText("run evidence");
+    await expect(page.locator(".artifact-note")).toContainText("Watched");
     await page.getByRole("button", { name: "About file change capture" }).click();
     await expect(page.locator(".artifact-note")).toHaveCount(0);
 
@@ -574,6 +575,9 @@ test.describe("Jasmine panels and tools", () => {
     const basisNote = page.locator(".artifact-pane > .artifact-note");
     await expect(basisNote).toContainText("Managed mode records approved write and edit targets only");
     await expect(basisNote).not.toContainText("Watcher mode");
+    // A managed target is stored as its parent directory; nothing else in that
+    // directory was observed, so it is not a watched root.
+    await expect(basisNote).not.toContainText("Watched");
 
     await modeOnlyRow.click();
     const modeOnlyDialog = page.getByRole("dialog", { name: "run.sh" });

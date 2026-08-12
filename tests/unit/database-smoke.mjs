@@ -254,6 +254,15 @@ try {
       );
       INSERT INTO file_changes (
         id, capture_id, ordinal, status, kind, path, root, relative_path,
+        before_sha256, before_size, after_sha256, after_size, unified_diff, diff_truncated, provenance, before_mode, after_mode
+      ) VALUES (
+        'pre-v37-truncated', 'pre-v36-capture', 2, 'modified', 'text', 'pre-v37-cut.txt', '.', 'pre-v37-cut.txt',
+        '${"5".repeat(64)}', 6, '${"6".repeat(64)}', 9,
+        '@@ -1 +1,2 @@' || char(10) || '-old' || char(10) || '+new',
+        1, 'observed-between-checkpoints', '100644', '100644'
+      );
+      INSERT INTO file_changes (
+        id, capture_id, ordinal, status, kind, path, root, relative_path,
         before_sha256, before_size, after_sha256, after_size, unified_diff, provenance, before_mode, after_mode
       ) VALUES (
         'pre-v37-change', 'pre-v36-capture', 1, 'modified', 'text', 'pre-v37.txt', '.', 'pre-v37.txt',
@@ -326,7 +335,12 @@ try {
       { diff_added_lines: null, diff_deleted_lines: null },
       "a row without a stored diff has no line stats to report"
     );
-    legacyDb.prepare("DELETE FROM file_changes WHERE id = 'pre-v37-change'").run();
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v37-truncated'").get() },
+      { diff_added_lines: null, diff_deleted_lines: null },
+      "a legacy row that kept only a prefix of its diff must not publish that prefix as a complete total"
+    );
+    legacyDb.prepare("DELETE FROM file_changes WHERE id IN ('pre-v37-change', 'pre-v37-truncated')").run();
     legacyDb.prepare("DELETE FROM file_change_captures WHERE id = 'pre-v36-capture'").run();
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_change_captures'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().exists_flag, 1);

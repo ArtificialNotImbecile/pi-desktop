@@ -263,14 +263,16 @@ function CaptureBasisNote(props: { captures: FileChangeCaptureSummary[] }) {
   // An absent mode is not watcher evidence: it is a legacy checkpoint capture
   // or a target that was never tracked, which trackingLabel also keeps distinct.
   const modes = new Set(props.captures.map((capture) => capture.coverage.trackingMode));
-  // A failed or unsupported capture still carries the paths it was asked
-  // about, but it observed none of them, so listing those as watched would
-  // promise evidence that was never collected.
+  // Only directory-wide observation belongs here. A failed or unsupported
+  // capture still carries the paths it was asked about but observed none of
+  // them, and a managed write/edit target is recorded as its parent directory
+  // even though nothing else in that directory was ever looked at — those
+  // files are the rows above, not a watched root.
   const roots = uniqueStrings(props.captures
     .filter((capture) => capture.coverage.status === "complete" || capture.coverage.status === "partial")
     .flatMap((capture) => (
-      capture.coverage.rootDetails?.length
-        ? capture.coverage.rootDetails.map((root) => root.physicalPath || root.path)
+      capture.coverage.rootDetails
+        ? capture.coverage.rootDetails.filter((root) => root.scope !== "file").map((root) => root.physicalPath || root.path)
         : capture.roots
     )));
   const excludes = uniqueStrings(props.captures.flatMap((capture) => capture.excludes));

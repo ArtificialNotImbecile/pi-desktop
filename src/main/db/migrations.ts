@@ -415,9 +415,12 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {
+  // A truncated row only kept a prefix of its diff, so counting it would
+  // publish a partial total as the file's complete one. Those rows keep no
+  // stats and fall back to byte weight, which matches what ingestion does now.
   const pending = db.prepare(`
     SELECT id FROM file_changes
-    WHERE unified_diff IS NOT NULL AND diff_added_lines IS NULL
+    WHERE unified_diff IS NOT NULL AND diff_added_lines IS NULL AND diff_truncated = 0
   `).all() as Array<{ id: string }>;
   if (pending.length === 0) return;
   // Diffs are read one at a time so a large history never has to be resident.

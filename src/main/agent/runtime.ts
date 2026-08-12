@@ -448,12 +448,17 @@ function mockPartialFileChangeCapture(cwd: string, startedAtMs: number): FileCha
       bashCoverage: "not-tracked",
       bashInvoked: true,
       reason: "A shell command wrote outside the approved write and edit targets.",
+      // Managed mode records the parent directory of each approved target, not
+      // a directory it observed. createCoverage builds exactly this shape.
       rootDetails: [{
         id: "mock-managed-root",
-        path: root,
-        physicalPath: root,
-        source: "cwd",
-        scope: "recursive",
+        path: path.join(root, "src"),
+        physicalPath: path.join(root, "src"),
+        source: "write-target",
+        scope: "file",
+        filePath: path.join(root, "src", "partial.ts"),
+        requestedPath: path.join(root, "src", "partial.ts"),
+        requestedFilePath: path.join(root, "src", "partial.ts"),
         bashCovered: false
       }],
       issues: [{
