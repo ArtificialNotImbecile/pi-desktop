@@ -275,25 +275,11 @@ try {
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     // Migration 38 retires the remote SSH feature, so its table must be gone
-    // even for databases that already carried connections. A manually added
-    // connection exists nowhere else, so it is archived before the drop.
+    // even for databases that already carried connections.
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'").get(), undefined);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 38").get().exists_flag, 1);
-    const retiredRemotes = JSON.parse(await readFile(path.join(path.dirname(legacyDbPath), "retired-remote-connections.json"), "utf8"));
-    assert.equal(retiredRemotes.connections.length, 1);
-    assert.deepEqual(
-      {
-        id: retiredRemotes.connections[0].id,
-        host: retiredRemotes.connections[0].host,
-        user: retiredRemotes.connections[0].user,
-        port: retiredRemotes.connections[0].port,
-        remote_path: retiredRemotes.connections[0].remote_path,
-        source: retiredRemotes.connections[0].source
-      },
-      { id: "legacy-remote", host: "example.internal", user: "dev", port: 2222, remote_path: "/srv/app", source: "manual" }
-    );
-    // Downgrading to a pre-38 build recreates the table and can collect new
-    // rows, so retirement must run again and keep both sets of records.
+    // Downgrading to a pre-38 build recreates the table, so the drop must run
+    // again instead of hiding behind the recorded migration version.
     legacyDb.exec(`
       CREATE TABLE remote_connections (
         id TEXT PRIMARY KEY,
@@ -317,8 +303,7 @@ try {
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'").get(), undefined);
-    const mergedRemotes = JSON.parse(await readFile(path.join(path.dirname(legacyDbPath), "retired-remote-connections.json"), "utf8"));
-    assert.deepEqual(mergedRemotes.connections.map((connection) => connection.id).sort(), ["downgrade-remote", "legacy-remote"]);
+
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
     assert.equal(typeof backfilled.project_id, "string");
     assert.deepEqual(JSON.parse(legacyDb.prepare("SELECT active_plugin_ids_json FROM chat_threads WHERE id = 'legacy-thread'").get().active_plugin_ids_json), []);

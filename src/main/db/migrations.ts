@@ -6,8 +6,6 @@ import { countDiffLines } from "./repositories/fileChanges.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
 import { readCanonicalPiBlockIndex, restoreCanonicalPiTimelineProjection } from "./canonicalPiTimelineRepair.js";
@@ -395,98 +393,11 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   if (!hasMigration(db, 37)) backfillFileChangeDiffLineStats(db);
   markMigration(db, 37, "per-file diff line stats", now);
   // The remote SSH feature is gone, so its table only holds rows nothing can
-  // read anymore. Manually added connections exist nowhere else, so they are
-  // written beside the database before the table goes. This runs on every
-  // launch rather than behind the version guard: downgrading to a pre-38 build
-  // recreates the table and can collect new rows, and those must be archived
-  // too instead of sitting in a table the current app cannot read.
-  if (retireRemoteConnections(db)) markMigration(db, 38, "remove remote ssh connections", now);
-}
-
-/**
- * Archives any stored remote connections next to the database, then drops the
- * table. Returns false when the archive could not be written, which leaves the
- * table in place so the next launch retries instead of discarding rows the user
- * cannot recover from `~/.ssh/config`.
- */
-function retireRemoteConnections(db: SqlDatabase): boolean {
-  const table = db
-    .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'")
-    .get() as { present?: number } | undefined;
-  if (!table) return true;
-  const rows = db.prepare("SELECT * FROM remote_connections ORDER BY name").all() as Array<Record<string, unknown>>;
-  if (rows.length > 0) {
-    const directory = databaseDirectory(db);
-    if (!directory || !writeRemoteConnectionArchive(directory, rows)) return false;
-  }
+  // read anymore. The drop runs on every launch rather than behind the version
+  // guard: downgrading to a pre-38 build recreates the table, and the current
+  // app must not leave rows sitting in a table it cannot read.
   db.exec("DROP TABLE IF EXISTS remote_connections;");
-  return true;
-}
-
-function writeRemoteConnectionArchive(directory: string, rows: Array<Record<string, unknown>>): boolean {
-  const archivePath = path.join(directory, "retired-remote-connections.json");
-  let connections = rows;
-  let target = archivePath;
-  if (existsSync(archivePath)) {
-    const archived = readArchivedRemoteConnections(archivePath);
-    // An archive we cannot parse is never overwritten; the new rows land beside
-    // it so neither set of records is lost.
-    if (archived) connections = mergeArchivedRemoteConnections(archived, rows);
-    else target = path.join(directory, `retired-remote-connections-${Date.now()}.json`);
-  }
-  // Written to a sibling and renamed into place: truncating the existing
-  // archive first would destroy already-archived rows if the write then failed.
-  const temporary = `${target}.${process.pid}.tmp`;
-  try {
-    writeFileSync(temporary, `${JSON.stringify({
-      retiredAt: new Date().toISOString(),
-      note: "Jasmine removed its remote SSH target. These records are kept for reference only.",
-      connections
-    }, null, 2)}\n`, "utf8");
-    renameSync(temporary, target);
-    return true;
-  } catch {
-    try {
-      rmSync(temporary, { force: true });
-    } catch {
-      // A leftover temporary file is harmless; the archive itself is intact.
-    }
-    return false;
-  }
-}
-
-function readArchivedRemoteConnections(archivePath: string): Array<Record<string, unknown>> | null {
-  try {
-    const parsed = JSON.parse(readFileSync(archivePath, "utf8")) as { connections?: unknown };
-    return Array.isArray(parsed?.connections)
-      ? parsed.connections.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function mergeArchivedRemoteConnections(
-  archived: Array<Record<string, unknown>>,
-  rows: Array<Record<string, unknown>>
-): Array<Record<string, unknown>> {
-  const byId = new Map<string, Record<string, unknown>>();
-  let fallbackKey = 0;
-  for (const connection of [...archived, ...rows]) {
-    const id = typeof connection.id === "string" ? connection.id : `unknown-${fallbackKey++}`;
-    byId.set(id, connection);
-  }
-  return [...byId.values()].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
-}
-
-function databaseDirectory(db: SqlDatabase): string | null {
-  try {
-    const entries = db.prepare("PRAGMA database_list").all() as Array<{ name?: string; file?: string }>;
-    const file = entries.find((entry) => entry.name === "main")?.file;
-    return file ? path.dirname(file) : null;
-  } catch {
-    return null;
-  }
+  markMigration(db, 38, "remove remote ssh connections", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

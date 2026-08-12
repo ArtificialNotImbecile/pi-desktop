@@ -17,9 +17,9 @@ An experimental remote SSH target shipped in earlier 0.3.x builds and has since 
 removed: it managed connections, rewrote the agent's read/write/edit/bash
 tools to run over `ssh`, and reported file-change coverage as unsupported. That was
 enough to demonstrate the idea and not enough to trust with real work, so the app no
-longer carries it. Databases that stored connections archive their rows to
-`retired-remote-connections.json` beside the database and then drop the table, so a
-manually added host is still readable even though nothing consumes it.
+longer carries it. The `remote_connections` table is dropped on upgrade rather than
+migrated: Jasmine is pre-1.0 and in active development, so a stored host is cheaper
+to re-enter than to carry as dead schema.
 
 A future `pi-remote-ssh` extension should target parity with VS Code Remote-SSH and
 Codex remote workspaces:
