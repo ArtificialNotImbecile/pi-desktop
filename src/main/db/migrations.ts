@@ -6,7 +6,7 @@ import { countDiffLines } from "./repositories/fileChanges.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
@@ -434,14 +434,23 @@ function writeRemoteConnectionArchive(directory: string, rows: Array<Record<stri
     if (archived) connections = mergeArchivedRemoteConnections(archived, rows);
     else target = path.join(directory, `retired-remote-connections-${Date.now()}.json`);
   }
+  // Written to a sibling and renamed into place: truncating the existing
+  // archive first would destroy already-archived rows if the write then failed.
+  const temporary = `${target}.${process.pid}.tmp`;
   try {
-    writeFileSync(target, `${JSON.stringify({
+    writeFileSync(temporary, `${JSON.stringify({
       retiredAt: new Date().toISOString(),
       note: "Jasmine removed its remote SSH target. These records are kept for reference only.",
       connections
     }, null, 2)}\n`, "utf8");
+    renameSync(temporary, target);
     return true;
   } catch {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // A leftover temporary file is harmless; the archive itself is intact.
+    }
     return false;
   }
 }
