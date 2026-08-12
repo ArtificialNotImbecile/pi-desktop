@@ -207,8 +207,8 @@ try {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      INSERT INTO remote_connections (id, name, host, created_at, updated_at)
-      VALUES ('legacy-remote', 'Legacy remote', 'example.internal', '${timestamp}', '${timestamp}');
+      INSERT INTO remote_connections (id, name, host, user, port, remote_path, source, created_at, updated_at)
+      VALUES ('legacy-remote', 'Legacy remote', 'example.internal', 'dev', 2222, '/srv/app', 'manual', '${timestamp}', '${timestamp}');
       CREATE TABLE mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -275,9 +275,23 @@ try {
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     // Migration 38 retires the remote SSH feature, so its table must be gone
-    // even for databases that already carried connections.
+    // even for databases that already carried connections. A manually added
+    // connection exists nowhere else, so it is archived before the drop.
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'").get(), undefined);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 38").get().exists_flag, 1);
+    const retiredRemotes = JSON.parse(await readFile(path.join(path.dirname(legacyDbPath), "retired-remote-connections.json"), "utf8"));
+    assert.equal(retiredRemotes.connections.length, 1);
+    assert.deepEqual(
+      {
+        id: retiredRemotes.connections[0].id,
+        host: retiredRemotes.connections[0].host,
+        user: retiredRemotes.connections[0].user,
+        port: retiredRemotes.connections[0].port,
+        remote_path: retiredRemotes.connections[0].remote_path,
+        source: retiredRemotes.connections[0].source
+      },
+      { id: "legacy-remote", host: "example.internal", user: "dev", port: 2222, remote_path: "/srv/app", source: "manual" }
+    );
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
     assert.equal(typeof backfilled.project_id, "string");
     assert.deepEqual(JSON.parse(legacyDb.prepare("SELECT active_plugin_ids_json FROM chat_threads WHERE id = 'legacy-thread'").get().active_plugin_ids_json), []);

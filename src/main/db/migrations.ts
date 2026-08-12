@@ -6,6 +6,8 @@ import { countDiffLines } from "./repositories/fileChanges.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { mergeModelConfigs, parseModelConfigs } from "./providerModels.js";
 import { readCanonicalPiBlockIndex, restoreCanonicalPiTimelineProjection } from "./canonicalPiTimelineRepair.js";
@@ -392,11 +394,52 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "file_changes", "diff_deleted_lines", "INTEGER");
   if (!hasMigration(db, 37)) backfillFileChangeDiffLineStats(db);
   markMigration(db, 37, "per-file diff line stats", now);
-  // The remote SSH feature is gone, so its table only kept host aliases that
-  // nothing can read anymore. They are re-importable from ~/.ssh/config if a
-  // future standalone extension brings the feature back.
-  if (!hasMigration(db, 38)) db.exec("DROP TABLE IF EXISTS remote_connections;");
-  markMigration(db, 38, "remove remote ssh connections", now);
+  // The remote SSH feature is gone, so its table only holds rows nothing can
+  // read anymore. Manually added connections exist nowhere else, so they are
+  // written beside the database before the table goes.
+  if (!hasMigration(db, 38) && retireRemoteConnections(db)) {
+    markMigration(db, 38, "remove remote ssh connections", now);
+  }
+}
+
+/**
+ * Archives any stored remote connections next to the database, then drops the
+ * table. Returns false when the archive could not be written, which leaves the
+ * table and the migration unmarked so the next launch retries instead of
+ * discarding rows the user cannot recover from `~/.ssh/config`.
+ */
+function retireRemoteConnections(db: SqlDatabase): boolean {
+  const table = db
+    .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'")
+    .get() as { present?: number } | undefined;
+  if (!table) return true;
+  const rows = db.prepare("SELECT * FROM remote_connections ORDER BY name").all();
+  if (rows.length > 0) {
+    const archivePath = remoteConnectionArchivePath(db);
+    if (!archivePath) return false;
+    try {
+      writeFileSync(archivePath, `${JSON.stringify({
+        retiredAt: new Date().toISOString(),
+        note: "Jasmine removed its remote SSH target. These records are kept for reference only.",
+        connections: rows
+      }, null, 2)}\n`, "utf8");
+    } catch {
+      return false;
+    }
+  }
+  db.exec("DROP TABLE IF EXISTS remote_connections;");
+  return true;
+}
+
+function remoteConnectionArchivePath(db: SqlDatabase): string | null {
+  try {
+    const entries = db.prepare("PRAGMA database_list").all() as Array<{ name?: string; file?: string }>;
+    const file = entries.find((entry) => entry.name === "main")?.file;
+    if (!file) return null;
+    return path.join(path.dirname(file), "retired-remote-connections.json");
+  } catch {
+    return null;
+  }
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

@@ -17,8 +17,9 @@ An experimental remote SSH target shipped in earlier 0.3.x builds and has since 
 removed: it managed connections, rewrote the agent's read/write/edit/bash
 tools to run over `ssh`, and reported file-change coverage as unsupported. That was
 enough to demonstrate the idea and not enough to trust with real work, so the app no
-longer carries it. Databases that stored connections drop the table on upgrade; the
-hosts themselves stay in `~/.ssh/config` and are re-importable later.
+longer carries it. Databases that stored connections archive their rows to
+`retired-remote-connections.json` beside the database and then drop the table, so a
+manually added host is still readable even though nothing consumes it.
 
 A future `pi-remote-ssh` extension should target parity with VS Code Remote-SSH and
 Codex remote workspaces:
