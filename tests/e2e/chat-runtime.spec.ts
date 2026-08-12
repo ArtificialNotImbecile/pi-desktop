@@ -183,7 +183,11 @@ test.describe("Jasmine chat runtime", () => {
     // bubble first keeps "the send never registered" distinguishable from "the
     // reply already finished".
     await expect(page.locator(".user-bubble")).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    // runState only turns "running" once the first stream event lands, and the
+    // mock holds the reply before streaming, so the button appears a beat after
+    // the send. The default 5s expectation was measuring host speed, not the
+    // composer; the run stays in flight until the queue drains.
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 20_000 });
 
     await page.locator(".rich-composer-editor").fill("queued follow up request");
     await page.getByRole("button", { name: "Queue message" }).click();

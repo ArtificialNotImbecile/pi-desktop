@@ -145,14 +145,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }, options.signal);
       }
       if (lastUserText.toLowerCase().includes("working long response")) await abortableDelay(6_000, options.signal);
-      if (lastUserText.toLowerCase().includes("slow response")) {
-        // The queue specs drive a whole lifecycle -- queue, edit, delete, steer
-        // -- against the in-flight run, and 750ms is only enough of a window on
-        // a developer machine. A loaded CI runner finished the base reply
-        // before the first queue, so "Stop response" was already gone.
-        const inFlightMs = lastUserText.toLowerCase().includes("queue") ? 4_000 : 750;
-        await abortableDelay(inFlightMs, options.signal);
-      }
+      if (lastUserText.toLowerCase().includes("slow response")) await abortableDelay(750, options.signal);
       await streamMockReply(content, lastUserText, request.toolsEnabled ?? true, {
         modelId: provider.modelId,
         reasoningEffort: parsed.reasoningEffort,
