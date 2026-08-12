@@ -145,7 +145,6 @@ export const chatSendRequestSchema = z.object({
   skillIds: z.array(z.string().min(1)).max(12).optional(),
   inlineSkillIds: z.array(z.string().min(1)).max(6).optional(),
   inlinePluginIds: z.array(z.string().min(1)).max(6).optional(),
-  webSearchEnabled: z.boolean().optional(),
   messages: z.array(chatHistoryMessageSchema),
   content: z.string(),
   attachments: z.array(pickedPathSchema).optional()
@@ -160,7 +159,6 @@ export const chatRetryRequestSchema = z.object({
   memoryEnabled: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
   skillIds: z.array(z.string().min(1)).max(12).optional(),
-  webSearchEnabled: z.boolean().optional(),
   messageId: z.string().min(1).optional()
 });
 
@@ -176,7 +174,6 @@ export const chatEditRequestSchema = z.object({
   skillIds: z.array(z.string().min(1)).max(12).optional(),
   inlineSkillIds: z.array(z.string().min(1)).max(6).optional(),
   inlinePluginIds: z.array(z.string().min(1)).max(6).optional(),
-  webSearchEnabled: z.boolean().optional(),
   content: z.string(),
   attachments: z.array(pickedPathSchema).optional()
 });
@@ -398,10 +395,6 @@ export const activityObservationListSchema = z.object({
 
 export const activityObservationCreateSchema = z.object({
   note: z.string().trim().min(1)
-});
-
-export const webSearchSettingsUpdateSchema = z.object({
-  enabled: z.boolean().optional()
 });
 
 export const windowActionSchema = z.enum(["minimize", "maximize", "close"]);

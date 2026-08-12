@@ -88,15 +88,6 @@ export function useCommandPaletteCommands(input: {
       }
     },
     {
-      id: "web-search",
-      label: t("command.webSearch"),
-      detail: t("command.webSearch.detail"),
-      action: () => {
-        input.closeFloatingSurfaces();
-        input.navigate({ name: "settings", section: "webSearch" });
-      }
-    },
-    {
       id: "ui-catalog",
       label: "UI catalog",
       detail: "Inspect Jasmine design system primitives",

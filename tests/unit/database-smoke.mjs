@@ -340,13 +340,9 @@ try {
     // The legacy fixture seeded an mcp_servers row above; migration 39 drops
     // the whole table rather than leaving rows nothing can read.
     assert.equal(legacyTableNames(legacyDb).includes("mcp_servers"), false);
-    // Migration 40 does the same for the retired local-search columns, while
-    // keeping the one setting that still means something.
-    const legacyWebSearchColumns = legacyDb.prepare("PRAGMA table_info(web_search_settings)").all().map((row) => row.name);
-    for (const column of ["provider", "max_results", "timeout_ms", "last_run_at", "last_error"]) {
-      assert.equal(legacyWebSearchColumns.includes(column), false, `web_search_settings should drop ${column}`);
-    }
-    assert.equal(legacyDb.prepare("SELECT enabled FROM web_search_settings WHERE id = 'default'").get().enabled, 1);
+    // Migration 40 retires the whole web search setting: web access is an
+    // ordinary package now, enabled from Packages like any other.
+    assert.equal(legacyTableNames(legacyDb).includes("web_search_settings"), false);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 25").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 26").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 27").get().exists_flag, 1);

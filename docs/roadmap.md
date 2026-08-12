@@ -100,11 +100,21 @@ Bringing MCP back means a real client, not a settings page:
 Jasmine used to run its own DuckDuckGo and Bing HTML scraping as a fallback search
 provider, prefetching results and injecting them into every request. Scraped result
 pages are brittle and the prefetch spent a request whether or not the turn needed
-one. Web access is now
-[`pi-web-access`](https://github.com/nicobailon/pi-web-access) only: the Settings
-toggle enables that package and pi decides when to call `web_search`,
-`fetch_content`, and friends. The provider choice and the scraper's result-limit,
-timeout, and last-run columns are dropped on upgrade.
+one.
+
+It also gave the same capability two homes: a Web Search settings page with its own
+table, and an ordinary Packages row for
+[`pi-web-access`](https://github.com/nicobailon/pi-web-access). One boolean in two
+places produced the whole class of defect that follows from it -- a save that did
+not reach the package, a package switch reverted on the next send, a page showing
+state it no longer had. Every one of them was a seam between the two copies rather
+than anything wrong with the package.
+
+Web access is now that package and nothing else. It is enabled from Packages like
+any other, pi decides when to call `web_search`, `fetch_content`, and friends, and
+`web_search_settings` is dropped on upgrade. Jasmine keeps no web setting, runs no
+search, and traces none under its own name; results still surface on assistant
+messages, derived from what the package records.
 
 ## Other candidates
 

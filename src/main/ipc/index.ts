@@ -16,7 +16,6 @@ import { registerSkillIpc } from "./skills.js";
 import { registerTerminalIpc } from "./terminal.js";
 import { registerThreadIpc } from "./threads.js";
 import { registerTraceIpc } from "./traces.js";
-import { registerWebSearchIpc } from "./webSearch.js";
 import { registerWindowIpc } from "./window.js";
 import { registerWorkingIpc } from "./working.js";
 
@@ -30,11 +29,10 @@ export function registerIpc(context: IpcContext): void {
   registerMemoryIpc(context);
   registerPromptTemplateIpc(context);
   registerSkillIpc(context);
-  registerPluginIpc(context);
+  registerPluginIpc();
   registerAppSettingsIpc(context);
   registerAppUpdaterIpc();
   registerActivityIpc(context);
-  registerWebSearchIpc(context);
   registerProviderIpc(context);
   registerTerminalIpc(context);
   registerRightPanelIpc(context);

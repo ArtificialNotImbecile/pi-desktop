@@ -47,7 +47,6 @@ export type HarnessSnapshot = {
     activeModelId: string | null;
     sidebarCollapsed: boolean;
     memoryEnabled: boolean;
-    webSearchEnabled: boolean;
     toolsEnabled: boolean;
     voiceEnabled: boolean;
     selectedSkillCount: number;
@@ -97,7 +96,6 @@ export type HarnessBridgeInput = {
   activeModelId: string | null;
   sidebarCollapsed: boolean;
   memoryEnabled: boolean;
-  webSearchEnabled: boolean;
   toolsEnabled: boolean;
   voiceEnabled: boolean;
   selectedSkillCount: number;

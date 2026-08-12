@@ -20,8 +20,6 @@ import type {
   SkillRecord,
   SkillSource,
   SkillUpdateRequest,
-  WebSearchSettings,
-  WebSearchSettingsUpdateRequest
 } from "../../../shared/ipc";
 import type { SettingsSection as SettingsSectionKey } from "./ProviderSettingsPanel";
 import { PluginsSettingsPage } from "./PluginsSettingsPage";
@@ -29,7 +27,6 @@ import { PromptTemplatesSettingsPage } from "./PromptTemplatesSettingsPage";
 import { SkillsSettingsPage } from "./SkillsSettingsPage";
 import { SettingsHeader } from "./SettingsHeader";
 import { AboutSettingsPage } from "./AboutSettingsPage";
-import { WebSearchSettingsPage } from "./WebSearchSettingsPage";
 import { DEFAULT_BRAND_SETTINGS } from "../../../shared/brand";
 import { defaultAppearance } from "../../hooks/useThemeAppearance";
 import { useI18n } from "../../i18n";
@@ -58,9 +55,6 @@ export function LocalSettingsPage(props: {
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
-  webSearchSettings: WebSearchSettings;
-  webSearchLoading: boolean;
-  webSearchSaving: boolean;
   onClose(): void;
   onOpenMemory(): void;
   onOpenActivity(): void;
@@ -81,7 +75,6 @@ export function LocalSettingsPage(props: {
   onUpdatePlugin(source: string, scope: PluginPackageRecord["scope"]): Promise<unknown>;
   onRemovePlugin(source: string, scope: PluginPackageRecord["scope"]): Promise<unknown>;
   onSetPluginEnabled(source: string, scope: PluginPackageRecord["scope"], enabled: boolean): Promise<unknown>;
-  onUpdateWebSearch(request: WebSearchSettingsUpdateRequest): Promise<WebSearchSettings | null>;
 }) {
   const { t } = useI18n();
   const activeMemories = props.memories.filter((memory) => !memory.archived && !memory.deleted).length;
@@ -159,18 +152,6 @@ export function LocalSettingsPage(props: {
         onUpdateSkill={props.onUpdateSkill}
         onDeleteSkill={props.onDeleteSkill}
         onOpenSkill={props.onOpenSkill}
-      />
-    );
-  }
-
-  if (props.section === "webSearch") {
-    return (
-      <WebSearchSettingsPage
-        settings={props.webSearchSettings}
-        loading={props.webSearchLoading}
-        saving={props.webSearchSaving}
-        onClose={props.onClose}
-        onUpdate={props.onUpdateWebSearch}
       />
     );
   }

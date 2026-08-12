@@ -310,12 +310,6 @@ contextBridge.exposeInMainWorld("jasmine", {
   createManualActivityObservation(request) {
     return ipcRenderer.invoke("activity:observations:createManual", request);
   },
-  getWebSearchSettings() {
-    return ipcRenderer.invoke("webSearch:settings:get");
-  },
-  updateWebSearchSettings(request) {
-    return ipcRenderer.invoke("webSearch:settings:update", request);
-  },
   listProviders() {
     return ipcRenderer.invoke("providers:list");
   },

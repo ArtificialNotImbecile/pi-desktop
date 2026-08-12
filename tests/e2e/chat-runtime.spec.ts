@@ -374,19 +374,12 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".trace-panel")).toBeHidden();
   });
 
-  test("web access setting persists what it claims", async () => {
+  test("no web search is traced under Jasmine's own name", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 
-    await openSettings(page, "Web Search");
-    await expect(page.getByRole("switch", { name: "Use web search" })).toBeEnabled();
-    await page.getByRole("switch", { name: "Use web search" }).click();
-    await page.locator(".settings-actions").getByRole("button", { name: "Save" }).click();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWebSearchSettings()).enabled)).toBe(true);
-    await page.getByRole("button", { name: "Close settings" }).click();
-
-    // Jasmine runs no search of its own, so nothing may be traced under the
-    // app's own name; pi-web-access owns every web tool call.
+    // Web access belongs to the pi-web-access package now, so a turn must never
+    // produce a trace the app owns.
     await page.locator(".rich-composer-editor").fill("current jasmine web access check");
     await page.getByRole("button", { name: "Send" }).click();
     await waitForStableAssistant(page, "Mock reply from Jasmine.");

@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, PluginPackageScope, ReasoningEffort, SkillRecord, WebSearchSettingsUpdateRequest, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
@@ -28,7 +28,6 @@ import { useThreadDraftPersistence } from "./hooks/useThreadDraftPersistence";
 import { useThreads } from "./hooks/useThreads";
 import { useToast } from "./hooks/useToast";
 import { useThemeAppearance } from "./hooks/useThemeAppearance";
-import { useWebSearch } from "./hooks/useWebSearch";
 import { useWorkingTasks } from "./hooks/useWorkingTasks";
 import { useHarnessBridge } from "./harness/useHarnessBridge";
 import { useJasmineNavigation } from "./navigation/navigationState";
@@ -128,27 +127,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     onError: setAppError,
     onToast: showToast
   }, props.initialAppSettings);
-  const webSearch = useWebSearch({
-    onError: setAppError,
-    onToast: showToast
-  });
-  // Saving Web Search moves the pi-web-access package in main, so the already
-  // loaded Packages list would keep showing its previous state until a manual
-  // refresh. Both controls have to agree the moment either one is used.
-  const updateWebSearchAndPackages = useCallback(async (request: WebSearchSettingsUpdateRequest) => {
-    const next = await webSearch.updateSettings(request);
-    if (next) await plugins.refresh();
-    return next;
-  }, [plugins.refresh, webSearch.updateSettings]);
-
-  // The pi-web-access row writes web_search_settings in main, so the Web Search
-  // page would keep rendering the state it loaded at mount. This is the mirror
-  // of updateWebSearchAndPackages: whichever control moves, both re-read.
-  const setPluginEnabledAndWebSearch = useCallback(async (source: string, scope: PluginPackageScope, enabled: boolean) => {
-    await plugins.setEnabled({ source, scope, enabled });
-    await webSearch.refresh();
-  }, [plugins.setEnabled, webSearch.refresh]);
-
   const askUserQuestion = useAskUserQuestion({
     onError: setAppError
   });
@@ -183,7 +161,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       if (!targetThread) return false;
       setActiveProjectId(targetThread.projectId);
       navigation.replace({ name: "thread", threadId: targetThread.id, projectId: targetThread.projectId });
-      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, webSearch.settings.enabled, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread);
+      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -194,7 +172,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       return queued;
     },
     onEditSubmit: async (messageId, content, attachments) => {
-      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, webSearch.settings.enabled, reasoningEffort, inlineSkillIds, inlinePluginIds);
+      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -295,7 +273,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     activeModelId: providers.activeProvider?.defaultModel ?? null,
     sidebarCollapsed,
     memoryEnabled,
-    webSearchEnabled: webSearch.settings.enabled,
     toolsEnabled,
     voiceEnabled: false,
     selectedSkillCount: skills.selectedSkills.length,
@@ -410,7 +387,7 @@ function App(props: { initialAppSettings: AppSettings }) {
 
   function retryMessage(message?: ChatMessage) {
     const messageId = message?.status === "error" ? undefined : message?.id;
-    void chat.retryLastMessage(providers.activeProvider?.id, messageId, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, webSearch.settings.enabled, reasoningEffort);
+    void chat.retryLastMessage(providers.activeProvider?.id, messageId, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort);
   }
 
   function selectReasoningEffort(effort: ReasoningEffort) {
@@ -449,7 +426,6 @@ function App(props: { initialAppSettings: AppSettings }) {
       memoryEnabled ? "memory" : "no-memory",
       toolsEnabled ? "tools" : "no-tools",
       skills.selectedSkillIds.join("\u0000"),
-      webSearch.settings.enabled ? "web" : "no-web",
       reasoningEffort
     ].join("|"),
     [
@@ -459,8 +435,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       providers.activeProvider?.id,
       reasoningEffort,
       skills.selectedSkillIds,
-      toolsEnabled,
-      webSearch.settings.enabled
+      toolsEnabled
     ]
   );
 
@@ -589,7 +564,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     onTestProvider: () => {
       if (providers.activeProvider) void providers.testProvider(providers.activeProvider.id);
     },
-    onToggleWebSearch: () => void webSearch.setEnabled(!webSearch.settings.enabled),
     onDraftChange: (value: string) => composer.setDraft(value),
     onClearError: () => clearErrors(),
     onSubmit: (mode?: ChatQueueMode) => void composer.submit(undefined, mode),
@@ -693,8 +667,6 @@ function App(props: { initialAppSettings: AppSettings }) {
         memoryEnabled={memoryEnabled}
         permissionMode={appSettings.settings.permissionMode}
         permissionModeSaving={appSettings.saving}
-        webSearchSettings={webSearch.settings}
-        webSearchLoading={webSearch.loading}
         toolsEnabled={toolsEnabled}
         reasoningEffort={reasoningEffort}
         draft={composer.draft}
@@ -750,9 +722,6 @@ function App(props: { initialAppSettings: AppSettings }) {
             plugins={plugins.packages}
             pluginsLoading={plugins.loading}
             pluginSavingSource={plugins.savingSource}
-            webSearchSettings={webSearch.settings}
-            webSearchLoading={webSearch.loading}
-            webSearchSaving={webSearch.saving}
             onSelectProvider={providers.setSelectedProviderId}
             onNavigateSection={(section, providerId) => navigateToRoute({ name: "settings", section, providerId: section === "providers" ? providerId ?? providers.selectedProviderId : undefined }, { keepSettingsOpen: true })}
             onClose={() => surfaces.setSettingsOpen(false)}
@@ -780,12 +749,11 @@ function App(props: { initialAppSettings: AppSettings }) {
             onInstallPlugin={(source) => plugins.install({ source })}
             onUpdatePlugin={(source, scope) => plugins.update({ source, scope })}
             onRemovePlugin={(source, scope) => plugins.remove({ source, scope })}
-            onSetPluginEnabled={setPluginEnabledAndWebSearch}
+            onSetPluginEnabled={(source, scope, enabled) => plugins.setEnabled({ source, scope, enabled })}
             onSave={providers.updateProvider}
             onTest={providers.testProvider}
             onFetchModels={providers.fetchProviderModels}
             onUpdateModel={providers.updateProviderModel}
-            onUpdateWebSearch={updateWebSearchAndPackages}
           />
         </Suspense>
       )}

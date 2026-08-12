@@ -10,8 +10,7 @@ import type {
   PluginReference,
   PluginPackageScope,
   PluginResourceCounts,
-  SkillRecord,
-  WebSearchSettings
+  SkillRecord
 } from "../../shared/ipc.js";
 import { getJasminePiAgentDir } from "./piAgent.js";
 
@@ -196,18 +195,6 @@ export async function resolvePluginResources(options: PluginServiceOptions): Pro
   return { packages: await listPluginPackages(options) };
 }
 
-// The Web Search toggle is the control for pi-web-access, so it has to move the
-// package both ways. Enabling only, as this once did, left the agent holding web
-// tools after the user switched the setting back off.
-export async function syncPiWebAccessPluginWithWebSearch(options: PluginServiceOptions, settings: WebSearchSettings): Promise<void> {
-  if (process.env.JASMINE_E2E_MOCK_AI === "1") return;
-  const source = resolvePiWebAccessPackageRoot();
-  if (!source) return;
-  const service = await createPluginPackageService(options);
-  if (settings.enabled) await service.enableBuiltinSource(source);
-  else await service.disableBuiltinSource(source);
-}
-
 // Pre-stream sends resolve enabled package skill paths on every request, and
 // the app mount + settings surfaces list packages/skills repeatedly. All of
 // these results only change when plugin settings or installed packages change
@@ -311,27 +298,6 @@ class PluginPackageService {
     this.normalizeBuiltinPackageSources(builtinPluginSources);
     this.ensureBuiltinPluginConfigured(builtinPluginSources);
     await this.flush();
-  }
-
-  async enableBuiltinSource(source: string): Promise<void> {
-    await this.setEnabled(canonicalPluginSource(source), true, "user");
-  }
-
-  // setEnabled throws when the package was never configured, which is the
-  // normal state for a builtin nobody has switched on yet -- nothing to undo.
-  async disableBuiltinSource(source: string): Promise<void> {
-    const canonical = canonicalPluginSource(source);
-    // Every configured scope, not just "user": a project entry left enabled
-    // keeps the resolver loading the extension, so the setting would report
-    // off while the agent still held the tools.
-    const scopes = new Set(
-      this.listPackageEntries()
-        .filter((entry) => this.sourcesMatch(entry.source, canonical, entry.scope))
-        .map((entry) => entry.scope)
-    );
-    for (const scope of scopes) {
-      await this.setEnabled(canonical, false, scope);
-    }
   }
 
   async list(): Promise<PluginPackageRecord[]> {
@@ -735,7 +701,7 @@ function canonicalPluginSource(source: string): string {
   return source;
 }
 
-export function isPiWebAccessSource(source: string | PackageSource): boolean {
+function isPiWebAccessSource(source: string | PackageSource): boolean {
   const sourceValue = packageSourceString(source);
   const normalized = normalizeSourceForComparison(sourceValue);
   if (normalized === PI_WEB_ACCESS_PACKAGE_NAME || normalized.startsWith(`${PI_WEB_ACCESS_PACKAGE_NAME}@`)) return true;

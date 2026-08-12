@@ -162,12 +162,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS web_search_settings (
-      id TEXT PRIMARY KEY,
-      enabled INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS skill_sources (
       id TEXT PRIMARY KEY,
       path TEXT NOT NULL UNIQUE,
@@ -359,13 +353,11 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   dropColumnIfPresent(db, "app_settings", "chrome_takeover_enabled");
   dropColumnIfPresent(db, "app_settings", "chrome_takeover_extension_id");
   markMigration(db, 39, "remove mcp servers and chrome takeover", now);
-  // Jasmine no longer runs its own search, so the provider choice and the
-  // scraper's tuning and run state have nothing left to configure. Dropped on
-  // every launch for the same downgrade reason as the removals above.
-  for (const column of ["provider", "max_results", "timeout_ms", "last_run_at", "last_error"]) {
-    dropColumnIfPresent(db, "web_search_settings", column);
-  }
-  markMigration(db, 40, "web search without a local fallback", now);
+  // Web access is an ordinary pi package now, enabled from Packages like any
+  // other, so Jasmine keeps no web search setting of its own. Dropped on every
+  // launch for the same downgrade reason as the removals above.
+  db.exec("DROP TABLE IF EXISTS web_search_settings;");
+  markMigration(db, 40, "web access is a package, not a setting", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

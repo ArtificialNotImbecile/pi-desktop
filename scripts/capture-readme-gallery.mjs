@@ -99,7 +99,6 @@ try {
     ["Packages", "settings-packages"],
     ["Prompt Templates", "settings-prompt-templates"],
     ["Activity", "settings-activity"],
-    ["Web Search", "settings-web-search"],
     ["About", "settings-about"]
   ]) {
     await page.locator(".settings-nav").getByRole("button", { name: label, exact: true }).click();

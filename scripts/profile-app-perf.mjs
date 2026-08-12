@@ -93,7 +93,6 @@ async function main() {
     ["listPlugins", "listPlugins"],
     ["listPluginSkills", "listPluginSkills"],
     ["listPromptTemplates", "listPromptTemplates"],
-    ["getWebSearchSettings", "getWebSearchSettings"],
     ["getActivitySettings", "getActivitySettings"],
     ["execDiscovery(editor)", "listExecutableDiscovery", "editor"],
     ["execDiscovery(terminal)", "listExecutableDiscovery", "terminal"]

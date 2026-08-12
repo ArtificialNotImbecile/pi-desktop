@@ -7,7 +7,6 @@ export const settingsSections = [
   "plugins",
   "prompts",
   "activity",
-  "webSearch",
   "about"
 ] as const;
 
@@ -137,11 +136,10 @@ export function rightPanelModeLabel(mode: RightPanelMode): string {
 }
 
 function settingsSectionToPath(section: SettingsSection): string {
-  return section === "webSearch" ? "web-search" : section;
+  return section;
 }
 
 function pathToSettingsSection(value: string): SettingsSection | null {
-  if (value === "web-search") return "webSearch";
   return isSettingsSection(value) ? value : null;
 }
 

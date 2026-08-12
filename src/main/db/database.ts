@@ -28,8 +28,6 @@ import type {
   SkillSource,
   SkillReference,
   WebSearchResult,
-  WebSearchSettings,
-  WebSearchSettingsUpdateRequest,
   WorkingSnapshot,
   WorkingTaskStatus,
   ThreadActivePluginsUpdateRequest,
@@ -121,11 +119,6 @@ import {
   listToolRunsForMessage as listToolRunsForMessageRows,
   listToolRunsForThread as listToolRunsForThreadRows
 } from "./repositories/toolRuns.js";
-import {
-  ensureWebSearchSettings as ensureWebSearchSettingsRow,
-  getWebSearchSettings as getWebSearchSettingsRow,
-  updateWebSearchSettings as updateWebSearchSettingsRow
-} from "./repositories/webSearch.js";
 import type { SqlDatabase } from "./repositories/types.js";
 import {
   addContextCapture as addContextCaptureRow,
@@ -435,19 +428,6 @@ export class JasmineDatabase {
     inputSummary?: string;
   }): ToolRun {
     return createToolRunRow(this.db, input, now());
-  }
-
-  getWebSearchSettings(): WebSearchSettings {
-    this.ensureWebSearchSettings();
-    const settings = getWebSearchSettingsRow(this.db);
-    if (!settings) throw new Error("Web search settings do not exist.");
-    return settings;
-  }
-
-  updateWebSearchSettings(input: WebSearchSettingsUpdateRequest): WebSearchSettings {
-    const current = this.getWebSearchSettings();
-    updateWebSearchSettingsRow(this.db, current, input, now());
-    return this.getWebSearchSettings();
   }
 
   getAppSettings(): AppSettings {
@@ -806,7 +786,6 @@ export class JasmineDatabase {
 
   private seed(): void {
     this.ensureActivitySettings();
-    this.ensureWebSearchSettings();
     this.ensureAppSettings();
     const row = this.db.prepare("SELECT COUNT(*) AS count FROM chat_threads").get() as { count?: number };
     if (Number(row?.count ?? 0) > 0) {
@@ -839,10 +818,6 @@ export class JasmineDatabase {
     const timestamp = now();
     seedDefaultProviders(this.db, timestamp);
     seedDefaultSkills(this.db, timestamp);
-  }
-
-  private ensureWebSearchSettings(): void {
-    ensureWebSearchSettingsRow(this.db, now());
   }
 
   private ensureAppSettings(): void {

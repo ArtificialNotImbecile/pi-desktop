@@ -104,7 +104,7 @@ test.describe("Jasmine settings", () => {
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect(page.locator(".settings-panel")).toHaveClass(/single-nav/);
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-nav button .icon")).toHaveCount(10);
+    await expect(page.locator(".settings-nav button .icon")).toHaveCount(9);
     await expect(page.locator(".settings-detail")).not.toContainText("Command palette");
     await expect(page.locator(".settings-detail")).not.toContainText("Theme");
     await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
@@ -183,7 +183,7 @@ test.describe("Jasmine settings", () => {
     await expect.poll(async () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim())).toBe("#0b74de");
   });
 
-  test("settings nav reaches memory, activity, web search, packages, and about sections", async () => {
+  test("settings nav reaches memory, activity, packages, and about sections", async () => {
     const { page } = harness;
 
     await expect(page).toHaveTitle("Jasmine — The desktop app for Pi");
@@ -195,9 +195,6 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
     await expect(page.locator(".settings-detail")).toContainText("Recorder controls");
     await expect(page.locator(".settings-detail").getByRole("button", { name: "Open Activity" })).toBeVisible();
-    await page.locator(".settings-nav").getByRole("button", { name: "Web Search" }).click();
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail")).toContainText("Use web search");
     await page.locator(".settings-nav").getByRole("button", { name: "Packages" }).click();
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
     await expect(page.locator(".settings-detail")).toContainText("Pi Web Access");

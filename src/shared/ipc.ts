@@ -803,7 +803,6 @@ export type ChatSendRequest = {
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
-  webSearchEnabled?: boolean;
   messages: Array<Pick<ChatMessage, "role" | "content" | "timeline" | "attachments">>;
   content: string;
   attachments?: PickedPath[];
@@ -826,7 +825,6 @@ export type ChatRetryRequest = {
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
   skillIds?: string[];
-  webSearchEnabled?: boolean;
   messageId?: string;
 };
 
@@ -849,7 +847,6 @@ export type ChatEditRequest = {
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
-  webSearchEnabled?: boolean;
   content: string;
   attachments?: PickedPath[];
 };
@@ -1120,18 +1117,6 @@ export type ActivitySnapshot = {
   status: ActivityStatus;
 };
 
-// Web access is served by the pi-web-access package, so Jasmine only stores
-// whether the agent may reach for it. Search execution, result shaping, and
-// timeouts all belong to that extension.
-export type WebSearchSettings = {
-  enabled: boolean;
-  updatedAt: string;
-};
-
-export type WebSearchSettingsUpdateRequest = {
-  enabled?: boolean;
-};
-
 export type WebSearchResult = {
   title: string;
   url: string;
@@ -1328,8 +1313,6 @@ export type JasmineApi = {
   updateActivitySettings(request: ActivitySettingsUpdateRequest): Promise<ActivitySettings>;
   listActivityObservations(request?: ActivityObservationListRequest): Promise<ActivityObservation[]>;
   createManualActivityObservation(request: ActivityObservationCreateRequest): Promise<ActivityObservation>;
-  getWebSearchSettings(): Promise<WebSearchSettings>;
-  updateWebSearchSettings(request: WebSearchSettingsUpdateRequest): Promise<WebSearchSettings>;
   listProviders(): Promise<AiProvider[]>;
   updateProvider(request: ProviderUpdateRequest): Promise<AiProvider>;
   testProvider(providerId: string): Promise<ProviderTestResponse>;

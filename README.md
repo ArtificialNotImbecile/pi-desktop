@@ -14,7 +14,7 @@ Jasmine is an independent, open-source desktop GUI for the Pi coding agent, brin
 
 - **Pi Sessions** — keep Pi-compatible JSONL as the canonical conversation record, with persistent local threads, drafts, projects, search, and session import.
 - **Desktop GUI for Pi** — use rich chat, attachments, Working tasks, memories, activity, and project context without leaving the desktop app.
-- **Pi Skills & Extensions** — work with reusable skills, prompt templates, Pi packages, and web access.
+- **Pi Skills & Extensions** — work with reusable skills, prompt templates, and Pi packages, including web access through `pi-web-access`.
 - **Integrated Terminal** — run project terminals alongside coding-agent conversations.
 - **Fast file-change artifacts** — inspect managed `write/edit` targets with unified text diffs and before/after image snapshots, or opt into an event-based filesystem watcher for broader shell visibility without crawling the workspace.
 - **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
@@ -64,8 +64,6 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 | ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Package settings](docs/assets/screenshots/settings-packages.png) |
 | Prompt Templates | Activity |
 | ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![Activity settings](docs/assets/screenshots/settings-activity.png) |
-| Web Search | |
-| ![Web Search settings](docs/assets/screenshots/settings-web-search.png) | |
 | About | |
 | ![About Jasmine](docs/assets/screenshots/settings-about.png) | |
 

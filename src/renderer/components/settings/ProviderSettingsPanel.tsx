@@ -17,8 +17,6 @@ import type {
   SkillRecord,
   SkillSource,
   SkillUpdateRequest,
-  WebSearchSettings,
-  WebSearchSettingsUpdateRequest
 } from "../../../shared/ipc";
 import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, SearchIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
 import { LocalSettingsPage } from "./LocalSettingsPage";
@@ -51,9 +49,6 @@ export function ProviderSettingsPanel(props: {
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
-  webSearchSettings: WebSearchSettings;
-  webSearchLoading: boolean;
-  webSearchSaving: boolean;
   onSelectProvider(providerId: string): void;
   onNavigateSection?(section: SettingsSection, providerId?: string): void;
   onClose(): void;
@@ -88,7 +83,6 @@ export function ProviderSettingsPanel(props: {
     maxOutputTokens?: number;
     providerOptionsJson?: string;
   }): Promise<unknown>;
-  onUpdateWebSearch(request: WebSearchSettingsUpdateRequest): Promise<WebSearchSettings | null>;
 }) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(props.initialSection);
@@ -173,7 +167,6 @@ export function ProviderSettingsPanel(props: {
           <button className={section === "plugins" ? "active" : ""} type="button" onClick={() => selectSection("plugins")}><PlugIcon /><span>{t("settings.nav.plugins")}</span></button>
           <button className={section === "prompts" ? "active" : ""} type="button" onClick={() => selectSection("prompts")}><TerminalIcon /><span>{t("settings.nav.prompts")}</span></button>
           <button className={section === "activity" ? "active" : ""} type="button" onClick={() => selectSection("activity")}><ActivityIcon /><span>{t("settings.nav.activity")}</span></button>
-          <button className={section === "webSearch" ? "active" : ""} type="button" onClick={() => selectSection("webSearch")}><SearchIcon /><span>{t("settings.nav.webSearch")}</span></button>
           <button className={section === "about" ? "active" : ""} type="button" onClick={() => selectSection("about")}><InfoIcon /><span>{t("settings.nav.about")}</span></button>
         </nav>}
 
@@ -227,9 +220,6 @@ export function ProviderSettingsPanel(props: {
               plugins={props.plugins}
               pluginsLoading={props.pluginsLoading}
               pluginSavingSource={props.pluginSavingSource}
-              webSearchSettings={props.webSearchSettings}
-              webSearchLoading={props.webSearchLoading}
-              webSearchSaving={props.webSearchSaving}
               onClose={props.onClose}
               onOpenMemory={props.onOpenMemory}
               onOpenActivity={props.onOpenActivity}
@@ -250,7 +240,6 @@ export function ProviderSettingsPanel(props: {
               onUpdatePlugin={props.onUpdatePlugin}
               onRemovePlugin={props.onRemovePlugin}
               onSetPluginEnabled={props.onSetPluginEnabled}
-              onUpdateWebSearch={props.onUpdateWebSearch}
             />
           )}
         </div>}

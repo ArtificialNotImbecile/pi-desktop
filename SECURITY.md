@@ -14,4 +14,4 @@ Environment-variable references such as `env:DEEPSEEK_API_KEY` are recommended. 
 
 Pi packages, local tools, provider calls, and web access may read files or transmit data according to their own configuration. Review a package before enabling it and grant only the access it needs.
 
-Turning on Web Search enables the `pi-web-access` package, which lets the agent fetch arbitrary URLs. Page content is untrusted input: treat anything it returns as data, never as instructions.
+Enabling the `pi-web-access` package lets the agent fetch arbitrary URLs. Page content is untrusted input: treat anything it returns as data, never as instructions.

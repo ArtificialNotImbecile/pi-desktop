@@ -37,7 +37,6 @@ import type {
   PromptTemplateSourceCreateRequest,
   ProviderModelUpdateRequest,
   ProviderUpdateRequest,
-  WebSearchSettingsUpdateRequest,
   MemoryArchiveRequest,
   MemoryCreateRequest,
   MemoryListRequest,
@@ -369,12 +368,6 @@ const api: JasmineApi = {
   },
   createManualActivityObservation(request: ActivityObservationCreateRequest) {
     return ipcRenderer.invoke("activity:observations:createManual", request);
-  },
-  getWebSearchSettings() {
-    return ipcRenderer.invoke("webSearch:settings:get");
-  },
-  updateWebSearchSettings(request: WebSearchSettingsUpdateRequest) {
-    return ipcRenderer.invoke("webSearch:settings:update", request);
   },
   listProviders() {
     return ipcRenderer.invoke("providers:list");

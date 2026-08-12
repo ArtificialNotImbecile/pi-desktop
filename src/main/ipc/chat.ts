@@ -37,7 +37,6 @@ import { getRuntimeProvider } from "../services/providers.js";
 import { getJasminePiAgentDir } from "../services/piAgent.js";
 import { appendThreadSessionName, branchParentForMessage, prepareThreadPiSession } from "../services/piSessions.js";
 import {
-  syncPiWebAccessPluginWithWebSearch,
   resolveEnabledPackageSkillPaths,
   resolvePluginPackageReferences,
   resolvePluginPackageRuntimeSources,
@@ -873,7 +872,6 @@ async function buildChatTurnContext(
   const selectedSkills = await db.getSkillsForPrompt(input.skillIds);
   const skillManifests = await prepareSkillManifests(mergeRuntimeSkills(selectedSkills, input.inlineSkills, input.inlinePluginSkills), userDataDir);
   const availableSkillManifests = await prepareEnabledSkillManifests(await db.listAllSkills(), userDataDir);
-  await syncPiWebAccessPluginWithWebSearch({ userDataDir }, db.getWebSearchSettings());
   const packageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir });
   const promptTemplatePaths = getPromptTemplatePaths(db, userDataDir);
   const thread = db.getThread(input.threadId);
