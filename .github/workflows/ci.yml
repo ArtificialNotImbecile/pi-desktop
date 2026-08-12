@@ -10,9 +10,12 @@ permissions:
 
 # A new push supersedes the run already in flight for the same pull request,
 # so review fixes do not leave three platform jobs grinding on a dead commit.
-# Pushes to main keep every run, so each released commit has its own result.
+# Pushes to main are grouped per commit instead: a shared group would hold only
+# one pending run, so a third push could evict the middle commit's queued run
+# even with cancel-in-progress off, and every released commit needs its own
+# result.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
