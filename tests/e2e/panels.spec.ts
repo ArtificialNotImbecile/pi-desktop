@@ -386,12 +386,40 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.locator(".artifact-status--added")).toContainText("A");
     await expect(page.locator(".artifact-status--modified")).toContainText("M");
     await expect(page.locator(".artifact-status--deleted")).toContainText("D");
+    // Each row states the file once: name, its directory, and the change weight.
+    const modifiedRow = page.getByRole("button", { name: "Open modified file src/config.ts" });
+    await expect(modifiedRow.locator(".artifact-change-name")).toHaveText("config.ts");
+    await expect(modifiedRow.locator(".artifact-change-dir")).toHaveText(/^‎?src$/);
+    await expect(modifiedRow.locator(".artifact-change-stat")).toContainText("+1");
+    await expect(modifiedRow.locator(".artifact-change-stat")).toContainText("−1");
+    await expect(modifiedRow).not.toContainText("watcher event");
+    await expect(page.getByRole("button", { name: "Open deleted file assets/old.png" }).locator(".artifact-change-stat")).toContainText("70 B");
+    await expect(page.locator(".artifact-pane-summary")).toContainText("3 changes");
+    await expect(page.locator(".artifact-pane-summary")).toContainText("1 turn");
+    await expect(page.locator(".artifact-coverage-chip")).toHaveCount(0);
+
+    // Shared capture semantics live in one pane-level note, not on every card.
+    await expect(page.locator(".artifact-note")).toHaveCount(0);
+    await page.getByRole("button", { name: "About file change capture" }).click();
+    await expect(page.locator(".artifact-note")).toContainText("no initial directory scan");
+    await expect(page.locator(".artifact-note")).toContainText("run evidence");
+    await page.getByRole("button", { name: "About file change capture" }).click();
+    await expect(page.locator(".artifact-note")).toHaveCount(0);
+
+    const captureToggle = page.locator(".artifact-capture-toggle");
+    await expect(captureToggle).toHaveAttribute("aria-expanded", "true");
+    await captureToggle.click();
+    await expect(captureToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("button", { name: "Open modified file src/config.ts" })).toHaveCount(0);
+    await captureToggle.click();
+    await expect(page.getByRole("button", { name: "Open modified file src/config.ts" })).toBeVisible();
 
     await page.getByRole("button", { name: "Open modified file src/config.ts" }).click();
     const textChangeDialog = page.getByRole("dialog", { name: "config.ts" });
     await expect(textChangeDialog).toBeVisible();
-    await expect(textChangeDialog.getByRole("table", { name: "File revision metadata" })).toContainText("100644");
-    await expect(textChangeDialog.getByRole("table", { name: "File revision metadata" })).toContainText("100755");
+    await expect(textChangeDialog.locator(".artifact-detail-facts")).toContainText("100644 → 100755");
+    await expect(textChangeDialog.locator(".artifact-detail-facts")).toContainText("+1 −1");
+    await expect(textChangeDialog.locator(".artifact-detail-facts")).toContainText("watcher event");
     await expect(textChangeDialog.getByRole("table", { name: "Unified file diff" })).toContainText("export const mode = 'old';");
     await expect(textChangeDialog.getByRole("table", { name: "Unified file diff" })).toContainText("export const mode = 'new';");
     await textChangeDialog.getByRole("button", { name: "Close" }).click();
@@ -512,6 +540,31 @@ test.describe("Jasmine panels and tools", () => {
     await expect(contextCloseButton).toHaveCSS("opacity", "1");
     await contextCloseButton.click();
     await expect(page.getByRole("complementary", { name: "Context taxonomy" })).toBeHidden();
+  });
+
+  test("artifact capture coverage trouble is announced on the capture it belongs to", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Artifacts" }).click();
+    await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
+
+    await page.locator(".rich-composer-editor").fill("show partial file changes");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
+    await expect(page.getByRole("button", { name: "Open modified file src/partial.ts" })).toBeVisible();
+
+    const coverageChip = page.getByRole("button", { name: "Partial coverage" });
+    await expect(coverageChip).toBeVisible();
+    await expect(coverageChip).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".artifact-capture .artifact-note")).toHaveCount(0);
+    await coverageChip.click();
+    const coverageNote = page.locator(".artifact-capture .artifact-note");
+    await expect(coverageNote).toContainText("outside the approved write and edit targets");
+    await expect(coverageNote).toContainText("not tracked in managed-tools-only mode");
+    await expect(coverageNote).toContainText("Watcher event queue overflowed");
+    await expect(coverageNote).toContainText("root-unreadable");
+    await coverageChip.click();
+    await expect(page.locator(".artifact-capture .artifact-note")).toHaveCount(0);
   });
 
   test("context taxonomy captures restore independently after restart", async ({}, testInfo) => {

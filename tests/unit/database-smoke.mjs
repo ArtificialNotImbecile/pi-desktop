@@ -252,6 +252,14 @@ try {
         'pre-v36-change', 'pre-v36-capture', 0, 'modified', 'text', 'pre-v36.txt', '.', 'pre-v36.txt',
         '${"1".repeat(64)}', 6, '${"2".repeat(64)}', 5, 'observed-between-checkpoints', '100644', '100755'
       );
+      INSERT INTO file_changes (
+        id, capture_id, ordinal, status, kind, path, root, relative_path,
+        before_sha256, before_size, after_sha256, after_size, unified_diff, provenance, before_mode, after_mode
+      ) VALUES (
+        'pre-v37-change', 'pre-v36-capture', 1, 'modified', 'text', 'pre-v37.txt', '.', 'pre-v37.txt',
+        '${"3".repeat(64)}', 6, '${"4".repeat(64)}', 9, '--- a/pre-v37.txt' || char(10) || '+++ b/pre-v37.txt' || char(10) || '@@ -1 +1,2 @@' || char(10) || '-old' || char(10) || '+new' || char(10) || '+extra',
+        'observed-between-checkpoints', '100644', '100644'
+      );
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
@@ -306,6 +314,17 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 36").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().sql.includes("status = 'added'"), false);
     assert.deepEqual({ ...legacyDb.prepare("SELECT before_mode, after_mode FROM file_changes WHERE id = 'pre-v36-change'").get() }, { before_mode: "100644", after_mode: "100755" });
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v37-change'").get() },
+      { diff_added_lines: 2, diff_deleted_lines: 1 },
+      "existing diffs should be counted once during migration, excluding file headers"
+    );
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v36-change'").get() },
+      { diff_added_lines: null, diff_deleted_lines: null },
+      "a row without a stored diff has no line stats to report"
+    );
+    legacyDb.prepare("DELETE FROM file_changes WHERE id = 'pre-v37-change'").run();
     legacyDb.prepare("DELETE FROM file_change_captures WHERE id = 'pre-v36-capture'").run();
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_change_captures'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().exists_flag, 1);
@@ -721,6 +740,9 @@ try {
     assert.equal(redactedSummary.after.redacted, true);
     assert.equal(redactedSummary.after.contentAvailable, false);
     assert.equal(redactedSummary.hasUnifiedDiff, false, "a diff touching redacted content must not be retained");
+    assert.deepEqual(addedSummary.lineStats, { added: 1, deleted: 0 }, "the list must carry line counts without carrying the diff");
+    assert.equal(Object.hasOwn(imageSummary, "lineStats"), false);
+    assert.equal(Object.hasOwn(redactedSummary, "lineStats"), false, "a redacted change has no diff to count");
 
     schemas.fileChangeIdSchema.parse(addedSummary.id);
     assert.throws(() => schemas.fileChangeIdSchema.parse(path.join(projectRoot, "a.txt")));
@@ -728,6 +750,7 @@ try {
     assert.equal(addedDetail.after.content, "new file");
     assert.equal(addedDetail.after.mode, "100644");
     assert.equal(addedDetail.unifiedDiff, "@@ -0,0 +1 @@\n+new file");
+    assert.deepEqual(addedDetail.lineStats, { added: 1, deleted: 0 });
     const redactedDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", redactedSummary.id);
     assert.equal(redactedDetail.before.redacted, true);
     assert.equal(redactedDetail.before.mode, "100644");

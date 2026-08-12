@@ -5,6 +5,7 @@ import type {
   FileChangeCoverage,
   FileChangeDetail,
   FileChangeInput,
+  FileChangeLineStats,
   FileChangeRevision,
   FileChangeRevisionSummary,
   FileChangeSummary
@@ -63,6 +64,8 @@ type FileChangeRow = {
   has_unified_diff?: number;
   unified_diff_over_limit?: number;
   diff_truncated: number;
+  diff_added_lines: number | null;
+  diff_deleted_lines: number | null;
   provenance: FileChangeInput["provenance"];
 };
 
@@ -136,14 +139,16 @@ export function addFileChangeCapture(db: SqlDatabase, input: AddFileChangeCaptur
       id, capture_id, ordinal, status, kind, path, root, relative_path,
       before_sha256, before_size, before_media_type, before_encoding, before_mode, before_content, before_content_truncated, before_redacted,
       after_sha256, after_size, after_media_type, after_encoding, after_mode, after_content, after_content_truncated, after_redacted,
-      unified_diff, diff_truncated, provenance
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      unified_diff, diff_truncated, diff_added_lines, diff_deleted_lines, provenance
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const [ordinal, change] of stableChanges(capture.changes).entries()) {
     const redacted = Boolean(change.before?.redacted || change.after?.redacted);
     const before = revisionForStorage(change.before, redacted);
     const after = revisionForStorage(change.after, redacted);
     const diff = redacted ? { value: undefined, truncated: false } : boundText(change.unifiedDiff, FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
+    // Counted here so the list query never has to read diff text back out.
+    const lineStats = diff.value === undefined ? undefined : countDiffLines(diff.value);
     insertChange.run(
       randomUUID(),
       id,
@@ -171,6 +176,8 @@ export function addFileChangeCapture(db: SqlDatabase, input: AddFileChangeCaptur
       change.after && redacted ? 1 : 0,
       diff.value ?? null,
       change.diffTruncated || diff.truncated ? 1 : 0,
+      lineStats?.added ?? null,
+      lineStats?.deleted ?? null,
       change.provenance
     );
   }
@@ -196,7 +203,7 @@ export function listFileChangeCaptures(db: SqlDatabase, threadId: string): FileC
       CASE WHEN changes.after_content IS NULL THEN 0 ELSE 1 END AS after_content_present,
       changes.after_content_truncated, changes.after_redacted,
       CASE WHEN changes.unified_diff IS NULL THEN 0 ELSE 1 END AS has_unified_diff,
-      changes.diff_truncated, changes.provenance
+      changes.diff_truncated, changes.diff_added_lines, changes.diff_deleted_lines, changes.provenance
     FROM file_changes AS changes
     JOIN file_change_captures AS captures ON captures.id = changes.capture_id
     WHERE captures.thread_id = ?
@@ -233,7 +240,7 @@ export function getFileChangeDetail(db: SqlDatabase, threadId: string, changeId:
       changes.after_content_truncated, changes.after_redacted,
       substr(changes.unified_diff, 1, limits.diff_max) AS unified_diff,
       CASE WHEN length(changes.unified_diff) > limits.diff_max THEN 1 ELSE 0 END AS unified_diff_over_limit,
-      changes.diff_truncated, changes.provenance
+      changes.diff_truncated, changes.diff_added_lines, changes.diff_deleted_lines, changes.provenance
     FROM file_changes AS changes
     JOIN file_change_captures AS captures ON captures.id = changes.capture_id
     CROSS JOIN limits
@@ -243,6 +250,7 @@ export function getFileChangeDetail(db: SqlDatabase, threadId: string, changeId:
   const before = detailRevision(row, "before");
   const after = detailRevision(row, "after");
   const boundedDiff = boundText(row.unified_diff, FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
+  const lineStats = rowLineStats(row);
   return {
     id: row.id,
     captureId: row.capture_id,
@@ -255,6 +263,7 @@ export function getFileChangeDetail(db: SqlDatabase, threadId: string, changeId:
     ...(after ? { after } : {}),
     ...(boundedDiff.value !== undefined ? { unifiedDiff: boundedDiff.value } : {}),
     diffTruncated: Boolean(row.diff_truncated) || Boolean(row.unified_diff_over_limit) || boundedDiff.truncated,
+    ...(lineStats ? { lineStats } : {}),
     provenance: row.provenance
   };
 }
@@ -282,6 +291,7 @@ function rowToCaptureSummary(row: FileChangeCaptureRow, changes: FileChangeSumma
 function rowToSummary(row: FileChangeRow): FileChangeSummary {
   const before = summaryRevision(row, "before");
   const after = summaryRevision(row, "after");
+  const lineStats = rowLineStats(row);
   return {
     id: row.id,
     captureId: row.capture_id,
@@ -294,8 +304,29 @@ function rowToSummary(row: FileChangeRow): FileChangeSummary {
     ...(after ? { after } : {}),
     hasUnifiedDiff: Boolean(row.has_unified_diff),
     diffTruncated: Boolean(row.diff_truncated),
+    ...(lineStats ? { lineStats } : {}),
     provenance: row.provenance
   };
+}
+
+function rowLineStats(row: FileChangeRow): FileChangeLineStats | undefined {
+  if (row.diff_added_lines === null || row.diff_added_lines === undefined) return undefined;
+  return { added: row.diff_added_lines, deleted: row.diff_deleted_lines ?? 0 };
+}
+
+/**
+ * Counts payload lines of a unified diff. File headers (`+++`/`---`) carry no
+ * change, so they are excluded the same way `git diff --numstat` excludes them.
+ */
+export function countDiffLines(diff: string): FileChangeLineStats {
+  let added = 0;
+  let deleted = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) deleted += 1;
+  }
+  return { added, deleted };
 }
 
 function summaryRevision(row: FileChangeRow, side: "before" | "after"): FileChangeRevisionSummary | undefined {
