@@ -464,24 +464,41 @@ function mockPartialFileChangeCapture(cwd: string, startedAtMs: number): FileCha
         message: "One configured path could not be read at the end of the run."
       }]
     },
-    changes: [{
-      status: "modified",
-      kind: "text",
-      path: path.join(root, "src", "partial.ts"),
-      root,
-      relativePath: "src/partial.ts",
-      before: { sha256: "e".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 1;\n" },
-      after: { sha256: "f".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 2;\n" },
-      unifiedDiff: [
-        "diff --git a/src/partial.ts b/src/partial.ts",
-        "--- a/src/partial.ts",
-        "+++ b/src/partial.ts",
-        "@@ -1 +1 @@",
-        "-export const a = 1;",
-        "+export const a = 2;"
-      ].join("\n"),
-      provenance: "observed-between-checkpoints"
-    }]
+    changes: [
+      {
+        status: "modified",
+        kind: "text",
+        path: path.join(root, "src", "partial.ts"),
+        root,
+        relativePath: "src/partial.ts",
+        before: { sha256: "e".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 1;\n" },
+        after: { sha256: "f".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 2;\n" },
+        unifiedDiff: [
+          "diff --git a/src/partial.ts b/src/partial.ts",
+          "--- a/src/partial.ts",
+          "+++ b/src/partial.ts",
+          "@@ -1 +1 @@",
+          "-export const a = 1;",
+          "+export const a = 2;"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      },
+      {
+        status: "modified",
+        kind: "text",
+        path: path.join(root, "scripts", "run.sh"),
+        root,
+        relativePath: "scripts/run.sh",
+        before: { sha256: "1".repeat(64), size: 12, mode: "100644", encoding: "utf8", content: "echo ready\n" },
+        after: { sha256: "1".repeat(64), size: 12, mode: "100755", encoding: "utf8", content: "echo ready\n" },
+        unifiedDiff: [
+          "diff --git a/scripts/run.sh b/scripts/run.sh",
+          "old mode 100644",
+          "new mode 100755"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      }
+    ]
   };
 }
 

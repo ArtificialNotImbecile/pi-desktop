@@ -257,7 +257,9 @@ try {
         before_sha256, before_size, after_sha256, after_size, unified_diff, provenance, before_mode, after_mode
       ) VALUES (
         'pre-v37-change', 'pre-v36-capture', 1, 'modified', 'text', 'pre-v37.txt', '.', 'pre-v37.txt',
-        '${"3".repeat(64)}', 6, '${"4".repeat(64)}', 9, '--- a/pre-v37.txt' || char(10) || '+++ b/pre-v37.txt' || char(10) || '@@ -1 +1,2 @@' || char(10) || '-old' || char(10) || '+new' || char(10) || '+extra',
+        '${"3".repeat(64)}', 6, '${"4".repeat(64)}', 9,
+        '--- a/pre-v37.txt' || char(10) || '+++ b/pre-v37.txt' || char(10) || '@@ -1,2 +1,3 @@' || char(10)
+          || '-old' || char(10) || '--- note' || char(10) || '+new' || char(10) || '+extra' || char(10) || '+++counter;',
         'observed-between-checkpoints', '100644', '100644'
       );
     `);
@@ -316,8 +318,8 @@ try {
     assert.deepEqual({ ...legacyDb.prepare("SELECT before_mode, after_mode FROM file_changes WHERE id = 'pre-v36-change'").get() }, { before_mode: "100644", after_mode: "100755" });
     assert.deepEqual(
       { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v37-change'").get() },
-      { diff_added_lines: 2, diff_deleted_lines: 1 },
-      "existing diffs should be counted once during migration, excluding file headers"
+      { diff_added_lines: 3, diff_deleted_lines: 2 },
+      "migration counts hunk payload once, including content lines that start with +++ or ---, and never the file header pair"
     );
     assert.deepEqual(
       { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v36-change'").get() },

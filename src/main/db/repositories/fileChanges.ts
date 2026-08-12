@@ -315,14 +315,27 @@ function rowLineStats(row: FileChangeRow): FileChangeLineStats | undefined {
 }
 
 /**
- * Counts payload lines of a unified diff. File headers (`+++`/`---`) carry no
- * change, so they are excluded the same way `git diff --numstat` excludes them.
+ * Counts payload lines of a unified diff the way `git diff --numstat` does.
+ *
+ * Only the `+++`/`---` pair that precedes a hunk is a file header. Inside a
+ * hunk the same three characters are ordinary content: a line reading `++i;`
+ * is encoded as `+++i;`, and deleting the SQL comment `-- note` produces
+ * `--- note`. Hunk state is what separates the two.
  */
 export function countDiffLines(diff: string): FileChangeLineStats {
   let added = 0;
   let deleted = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+  let inHunk = false;
+  for (const line of diff.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (line.startsWith("diff ")) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk) continue;
     if (line.startsWith("+")) added += 1;
     else if (line.startsWith("-")) deleted += 1;
   }

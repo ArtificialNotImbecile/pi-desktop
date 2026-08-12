@@ -565,6 +565,20 @@ test.describe("Jasmine panels and tools", () => {
     await expect(coverageNote).toContainText("root-unreadable");
     await coverageChip.click();
     await expect(page.locator(".artifact-capture .artifact-note")).toHaveCount(0);
+
+    // A stored diff that moves no lines reports nothing rather than the whole
+    // file size, and the panel note must not call managed evidence a watcher.
+    const modeOnlyRow = page.getByRole("button", { name: "Open modified file scripts/run.sh" });
+    await expect(modeOnlyRow.locator(".artifact-change-stat")).toHaveCount(0);
+    await page.getByRole("button", { name: "About file change capture" }).click();
+    const basisNote = page.locator(".artifact-pane > .artifact-note");
+    await expect(basisNote).toContainText("Managed mode records approved write and edit targets only");
+    await expect(basisNote).not.toContainText("Watcher mode");
+
+    await modeOnlyRow.click();
+    const modeOnlyDialog = page.getByRole("dialog", { name: "run.sh" });
+    await expect(modeOnlyDialog.locator(".artifact-detail-facts")).toContainText("100644 → 100755");
+    await expect(modeOnlyDialog.locator(".artifact-detail-facts")).not.toContainText("+0");
   });
 
   test("context taxonomy captures restore independently after restart", async ({}, testInfo) => {

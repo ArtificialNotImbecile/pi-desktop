@@ -260,7 +260,9 @@ function CaptureCoverageNote(props: { capture: FileChangeCaptureSummary }) {
 
 /** Facts that hold for every capture in the thread, so they are stated once. */
 function CaptureBasisNote(props: { captures: FileChangeCaptureSummary[] }) {
-  const modes = new Set(props.captures.map((capture) => capture.coverage.trackingMode ?? "watcher"));
+  // An absent mode is not watcher evidence: it is a legacy checkpoint capture
+  // or a target that was never tracked, which trackingLabel also keeps distinct.
+  const modes = new Set(props.captures.map((capture) => capture.coverage.trackingMode));
   const roots = uniqueStrings(props.captures.flatMap((capture) => (
     capture.coverage.rootDetails?.length
       ? capture.coverage.rootDetails.map((root) => root.physicalPath || root.path)
@@ -271,6 +273,7 @@ function CaptureBasisNote(props: { captures: FileChangeCaptureSummary[] }) {
     <div className="artifact-note" role="status">
       {modes.has("watcher") ? <p>Watcher mode is event-based: no initial directory scan runs, so an update can have an after-only preview.</p> : null}
       {modes.has("managed-tools-only") ? <p>Managed mode records approved write and edit targets only. Shell changes are not tracked.</p> : null}
+      {modes.has(undefined) ? <p>Captures with no recorded tracking mode reach only the roots listed on them.</p> : null}
       <p>Captures are kept as run evidence. Editing the conversation does not roll files back.</p>
       {roots.length > 0 ? <p><strong>Watched</strong> <code>{roots.join(", ")}</code></p> : null}
       {excludes.length > 0 ? <p><strong>Excluded</strong> <code>{excludes.join(", ")}</code></p> : null}
@@ -338,7 +341,8 @@ function RevisionFacts(props: { change: FileChangeDetail; capture: FileChangeCap
   if (size) facts.push(size);
   if (mode) facts.push(mode);
   if (hash) facts.push(hash);
-  if (props.change.lineStats) facts.push(`+${props.change.lineStats.added} −${props.change.lineStats.deleted}`);
+  const lineStats = props.change.lineStats;
+  if (lineStats && (lineStats.added > 0 || lineStats.deleted > 0)) facts.push(`+${lineStats.added} −${lineStats.deleted}`);
   if (props.capture) facts.push(trackingLabel(props.capture.coverage.trackingMode));
   if (facts.length === 0) return null;
   return (
@@ -429,6 +433,9 @@ function parseUnifiedDiff(diff: string): DiffRow[] {
   const rows: DiffRow[] = [];
   let oldLine = 0;
   let newLine = 0;
+  // Everything before a hunk is preamble; inside one, `+++`/`---` are content
+  // rather than the file header that shares those characters.
+  let inHunk = false;
   const normalized = diff.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
   if (normalized.endsWith("\n")) lines.pop();
@@ -437,19 +444,21 @@ function parseUnifiedDiff(diff: string): DiffRow[] {
     if (hunk) {
       oldLine = Number(hunk[1]);
       newLine = Number(hunk[2]);
+      inHunk = true;
       rows.push({ kind: "hunk", text });
       continue;
     }
-    if (text.startsWith("diff ") || text.startsWith("index ") || text.startsWith("--- ") || text.startsWith("+++ ") || text.startsWith("Binary files ") || text === "\\ No newline at end of file") {
+    if (text.startsWith("diff ")) inHunk = false;
+    if (!inHunk || text === "\\ No newline at end of file") {
       rows.push({ kind: "header", text });
       continue;
     }
-    if (text.startsWith("+") && !text.startsWith("+++")) {
+    if (text.startsWith("+")) {
       rows.push({ kind: "add", newLine, text });
       newLine += 1;
       continue;
     }
-    if (text.startsWith("-") && !text.startsWith("---")) {
+    if (text.startsWith("-")) {
       rows.push({ kind: "delete", oldLine, text });
       oldLine += 1;
       continue;
@@ -477,10 +486,15 @@ function StatusTally(props: { counts: ReturnType<typeof statusCounts> }) {
   );
 }
 
-/** Line counts when the capture stored a diff, byte weight otherwise. */
+/**
+ * Line counts whenever the capture stored a diff, byte weight otherwise. A
+ * stored diff of zero lines is a real answer — a mode-only change moves no
+ * content — so it stays silent instead of falling back to the whole file size.
+ */
 function ChangeStat(props: { change: FileChangeSummary }) {
   const stats = props.change.lineStats;
-  if (stats && (stats.added > 0 || stats.deleted > 0)) {
+  if (stats) {
+    if (stats.added === 0 && stats.deleted === 0) return null;
     return (
       <span className="artifact-change-stat" title={`${stats.added} added, ${stats.deleted} removed`}>
         {stats.added > 0 ? <span className="added">+{stats.added}</span> : null}
