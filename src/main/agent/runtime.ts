@@ -428,8 +428,89 @@ function unsupportedRemoteFileChangeCapture(cwd: string, startedAtMs: number): F
   };
 }
 
+/** Drives the panel's coverage warning path, which the complete mock never reaches. */
+function mockPartialFileChangeCapture(cwd: string, startedAtMs: number): FileChangeCaptureInput {
+  const completedAt = new Date().toISOString();
+  const root = path.resolve(cwd);
+  return {
+    schemaVersion: 1,
+    startedAt: new Date(startedAtMs).toISOString(),
+    completedAt,
+    capturedAt: completedAt,
+    cwd: root,
+    roots: [root],
+    excludes: ["**/.git/**"],
+    warnings: ["Watcher event queue overflowed once during this run."],
+    coverage: {
+      status: "partial",
+      target: "local",
+      trackingMode: "managed-tools-only",
+      bashCoverage: "not-tracked",
+      bashInvoked: true,
+      reason: "A shell command wrote outside the approved write and edit targets.",
+      // Managed mode records the parent directory of each approved target, not
+      // a directory it observed. createCoverage builds exactly this shape.
+      rootDetails: [{
+        id: "mock-managed-root",
+        path: path.join(root, "src"),
+        physicalPath: path.join(root, "src"),
+        source: "write-target",
+        scope: "file",
+        filePath: path.join(root, "src", "partial.ts"),
+        requestedPath: path.join(root, "src", "partial.ts"),
+        requestedFilePath: path.join(root, "src", "partial.ts"),
+        bashCovered: false
+      }],
+      issues: [{
+        code: "root-unreadable",
+        stage: "final",
+        rootId: "mock-managed-root",
+        root,
+        message: "One configured path could not be read at the end of the run."
+      }]
+    },
+    changes: [
+      {
+        status: "modified",
+        kind: "text",
+        path: path.join(root, "src", "partial.ts"),
+        root,
+        relativePath: "src/partial.ts",
+        before: { sha256: "e".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 1;\n" },
+        after: { sha256: "f".repeat(64), size: 18, mode: "100644", encoding: "utf8", content: "export const a = 2;\n" },
+        unifiedDiff: [
+          "diff --git a/src/partial.ts b/src/partial.ts",
+          "--- a/src/partial.ts",
+          "+++ b/src/partial.ts",
+          "@@ -1 +1 @@",
+          "-export const a = 1;",
+          "+export const a = 2;"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      },
+      {
+        status: "modified",
+        kind: "text",
+        path: path.join(root, "scripts", "run.sh"),
+        root,
+        relativePath: "scripts/run.sh",
+        before: { sha256: "1".repeat(64), size: 12, mode: "100644", encoding: "utf8", content: "echo ready\n" },
+        after: { sha256: "1".repeat(64), size: 12, mode: "100755", encoding: "utf8", content: "echo ready\n" },
+        unifiedDiff: [
+          "diff --git a/scripts/run.sh b/scripts/run.sh",
+          "old mode 100644",
+          "new mode 100755"
+        ].join("\n"),
+        provenance: "observed-between-checkpoints"
+      }
+    ]
+  };
+}
+
 function mockFileChangeCaptures(lastUserText: string, cwd: string, startedAtMs: number): FileChangeCaptureInput[] {
-  if (!lastUserText.toLowerCase().includes("show file changes")) return [];
+  const text = lastUserText.toLowerCase();
+  if (text.includes("show partial file changes")) return [mockPartialFileChangeCapture(cwd, startedAtMs)];
+  if (!text.includes("show file changes")) return [];
   const startedAt = new Date(startedAtMs).toISOString();
   const completedAt = new Date().toISOString();
   const root = path.resolve(cwd);

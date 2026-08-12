@@ -845,6 +845,12 @@ export type FileChangeRevisionSummary = Omit<FileChangeRevision, "content"> & {
   contentAvailable: boolean;
 };
 
+/** Added/removed line totals of the stored unified diff, counted once at capture time. */
+export type FileChangeLineStats = {
+  added: number;
+  deleted: number;
+};
+
 export type FileChangeSummary = {
   id: string;
   captureId: string;
@@ -857,6 +863,7 @@ export type FileChangeSummary = {
   after?: FileChangeRevisionSummary;
   hasUnifiedDiff: boolean;
   diffTruncated: boolean;
+  lineStats?: FileChangeLineStats;
   provenance: FileChangeProvenance;
 };
 

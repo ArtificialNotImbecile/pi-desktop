@@ -252,6 +252,25 @@ try {
         'pre-v36-change', 'pre-v36-capture', 0, 'modified', 'text', 'pre-v36.txt', '.', 'pre-v36.txt',
         '${"1".repeat(64)}', 6, '${"2".repeat(64)}', 5, 'observed-between-checkpoints', '100644', '100755'
       );
+      INSERT INTO file_changes (
+        id, capture_id, ordinal, status, kind, path, root, relative_path,
+        before_sha256, before_size, after_sha256, after_size, unified_diff, diff_truncated, provenance, before_mode, after_mode
+      ) VALUES (
+        'pre-v37-truncated', 'pre-v36-capture', 2, 'modified', 'text', 'pre-v37-cut.txt', '.', 'pre-v37-cut.txt',
+        '${"5".repeat(64)}', 6, '${"6".repeat(64)}', 9,
+        '@@ -1 +1,2 @@' || char(10) || '-old' || char(10) || '+new',
+        1, 'observed-between-checkpoints', '100644', '100644'
+      );
+      INSERT INTO file_changes (
+        id, capture_id, ordinal, status, kind, path, root, relative_path,
+        before_sha256, before_size, after_sha256, after_size, unified_diff, provenance, before_mode, after_mode
+      ) VALUES (
+        'pre-v37-change', 'pre-v36-capture', 1, 'modified', 'text', 'pre-v37.txt', '.', 'pre-v37.txt',
+        '${"3".repeat(64)}', 6, '${"4".repeat(64)}', 9,
+        '--- a/pre-v37.txt' || char(10) || '+++ b/pre-v37.txt' || char(10) || '@@ -1,2 +1,3 @@' || char(10)
+          || '-old' || char(10) || '--- note' || char(10) || '+new' || char(10) || '+extra' || char(10) || '+++counter;',
+        'observed-between-checkpoints', '100644', '100644'
+      );
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
@@ -306,6 +325,22 @@ try {
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 36").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().sql.includes("status = 'added'"), false);
     assert.deepEqual({ ...legacyDb.prepare("SELECT before_mode, after_mode FROM file_changes WHERE id = 'pre-v36-change'").get() }, { before_mode: "100644", after_mode: "100755" });
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v37-change'").get() },
+      { diff_added_lines: 3, diff_deleted_lines: 2 },
+      "migration counts hunk payload once, including content lines that start with +++ or ---, and never the file header pair"
+    );
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v36-change'").get() },
+      { diff_added_lines: null, diff_deleted_lines: null },
+      "a row without a stored diff has no line stats to report"
+    );
+    assert.deepEqual(
+      { ...legacyDb.prepare("SELECT diff_added_lines, diff_deleted_lines FROM file_changes WHERE id = 'pre-v37-truncated'").get() },
+      { diff_added_lines: null, diff_deleted_lines: null },
+      "a legacy row that kept only a prefix of its diff must not publish that prefix as a complete total"
+    );
+    legacyDb.prepare("DELETE FROM file_changes WHERE id IN ('pre-v37-change', 'pre-v37-truncated')").run();
     legacyDb.prepare("DELETE FROM file_change_captures WHERE id = 'pre-v36-capture'").run();
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_change_captures'").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'file_changes'").get().exists_flag, 1);
@@ -609,6 +644,8 @@ try {
     const ingestOversizedText = "t".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 1);
     const ingestOversizedBase64 = "A".repeat(fileChanges.FILE_CHANGE_DETAIL_CONTENT_MAX_CHARS + 4);
     const ingestOversizedDiff = "d".repeat(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS + 1);
+    const oversizedDiffAddedLines = Math.ceil(fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS / 3) + 10;
+    const completeOversizedDiff = `@@ -0,0 +1,${oversizedDiffAddedLines} @@\n${"+x\n".repeat(oversizedDiffAddedLines)}`;
     const boundedCaptureId = fileChanges.addFileChangeCapture(legacyDb, {
       threadId: "legacy-thread",
       messageId: "file-change-message",
@@ -632,13 +669,49 @@ try {
           after: { sha256: "0".repeat(64), size: ingestOversizedBase64.length, encoding: "base64", content: ingestOversizedBase64 },
           unifiedDiff: ingestOversizedDiff,
           provenance: "observed-between-checkpoints"
+        },
+        {
+          status: "added",
+          kind: "text",
+          path: path.join(projectRoot, "oversized-complete.txt"),
+          root: projectRoot,
+          relativePath: "oversized-complete.txt",
+          after: { sha256: "9".repeat(64), size: completeOversizedDiff.length, encoding: "utf8", content: "x\n" },
+          unifiedDiff: completeOversizedDiff,
+          provenance: "observed-between-checkpoints"
+        },
+        {
+          status: "added",
+          kind: "text",
+          path: path.join(projectRoot, "producer-truncated.txt"),
+          root: projectRoot,
+          relativePath: "producer-truncated.txt",
+          after: { sha256: "8".repeat(64), size: 6, encoding: "utf8", content: "x\n" },
+          unifiedDiff: "@@ -0,0 +1,2 @@\n+x\n+y",
+          diffTruncated: true,
+          provenance: "observed-between-checkpoints"
         }]
       }
     });
+    const boundedChanges = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread")
+      .find((capture) => capture.id === boundedCaptureId).changes;
+    const completeOversized = boundedChanges.find((change) => change.relativePath === "oversized-complete.txt");
+    assert.equal(completeOversized.diffTruncated, true, "the storage cap must still be reported");
+    assert.deepEqual(
+      completeOversized.lineStats,
+      { added: oversizedDiffAddedLines, deleted: 0 },
+      "counts come from the diff as received, so the storage cap cannot shrink the reported total"
+    );
+    const producerTruncated = boundedChanges.find((change) => change.relativePath === "producer-truncated.txt");
+    assert.equal(
+      Object.hasOwn(producerTruncated, "lineStats"),
+      false,
+      "a diff the producer already cut short has no complete total to report"
+    );
     const boundedStored = legacyDb.prepare(`
       SELECT before_content, before_content_truncated, after_content, after_content_truncated,
              length(unified_diff) AS diff_chars, diff_truncated
-      FROM file_changes WHERE capture_id = ?
+      FROM file_changes WHERE capture_id = ? AND relative_path = 'oversized.dat'
     `).get(boundedCaptureId);
     assert.equal(boundedStored.before_content, null);
     assert.equal(boundedStored.before_content_truncated, 1);
@@ -646,8 +719,7 @@ try {
     assert.equal(boundedStored.after_content_truncated, 1);
     assert.equal(boundedStored.diff_chars, fileChanges.FILE_CHANGE_DETAIL_DIFF_MAX_CHARS);
     assert.equal(boundedStored.diff_truncated, 1);
-    const boundedStoredChangeId = fileChanges.listFileChangeCaptures(legacyDb, "legacy-thread")
-      .find((capture) => capture.id === boundedCaptureId).changes[0].id;
+    const boundedStoredChangeId = boundedChanges.find((change) => change.relativePath === "oversized.dat").id;
     const boundedStoredDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", boundedStoredChangeId);
     assert.equal(Object.hasOwn(boundedStoredDetail.before, "content"), false);
     assert.equal(boundedStoredDetail.before.contentTruncated, true);
@@ -721,6 +793,9 @@ try {
     assert.equal(redactedSummary.after.redacted, true);
     assert.equal(redactedSummary.after.contentAvailable, false);
     assert.equal(redactedSummary.hasUnifiedDiff, false, "a diff touching redacted content must not be retained");
+    assert.deepEqual(addedSummary.lineStats, { added: 1, deleted: 0 }, "the list must carry line counts without carrying the diff");
+    assert.equal(Object.hasOwn(imageSummary, "lineStats"), false);
+    assert.equal(Object.hasOwn(redactedSummary, "lineStats"), false, "a redacted change has no diff to count");
 
     schemas.fileChangeIdSchema.parse(addedSummary.id);
     assert.throws(() => schemas.fileChangeIdSchema.parse(path.join(projectRoot, "a.txt")));
@@ -728,6 +803,7 @@ try {
     assert.equal(addedDetail.after.content, "new file");
     assert.equal(addedDetail.after.mode, "100644");
     assert.equal(addedDetail.unifiedDiff, "@@ -0,0 +1 @@\n+new file");
+    assert.deepEqual(addedDetail.lineStats, { added: 1, deleted: 0 });
     const redactedDetail = fileChanges.getFileChangeDetail(legacyDb, "legacy-thread", redactedSummary.id);
     assert.equal(redactedDetail.before.redacted, true);
     assert.equal(redactedDetail.before.mode, "100644");

@@ -2,6 +2,7 @@ import type { SqlDatabase } from "./repositories/types.js";
 import { DEFAULT_APPEARANCE } from "../../shared/theme.js";
 import { DEFAULT_BRAND_SETTINGS, LEGACY_HIRI_BRAND_COPY } from "../../shared/brand.js";
 import type { ChatTimelineItem } from "../../shared/ipc.js";
+import { countDiffLines } from "./repositories/fileChanges.js";
 import { normalizeProjectRoot } from "./repositories/projects.js";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
@@ -407,6 +408,30 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "app_settings", "file_change_tracking_mode", "TEXT NOT NULL DEFAULT 'managed-tools-only'");
   if (!hasMigration(db, 36)) migrateFileChangesToSparseEvidence(db);
   markMigration(db, 36, "fast file change modes and sparse watcher evidence", now);
+  addColumnIfMissing(db, "file_changes", "diff_added_lines", "INTEGER");
+  addColumnIfMissing(db, "file_changes", "diff_deleted_lines", "INTEGER");
+  if (!hasMigration(db, 37)) backfillFileChangeDiffLineStats(db);
+  markMigration(db, 37, "per-file diff line stats", now);
+}
+
+function backfillFileChangeDiffLineStats(db: SqlDatabase): void {
+  // A truncated row only kept a prefix of its diff, so counting it would
+  // publish a partial total as the file's complete one. Those rows keep no
+  // stats and fall back to byte weight, which matches what ingestion does now.
+  const pending = db.prepare(`
+    SELECT id FROM file_changes
+    WHERE unified_diff IS NOT NULL AND diff_added_lines IS NULL AND diff_truncated = 0
+  `).all() as Array<{ id: string }>;
+  if (pending.length === 0) return;
+  // Diffs are read one at a time so a large history never has to be resident.
+  const readDiff = db.prepare("SELECT unified_diff FROM file_changes WHERE id = ?");
+  const update = db.prepare("UPDATE file_changes SET diff_added_lines = ?, diff_deleted_lines = ? WHERE id = ?");
+  for (const row of pending) {
+    const diff = (readDiff.get(row.id) as { unified_diff: string | null } | undefined)?.unified_diff;
+    if (diff === null || diff === undefined) continue;
+    const stats = countDiffLines(diff);
+    update.run(stats.added, stats.deleted, row.id);
+  }
 }
 
 function ensureFileChangeTables(db: SqlDatabase): void {
