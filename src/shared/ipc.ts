@@ -381,64 +381,6 @@ export type McpServerUpdateRequest = {
   url?: string;
 };
 
-export type RemoteConnectionSource = "manual" | "vscode";
-
-export type RemoteConnectionStatus = "unchecked" | "connected" | "failed";
-
-export type RemoteConnectionRecord = {
-  id: string;
-  name: string;
-  host: string;
-  user?: string;
-  port?: number;
-  remotePath?: string;
-  configHost?: string;
-  configPath?: string;
-  source: RemoteConnectionSource;
-  active: boolean;
-  status: RemoteConnectionStatus;
-  lastConnectedAt?: string;
-  lastError?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type RemoteConnectionCreateRequest = {
-  name: string;
-  host: string;
-  user?: string;
-  port?: number;
-  remotePath?: string;
-  configHost?: string;
-  configPath?: string;
-  source?: RemoteConnectionSource;
-  active?: boolean;
-};
-
-export type RemoteConnectionUpdateRequest = {
-  id: string;
-  name?: string;
-  host?: string;
-  user?: string;
-  port?: number | null;
-  remotePath?: string;
-  configHost?: string;
-  configPath?: string;
-  active?: boolean;
-};
-
-export type RemoteConnectionImportResult = {
-  imported: RemoteConnectionRecord[];
-  scannedPaths: string[];
-};
-
-export type RemoteConnectionTestResult = {
-  connection: RemoteConnectionRecord;
-  ok: boolean;
-  remotePath?: string;
-  error?: string;
-};
-
 export type ToolModelSettings = {
   providerId: string;
   modelId: string;
@@ -776,7 +718,7 @@ export type FileChangeCoverageIssue = {
 
 export type FileChangeCoverage = {
   status: "complete" | "partial" | "failed" | "unsupported";
-  target: "local" | "remote";
+  target: "local";
   reason?: string;
   scannedFiles?: number;
   scannedBytes?: number;
@@ -1471,12 +1413,6 @@ export type JasmineApi = {
   getChromeTakeoverStatus(): Promise<ChromeTakeoverStatus>;
   registerChromeTakeover(request: ChromeTakeoverRegisterRequest): Promise<ChromeTakeoverStatus>;
   disableChromeTakeover(): Promise<ChromeTakeoverStatus>;
-  listRemoteConnections(): Promise<RemoteConnectionRecord[]>;
-  importRemoteConnections(): Promise<RemoteConnectionImportResult>;
-  createRemoteConnection(request: RemoteConnectionCreateRequest): Promise<RemoteConnectionRecord>;
-  updateRemoteConnection(request: RemoteConnectionUpdateRequest): Promise<RemoteConnectionRecord>;
-  deleteRemoteConnection(id: string): Promise<void>;
-  testRemoteConnection(id: string): Promise<RemoteConnectionTestResult>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(request: AppSettingsUpdateRequest): Promise<AppSettings>;
   getAppUpdateState(): Promise<AppUpdateState>;

@@ -1,6 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
-import type { AiProvider, ChatMessage, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ClipboardImagePasteRequest, FileSearchResult, PermissionMode, PickedPath, PluginPackageRecord, PromptTemplateRecord, ReasoningEffort, RemoteConnectionRecord, SkillRecord, WorkspaceProject } from "../../../shared/ipc";
+import type { AiProvider, ChatMessage, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ClipboardImagePasteRequest, FileSearchResult, PermissionMode, PickedPath, PluginPackageRecord, PromptTemplateRecord, ReasoningEffort, SkillRecord, WorkspaceProject } from "../../../shared/ipc";
 import type { RunState } from "../../types";
 import {
   ChevronDownIcon,
@@ -30,7 +30,6 @@ import {
   buildMentionItems,
   buildPromptCommandItems,
   buildSkillCommandItems,
-  remoteTarget,
   type MentionItem,
   type PromptCommandItem,
   type SkillCommandItem
@@ -62,8 +61,6 @@ export const Composer = memo(function Composer(props: {
   skillMenuOpen: boolean;
   webSearchEnabled: boolean;
   webSearchLoading: boolean;
-  remoteConnections: RemoteConnectionRecord[];
-  activeRemoteConnection: RemoteConnectionRecord | null;
   toolsEnabled: boolean;
   permissionMode: PermissionMode;
   permissionModeSaving: boolean;
@@ -112,7 +109,6 @@ export const Composer = memo(function Composer(props: {
   onOpenSettings(): void;
   onTestProvider(): void;
   onToggleWebSearch(): void;
-  onSelectRemoteConnection(id: string | null): void;
 }) {
   recordHarnessRender();
   const { t } = useI18n();
@@ -184,10 +180,7 @@ export const Composer = memo(function Composer(props: {
   const queuedCount = props.queueState.followUp.length + props.queueState.steering.length;
   const queuedMessages = useMemo(() => orderedQueuedMessages(props.queueState), [props.queueState]);
   const mentionItems = useMemo(
-    () => buildMentionItems(props.remoteConnections, props.activeRemoteConnection, props.plugins, props.inlinePluginIds, fileResults, mention.query, fileSearchLoading, {
-      localMachine: t("mention.localMachine"),
-      localMachineActive: t("mention.localMachineActive"),
-      localMachineDescription: t("mention.localMachineDescription"),
+    () => buildMentionItems(props.plugins, props.inlinePluginIds, fileResults, mention.query, fileSearchLoading, {
       plugins: t("mention.plugins"),
       pluginEnabled: t("mention.pluginEnabled"),
       pluginTemporary: t("mention.pluginTemporary"),
@@ -196,7 +189,7 @@ export const Composer = memo(function Composer(props: {
       typeToSearch: props.activeProject ? t("mention.typeToSearch") : t("mention.noProject"),
       fileHint: props.activeProject ? t("mention.fileHint") : t("mention.noProjectHint")
     }),
-    [props.remoteConnections, props.activeRemoteConnection, props.plugins, props.inlinePluginIds, props.activeProject, fileResults, mention.query, fileSearchLoading, t]
+    [props.plugins, props.inlinePluginIds, props.activeProject, fileResults, mention.query, fileSearchLoading, t]
   );
   const skillCommandItems = useMemo(
     () => buildSkillCommandItems(props.inlineSkillChoices, props.inlineSkillIds, skillCommand.query, props.skillsLoading, {
@@ -281,8 +274,7 @@ export const Composer = memo(function Composer(props: {
 
   async function selectMentionItem(item: MentionItem) {
     if (item.type === "status") return;
-    if (item.type === "remote") props.onSelectRemoteConnection(item.connectionId);
-    else if (item.type === "plugin") props.onAddInlinePlugin(item.pluginId);
+    if (item.type === "plugin") props.onAddInlinePlugin(item.pluginId);
     else if (item.type === "file") props.onAttachFilePath(item.path);
     replaceMentionToken();
     closeMention();
@@ -578,11 +570,6 @@ export const Composer = memo(function Composer(props: {
           />
         </div>
         <span className="composer-spacer" />
-        {props.activeRemoteConnection && (
-          <span className="remote-meter" title={t("composer.remoteTitle", { target: remoteTarget(props.activeRemoteConnection) })}>
-            {props.activeRemoteConnection.name}
-          </span>
-        )}
         <span className="run-meter" title={isRunning ? t("composer.responseRunning") : isStopping ? t("composer.stoppingResponse") : props.contextUsageTitle}>
           {isRunning ? queuedCount > 0 ? t("composer.runningQueued", { count: queuedCount }) : t("composer.running") : isStopping ? t("composer.stopping") : props.contextUsageLabel}
         </span>
@@ -804,9 +791,9 @@ function MentionMenu(props: {
     label: item.label,
     description: item.description,
     disabled: item.type === "status",
-    group: item.type === "remote" ? t("mention.remoteMachines") : item.type === "plugin" ? t("mention.plugins") : t("mention.files"),
+    group: item.type === "plugin" ? t("mention.plugins") : t("mention.files"),
     icon: item.type === "file" ? <PaperclipIcon /> : item.type === "plugin" ? <PlugIcon /> : <TerminalIcon />,
-    trailing: (item.type === "remote" && item.active) || (item.type === "plugin" && item.selected) ? <CheckIcon /> : undefined,
+    trailing: item.type === "plugin" && item.selected ? <CheckIcon /> : undefined,
     onSelect: () => props.onSelect(item)
   }));
 

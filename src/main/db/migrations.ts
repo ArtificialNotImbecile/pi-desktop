@@ -212,24 +212,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS remote_connections (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      host TEXT NOT NULL,
-      user TEXT,
-      port INTEGER,
-      remote_path TEXT,
-      config_host TEXT,
-      config_path TEXT,
-      source TEXT NOT NULL DEFAULT 'manual',
-      active INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'unchecked',
-      last_connected_at TEXT,
-      last_error TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS app_settings (
       id TEXT PRIMARY KEY,
       tool_provider_id TEXT NOT NULL DEFAULT 'deepseek',
@@ -280,8 +262,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE INDEX IF NOT EXISTS idx_skill_sources_path ON skill_sources(path);
     CREATE INDEX IF NOT EXISTS idx_prompt_template_sources_path ON prompt_template_sources(path);
     CREATE INDEX IF NOT EXISTS idx_external_skill_states_enabled ON external_skill_states(enabled);
-    CREATE INDEX IF NOT EXISTS idx_remote_connections_active ON remote_connections(active, name);
-    CREATE INDEX IF NOT EXISTS idx_remote_connections_config ON remote_connections(config_path, config_host);
     CREATE INDEX IF NOT EXISTS idx_activity_observations_created_at ON activity_observations(created_at);
     CREATE INDEX IF NOT EXISTS idx_working_tasks_status_updated_at ON working_tasks(status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_working_tasks_finished_at ON working_tasks(finished_at);
@@ -412,6 +392,12 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "file_changes", "diff_deleted_lines", "INTEGER");
   if (!hasMigration(db, 37)) backfillFileChangeDiffLineStats(db);
   markMigration(db, 37, "per-file diff line stats", now);
+  // The remote SSH feature is gone, so its table only holds rows nothing can
+  // read anymore. The drop runs on every launch rather than behind the version
+  // guard: downgrading to a pre-38 build recreates the table, and the current
+  // app must not leave rows sitting in a table it cannot read.
+  db.exec("DROP TABLE IF EXISTS remote_connections;");
+  markMigration(db, 38, "remove remote ssh connections", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

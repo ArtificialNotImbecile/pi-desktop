@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  createSshConfigFixture,
   enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
@@ -109,59 +108,6 @@ test.describe("Jasmine integrations", () => {
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.listMcpServers()).some((server) => server.name === "Local docs MCP" && server.args.includes("server path.js")))).toBe(true);
     await manualRow.getByRole("button", { name: "Remove" }).click();
     await expect(manualRow).toHaveCount(0);
-  });
-
-  test("remote SSH connections import, activate, and reach chat runtime", async () => {
-    const { page } = harness;
-
-    await openSettings(page, "Remote");
-    await expect(page.locator(".remote-list")).toContainText("No remote connections yet.");
-    await expect(page.locator(".remote-tabs button", { hasText: "SSH" })).toHaveAttribute("aria-selected", "true");
-
-    await page.getByRole("button", { name: "Import from SSH Config" }).click();
-    const importedRow = page.locator(".remote-row", { hasText: "vscode-dev" }).first();
-    await expect(importedRow).toBeVisible();
-    await expect(importedRow).toContainText("vscode-dev");
-    // Pixel polish (borders/radius/gaps) lives in the visual harness; here we guard the
-    // functional column ordering that keeps action buttons clear of the main content/status.
-    const remoteLayout = await importedRow.evaluate((row) => {
-      const rowActions = row.querySelector(".ui-settings-list-actions");
-      const rowMain = row.querySelector(".ui-settings-list-main");
-      const rowStatus = row.querySelector(".ui-settings-list-status");
-      if (!(rowActions instanceof HTMLElement) || !(rowMain instanceof HTMLElement) || !(rowStatus instanceof HTMLElement)) throw new Error("Remote row layout missing.");
-      const rowActionsBox = rowActions.getBoundingClientRect();
-      const rowMainBox = rowMain.getBoundingClientRect();
-      const rowStatusBox = rowStatus.getBoundingClientRect();
-      return {
-        actionsAfterMain: rowActionsBox.left > rowMainBox.right,
-        statusBeforeActions: rowStatusBox.right <= rowActionsBox.left
-      };
-    });
-    expect(remoteLayout.actionsAfterMain).toBe(true);
-    expect(remoteLayout.statusBeforeActions).toBe(true);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listRemoteConnections()).some((connection) => connection.configHost === "vscode-dev"))).toBe(true);
-
-    await page.getByRole("button", { name: "Add Remote" }).click();
-    const editor = page.locator(".remote-editor");
-    await expect(editor).toBeVisible();
-    await editor.getByLabel("Name").fill("WSL project");
-    await editor.getByLabel("Host").fill("127.0.0.1");
-    await editor.getByLabel("User").fill("dev");
-    await editor.getByLabel("Port").fill("2222");
-    await editor.getByLabel("Remote path").fill("/home/dev/project");
-    await editor.getByRole("button", { name: "Save Remote" }).click();
-
-    const manualRow = page.locator(".remote-row", { hasText: "WSL project" }).first();
-    await expect(manualRow).toBeVisible();
-    await manualRow.getByRole("button", { name: "Use" }).click();
-    await expect(manualRow.getByRole("button", { name: "Active" })).toBeVisible();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listRemoteConnections()).find((connection) => connection.name === "WSL project")?.active)).toBe(true);
-
-    await page.getByRole("button", { name: "Close settings" }).click();
-    await expect(page.locator(".remote-meter")).toHaveText("WSL project");
-    await page.locator(".rich-composer-editor").fill("remote coding check");
-    await page.locator(".send-button").click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Remote coding target: WSL project");
   });
 
   test("skills can be selected from chat commands and the Skills menu", async () => {

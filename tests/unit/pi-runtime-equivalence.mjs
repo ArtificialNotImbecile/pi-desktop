@@ -19,14 +19,12 @@ const {
   createWebSearchTool,
   isJasmineFileChangesPackageExtensionPath,
   isJasmineFileChangesPackageSourcePath,
-  replaceWorkingDirectory,
   runPiCodingAgentChat
 } = await import("../../dist/main/main/agent/providers/piCodingAgent.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, withContextCacheMetrics, withMissingContextTaxonomySegments } = await import("../../dist/main/main/agent/extensions/contextCapture/classifier.js");
 const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
 const { modelContentForMessage, nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
-const { createSshCodingTools } = await import("../../dist/main/main/agent/tools/sshCodingTools.js");
 const { prepareEnabledSkillManifests } = await import("../../dist/main/main/services/skillManifests.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
@@ -481,10 +479,6 @@ assert.doesNotMatch(jasminePromptAppend, /Current working directory/);
 assert.equal(buildTurnContext([], []), undefined);
 assert.match(buildTurnContext(["Remember the user's preference."], []) ?? "", /relevant_memories/);
 assert.match(buildTurnContext([], [{ title: "Current result", url: "https://example.com", snippet: "Current snippet" }]) ?? "", /web_search_results/);
-assert.equal(
-  replaceWorkingDirectory("Base\nCurrent working directory: C:/repo", "C:\\repo", "Current working directory: /srv/repo"),
-  "Base\nCurrent working directory: /srv/repo"
-);
 if (process.platform === "win32") {
   const systemBashPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
   const gitBashPath = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe");
@@ -982,55 +976,6 @@ try {
   assert.equal((promptRegressionSystem.match(/Current working directory:/g) ?? []).length, 1);
   assert.match(promptRegressionMessages, /TURN_MEMORY_MUST_NOT_BE_SYSTEM/);
   assert.match(promptRegressionMessages, /TURN_WEB_MUST_NOT_BE_SYSTEM/);
-
-  const remotePromptStart = captures.length;
-  await runPiCodingAgentChat({
-    provider: {
-      providerName: "jasmine-mock",
-      apiKey: "test-key",
-      baseUrl,
-      modelId: "jasmine-test",
-      capabilities: {
-        vision: false,
-        imageOutput: false,
-        toolCalling: true,
-        reasoning: false,
-        embedding: false
-      },
-      contextWindow: 128000,
-      maxOutputTokens: 1200,
-      providerOptionsJson: "{}"
-    },
-    messages: [{ role: "user", content: "remote prompt ownership regression" }],
-    content: "remote prompt ownership regression",
-    attachments: [],
-    jasminePromptAppend: "JASMINE_MINIMAL_APPEND",
-    localRuntimePromptAppend: "LOCAL_RUNTIME_MUST_NOT_SURVIVE_REMOTE",
-    cwd: promptRegressionCwd,
-    agentDir: promptRegressionAgentDir,
-    toolsEnabled: true,
-    remoteConnection: {
-      id: "remote-prompt-regression",
-      name: "Prompt regression remote",
-      host: "example.internal",
-      user: "tester",
-      remotePath: "/srv/jasmine",
-      source: "manual",
-      active: true,
-      status: "connected",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
-  });
-  assert.equal(captures.length, remotePromptStart + 1);
-  const remotePromptPayload = captures.at(-1);
-  const remotePromptSystem = remotePromptPayload.messages.find((message) => message.role === "system")?.content ?? "";
-  assert.match(remotePromptSystem, /You are an expert coding assistant operating inside pi/);
-  assert.match(remotePromptSystem, /tools operate on the SSH target tester@example\.internal:\/srv\/jasmine/);
-  assert.match(remotePromptSystem, /Current working directory: \/srv\/jasmine \(via SSH:/);
-  assert.doesNotMatch(remotePromptSystem, /LOCAL_RUNTIME_MUST_NOT_SURVIVE_REMOTE/);
-  assert.doesNotMatch(remotePromptSystem, new RegExp(`Current working directory: ${escapeRegExp(promptRegressionCwd.replace(/\\/g, "/"))}`));
-  assert.equal((remotePromptSystem.match(/Current working directory:/g) ?? []).length, 1);
 
   const captureThinkingPayload = async (provider, reasoningEffort, content) => {
     const captureCount = captures.length;
@@ -1637,31 +1582,6 @@ try {
   assert.match(explicitSkillContent, new RegExp(discoverableSkillBodyMarker));
   assert.equal(modelContentForMessage({ role: "user", content: "prepare the release notes" }), "prepare the release notes");
 
-  const sshSkillReadTool = createSshCodingTools({
-    connection: {
-      id: "invalid-ssh-fixture",
-      name: "Invalid SSH fixture",
-      host: "invalid.example.test",
-      source: "manual",
-      active: true,
-      status: "connected",
-      createdAt: "2026-08-10T00:00:00.000Z",
-      updatedAt: "2026-08-10T00:00:00.000Z"
-    },
-    localCwd: path.join(tempDir, "local-project"),
-    remoteCwd: "/srv/remote-project",
-    localResourcePaths: [discoverableSkillPath]
-  }).find((tool) => tool.name === "read");
-  assert.ok(sshSkillReadTool);
-  const sshSkillReadResult = await sshSkillReadTool.execute(
-    "ssh-local-skill-read",
-    { path: discoverableSkillPath },
-    undefined,
-    undefined,
-    { cwd: path.join(tempDir, "local-project") }
-  );
-  assert.match(sshSkillReadResult.content[0].text, new RegExp(discoverableSkillBodyMarker));
-
   const captureCountBeforeSelectedSkill = captures.length;
   const taxonomyCaptures = [];
   await runPiCodingAgentChat({
@@ -1923,51 +1843,6 @@ try {
   assert.equal(settingsFileChangeCaptures[0].coverage.trackingMode, "watcher");
   assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false);
   assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true, "unrelated packages must remain loaded");
-
-  const remoteFileChangeCaptures = [];
-  const captureCountBeforeRemoteFileChangesDedupe = captures.length;
-  await runPiCodingAgentChat({
-    provider: {
-      providerName: "jasmine-mock",
-      apiKey: "test-key",
-      baseUrl,
-      modelId: "jasmine-test",
-      capabilities: {
-        vision: false,
-        imageOutput: false,
-        toolCalling: true,
-        reasoning: false,
-        embedding: false
-      },
-      contextWindow: 128000,
-      maxOutputTokens: 1200,
-      providerOptionsJson: "{}"
-    },
-    messages: [{ role: "user", content: "verify remote file-change package suppression" }],
-    content: "verify remote file-change package suppression",
-    attachments: [],
-    jasminePromptAppend: systemPrompt,
-    cwd: fileChangesDedupeCwd,
-    agentDir,
-    toolsEnabled: true,
-    remoteConnection: {
-      id: "remote-file-changes-dedupe",
-      name: "File changes dedupe remote",
-      host: "example.internal",
-      user: "tester",
-      remotePath: "/srv/jasmine",
-      source: "manual",
-      active: true,
-      status: "connected",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    },
-    onFileChanges: (capture) => remoteFileChangeCaptures.push(capture)
-  });
-  assert.equal(captures.length, captureCountBeforeRemoteFileChangesDedupe + 1);
-  assert.equal(remoteFileChangeCaptures.length, 0, "remote runs must not start a local filesystem tracker");
-  assert.equal(payloadToolNames(captures.at(-1)).includes("duplicate_file_changes_marker"), false, "remote runs must suppress the standalone local tracker package");
-  assert.equal(payloadToolNames(captures.at(-1)).includes("jasmine_fixture_tool"), true);
 
   pluginRecords = await setPluginPackageEnabled({ userDataDir }, fileChangesPackageDir, false);
   const disabledFileChangesRecord = pluginRecords.find((plugin) => samePath(plugin.installedPath ?? plugin.source, fileChangesPackageDir));

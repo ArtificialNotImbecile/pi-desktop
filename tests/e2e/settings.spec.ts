@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  createSshConfigFixture,
   enableWebSearchFallback,
   executableFixtures,
   expectComposerDraft,
@@ -106,7 +105,7 @@ test.describe("Jasmine settings", () => {
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect(page.locator(".settings-panel")).toHaveClass(/single-nav/);
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-nav button .icon")).toHaveCount(12);
+    await expect(page.locator(".settings-nav button .icon")).toHaveCount(11);
     await expect(page.locator(".settings-detail")).not.toContainText("Command palette");
     await expect(page.locator(".settings-detail")).not.toContainText("Theme");
     await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);

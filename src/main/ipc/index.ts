@@ -13,7 +13,6 @@ import { registerPermissionApprovalIpc } from "./permissionApproval.js";
 import { registerProviderIpc } from "./providers.js";
 import { registerProjectIpc } from "./projects.js";
 import { registerPromptTemplateIpc } from "./promptTemplates.js";
-import { registerRemoteConnectionIpc } from "./remoteConnections.js";
 import { registerRightPanelIpc } from "./rightPanels.js";
 import { registerSkillIpc } from "./skills.js";
 import { registerTerminalIpc } from "./terminal.js";
@@ -32,7 +31,6 @@ export function registerIpc(context: IpcContext): void {
   registerTraceIpc(context);
   registerMemoryIpc(context);
   registerMcpIpc(context);
-  registerRemoteConnectionIpc(context);
   registerPromptTemplateIpc(context);
   registerSkillIpc(context);
   registerPluginIpc(context);

@@ -88,15 +88,6 @@ export function useCommandPaletteCommands(input: {
       }
     },
     {
-      id: "remote",
-      label: t("command.remote"),
-      detail: t("command.remote.detail"),
-      action: () => {
-        input.closeFloatingSurfaces();
-        input.navigate({ name: "settings", section: "remote" });
-      }
-    },
-    {
       id: "activity",
       label: t("command.activity"),
       detail: t("command.activity.detail"),

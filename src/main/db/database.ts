@@ -31,11 +31,6 @@ import type {
   McpServerCreateRequest,
   McpServerRecord,
   McpServerUpdateRequest,
-  RemoteConnectionCreateRequest,
-  RemoteConnectionImportResult,
-  RemoteConnectionRecord,
-  RemoteConnectionTestResult,
-  RemoteConnectionUpdateRequest,
   WebSearchResult,
   WebSearchSettings,
   WebSearchSettingsUpdateRequest,
@@ -131,15 +126,6 @@ import {
   updateMcpServer as updateMcpServerRow
 } from "./repositories/mcpServers.js";
 import {
-  deleteRemoteConnection as deleteRemoteConnectionRow,
-  getActiveRemoteConnection as getActiveRemoteConnectionRow,
-  getRemoteConnection as getRemoteConnectionRow,
-  listRemoteConnections as listRemoteConnectionRows,
-  upsertRemoteConnection as upsertRemoteConnectionRow,
-  updateRemoteConnection as updateRemoteConnectionRow,
-  updateRemoteConnectionStatus as updateRemoteConnectionStatusRow
-} from "./repositories/remoteConnections.js";
-import {
   createToolRun as createToolRunRow,
   finishToolRun as finishToolRunRow,
   getToolRun as getToolRunRow,
@@ -185,7 +171,6 @@ import {
   skillScanSignature,
   skillSpecName
 } from "../services/skillFiles.js";
-import { discoverRemoteConnectionsFromSshConfig, testRemoteConnection as testSshRemoteConnection } from "../services/remoteConnections.js";
 
 type DatabaseSyncInstance = SqlDatabase;
 
@@ -767,63 +752,6 @@ export class JasmineDatabase {
 
   deleteMcpServer(id: string): void {
     deleteMcpServerRow(this.db, id);
-  }
-
-  listRemoteConnections(): RemoteConnectionRecord[] {
-    return listRemoteConnectionRows(this.db);
-  }
-
-  getActiveRemoteConnection(): RemoteConnectionRecord | null {
-    return getActiveRemoteConnectionRow(this.db);
-  }
-
-  async importRemoteConnections(): Promise<RemoteConnectionImportResult> {
-    const discovered = await discoverRemoteConnectionsFromSshConfig();
-    const imported = discovered.candidates.map((candidate) => upsertRemoteConnectionRow(this.db, candidate, now()));
-    return { imported, scannedPaths: discovered.scannedPaths };
-  }
-
-  createRemoteConnection(input: RemoteConnectionCreateRequest): RemoteConnectionRecord {
-    return upsertRemoteConnectionRow(this.db, { ...input, source: input.source ?? "manual" }, now());
-  }
-
-  updateRemoteConnection(input: RemoteConnectionUpdateRequest): RemoteConnectionRecord {
-    const existing = getRemoteConnectionRow(this.db, input.id);
-    if (!existing) throw new Error("Remote connection does not exist.");
-    updateRemoteConnectionRow(this.db, existing, input, now());
-    const updated = getRemoteConnectionRow(this.db, input.id);
-    if (!updated) throw new Error("Remote connection does not exist.");
-    return updated;
-  }
-
-  deleteRemoteConnection(id: string): void {
-    deleteRemoteConnectionRow(this.db, id);
-  }
-
-  async testRemoteConnection(id: string): Promise<RemoteConnectionTestResult> {
-    const existing = getRemoteConnectionRow(this.db, id);
-    if (!existing) throw new Error("Remote connection does not exist.");
-    try {
-      const result = await testSshRemoteConnection(existing);
-      updateRemoteConnectionStatusRow(this.db, id, {
-        status: "connected",
-        lastConnectedAt: now(),
-        lastError: null,
-        remotePath: result.remotePath
-      }, now());
-      const connection = getRemoteConnectionRow(this.db, id);
-      if (!connection) throw new Error("Remote connection does not exist.");
-      return { connection, ok: true, remotePath: result.remotePath };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateRemoteConnectionStatusRow(this.db, id, {
-        status: "failed",
-        lastError: message
-      }, now());
-      const connection = getRemoteConnectionRow(this.db, id);
-      if (!connection) throw new Error("Remote connection does not exist.");
-      return { connection, ok: false, error: message };
-    }
   }
 
   async getSkillsForPrompt(skillIds: string[] = []): Promise<SkillRecord[]> {

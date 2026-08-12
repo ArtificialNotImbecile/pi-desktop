@@ -738,7 +738,6 @@ export async function launchJasmine(label: string, existingUserDataDir?: string,
   if (!existingUserDataDir) await rm(userDataDir, { recursive: true, force: true });
   await mkdir(userDataDir, { recursive: true });
   const redSquarePath = await createRedSquarePng(userDataDir);
-  const sshConfigPath = await createSshConfigFixture(userDataDir);
   const projectFolderPath = await createProjectFolderFixture(userDataDir);
   const editorCandidates = JSON.stringify(executableFixtures.editors);
   const terminalCandidates = JSON.stringify(executableFixtures.terminals);
@@ -764,7 +763,6 @@ export async function launchJasmine(label: string, existingUserDataDir?: string,
       JASMINE_E2E_TERMINAL_CANDIDATES: terminalCandidates,
       JASMINE_E2E_EDITOR_PATH: process.execPath,
       JASMINE_E2E_OPEN_EDITOR_LOG: path.join(userDataDir, "editor-open.log"),
-      JASMINE_E2E_SSH_CONFIG_FILE: sshConfigPath,
       ...extraEnv
     })
   });
@@ -800,22 +798,6 @@ export async function waitForAppShellPage(app: ElectronApplication, timeoutMs: n
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("Jasmine did not navigate from the startup screen to the app shell.");
-}
-
-export async function createSshConfigFixture(userDataDir: string): Promise<string> {
-  const sshDir = path.join(userDataDir, "ssh");
-  await mkdir(sshDir, { recursive: true });
-  const configPath = path.join(sshDir, "config");
-  await writeFile(configPath, [
-    "Host vscode-dev",
-    "  HostName 127.0.0.1",
-    "  User dev",
-    "  Port 2222",
-    "",
-    "Host *",
-    "  ForwardAgent yes"
-  ].join("\n"));
-  return configPath;
 }
 
 export async function createProjectFolderFixture(userDataDir: string): Promise<string> {

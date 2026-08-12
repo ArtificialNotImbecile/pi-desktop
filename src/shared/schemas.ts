@@ -371,32 +371,6 @@ export const chromeTakeoverRegisterSchema = z.object({
   extensionId: z.string().trim().toLowerCase().regex(/^[a-p]{32}$/).optional()
 });
 
-export const remoteConnectionSourceSchema = z.enum(["manual", "vscode"]);
-
-export const remoteConnectionCreateSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  host: z.string().trim().min(1).max(200),
-  user: z.string().trim().max(100).optional(),
-  port: z.number().int().min(1).max(65535).optional(),
-  remotePath: z.string().trim().max(1000).optional(),
-  configHost: z.string().trim().max(200).optional(),
-  configPath: z.string().trim().max(1000).optional(),
-  source: remoteConnectionSourceSchema.optional(),
-  active: z.boolean().optional()
-});
-
-export const remoteConnectionUpdateSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().trim().min(1).max(100).optional(),
-  host: z.string().trim().min(1).max(200).optional(),
-  user: z.string().trim().max(100).optional(),
-  port: z.union([z.number().int().min(1).max(65535), z.null()]).optional(),
-  remotePath: z.string().trim().max(1000).optional(),
-  configHost: z.string().trim().max(200).optional(),
-  configPath: z.string().trim().max(1000).optional(),
-  active: z.boolean().optional()
-});
-
 export const reasoningEffortSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
 export const hexColorSchema = z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, "Use a 6-digit hex color.");

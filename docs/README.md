@@ -15,6 +15,7 @@ Jasmine is a community-built project and is not affiliated with or endorsed by P
 - [开发与发版流程](development-and-release.md) — 普通提交 CI、手动跨平台预构建和正式 Release 的职责边界与操作步骤。
 - [UI inventory](ui_inventory.md) — visible product surfaces and their automated evidence.
 - [Workflow inventory](workflow_inventory.md) — multi-step desktop workflows and coverage.
+- [Roadmap](roadmap.md) — capabilities intentionally kept out of the app and what they must prove as standalone Pi extensions first.
 
 ## Development
 

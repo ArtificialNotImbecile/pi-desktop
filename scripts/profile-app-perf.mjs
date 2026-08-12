@@ -95,7 +95,6 @@ async function main() {
     ["listPromptTemplates", "listPromptTemplates"],
     ["listMcpMarketplace", "listMcpMarketplace", undefined],
     ["listMcpServers", "listMcpServers"],
-    ["listRemoteConnections", "listRemoteConnections"],
     ["getWebSearchSettings", "getWebSearchSettings"],
     ["getActivitySettings", "getActivitySettings"],
     ["execDiscovery(editor)", "listExecutableDiscovery", "editor"],
