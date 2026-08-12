@@ -113,17 +113,21 @@ jobs:
       - name: Build application
         run: npm run build
 
-      # The suite is serial-bound, not test-bound: a full local run spent 316s of
-      # test time in 324s of wall clock, so one worker buys nothing but latency.
-      # Two rather than the config's Linux default of four -- each test launches
-      # its own Electron against a 45s timeout, and a standard runner has four
-      # vCPUs, which is where the starvation the Playwright config documents on
-      # macOS starts. Raise it once a few runs prove stable.
+      # One worker, and not as an oversight. Two workers on this runner finished
+      # in 3.6m instead of 5.4m and failed five specs that pass serially --
+      # window maximize/restore, model-menu anchoring, message paging, and the
+      # Working notification, none of them touched by the change under test.
+      # That is the same starvation the Playwright config records for parallel
+      # Electron on macOS: each test drives its own Electron window against a
+      # 45s budget, and four vCPUs cannot give two of them a real one. The
+      # suite is serial by necessity, not by neglect, and a flaky gate is worth
+      # less than a slow one. Any future attempt to parallelize has to make the
+      # window-state specs robust first.
       - name: Run full E2E suite
         run: xvfb-run -a npm run test:e2e
         env:
           JASMINE_E2E_OFFSCREEN: "1"
-          JASMINE_E2E_WORKERS: "2"
+          JASMINE_E2E_WORKERS: "1"
 
       - name: Upload failure artifacts
         if: failure()

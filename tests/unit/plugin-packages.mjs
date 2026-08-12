@@ -3,7 +3,12 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const { listPluginPackages, syncBundledPluginPackages } = await import("../../dist/main/main/services/plugins.js");
+const {
+  listPluginPackages,
+  resolvePiWebAccessPackageRoot,
+  syncBundledPluginPackages,
+  syncPiWebAccessPluginWithWebSearch
+} = await import("../../dist/main/main/services/plugins.js");
 const tempRoot = await mkdtemp(path.join(tmpdir(), "jasmine-packages-"));
 
 try {
@@ -44,6 +49,36 @@ try {
     const source = typeof entry === "string" ? entry : entry?.source;
     return typeof source === "string" && path.resolve(source) === path.resolve(userOwnedChrome);
   }), true);
+
+  // The Web Search toggle is the only control for pi-web-access, so the sync
+  // has to move the package in both directions. It used to only ever enable,
+  // which left pi holding web tools after the setting was switched back off.
+  const webAccessRoot = resolvePiWebAccessPackageRoot();
+  if (webAccessRoot) {
+    const webUserData = path.join(tempRoot, "web-access");
+    await mkdir(path.join(webUserData, "pi-agent"), { recursive: true });
+    const webAccessEnabled = async () => {
+      const record = (await listPluginPackages({ userDataDir: webUserData }))
+        .find((item) => path.resolve(item.source) === path.resolve(webAccessRoot));
+      assert.ok(record, "pi-web-access should be listed");
+      return record.enabled;
+    };
+
+    await syncPiWebAccessPluginWithWebSearch({ userDataDir: webUserData }, { enabled: true, updatedAt: "" });
+    assert.equal(await webAccessEnabled(), true, "enabling web search should enable pi-web-access");
+
+    await syncPiWebAccessPluginWithWebSearch({ userDataDir: webUserData }, { enabled: false, updatedAt: "" });
+    assert.equal(await webAccessEnabled(), false, "disabling web search should disable pi-web-access");
+
+    await syncPiWebAccessPluginWithWebSearch({ userDataDir: webUserData }, { enabled: true, updatedAt: "" });
+    assert.equal(await webAccessEnabled(), true, "re-enabling web search should enable pi-web-access again");
+
+    // Disabling from a clean profile must not throw: setEnabled rejects an
+    // unconfigured package, and the toggle starts off.
+    const untouched = path.join(tempRoot, "web-access-untouched");
+    await mkdir(path.join(untouched, "pi-agent"), { recursive: true });
+    await syncPiWebAccessPluginWithWebSearch({ userDataDir: untouched }, { enabled: false, updatedAt: "" });
+  }
 
   console.log("plugin-packages unit test passed");
 } finally {
