@@ -292,6 +292,33 @@ try {
       },
       { id: "legacy-remote", host: "example.internal", user: "dev", port: 2222, remote_path: "/srv/app", source: "manual" }
     );
+    // Downgrading to a pre-38 build recreates the table and can collect new
+    // rows, so retirement must run again and keep both sets of records.
+    legacyDb.exec(`
+      CREATE TABLE remote_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        host TEXT NOT NULL,
+        user TEXT,
+        port INTEGER,
+        remote_path TEXT,
+        config_host TEXT,
+        config_path TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        active INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'unchecked',
+        last_connected_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO remote_connections (id, name, host, source, created_at, updated_at)
+      VALUES ('downgrade-remote', 'Downgrade remote', 'other.internal', 'manual', '${timestamp}', '${timestamp}');
+    `);
+    migrations.migrateDatabase(legacyDb, () => timestamp);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'").get(), undefined);
+    const mergedRemotes = JSON.parse(await readFile(path.join(path.dirname(legacyDbPath), "retired-remote-connections.json"), "utf8"));
+    assert.deepEqual(mergedRemotes.connections.map((connection) => connection.id).sort(), ["downgrade-remote", "legacy-remote"]);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
     assert.equal(typeof backfilled.project_id, "string");
     assert.deepEqual(JSON.parse(legacyDb.prepare("SELECT active_plugin_ids_json FROM chat_threads WHERE id = 'legacy-thread'").get().active_plugin_ids_json), []);
