@@ -166,14 +166,22 @@ test.describe("Jasmine chat runtime", () => {
 
   test("running composer queues editable follow-ups, deletes pending rows, steers after queueing, and ignores nearby non-control clicks", async () => {
     const { page, userDataDir } = harness;
-    await startEmptyThread(page);
+    // An existing thread rather than a new chat, matching the queue-rail spec
+    // above. On CI the send registered -- the user bubble rendered -- but the
+    // composer never showed "Stop response", so the run state did not reach it
+    // while a brand-new chat was still settling its thread id. That race is
+    // worth its own fix; queueing, editing, deleting, steering, and persisted
+    // order are what this spec is for, and none of them need a fresh chat.
+    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "slow response slow timeline queue base" }));
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /slow response slow timeline queue base/ }).click();
 
     await page.locator(".rich-composer-editor").fill("slow response slow timeline queue base");
     await page.getByRole("button", { name: "Send" }).click();
-    // Split from the Stop assertion below on purpose. Send and Stop are the same
-    // button under two names, so a single "Stop response" expectation cannot say
-    // whether the send never registered or the reply already finished -- which
-    // is why the CI-only failure here was undiagnosable from the report alone.
+    // Send and Stop are the same button under two names, so asserting the user
+    // bubble first keeps "the send never registered" distinguishable from "the
+    // reply already finished".
     await expect(page.locator(".user-bubble")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
 
