@@ -118,7 +118,7 @@ test.describe("Working task center", () => {
     await expect.poll(() => page.evaluate(async (threadId) => (await window.jasmine.listThreads()).find((item) => item.id === threadId)?.projectId ?? null, setup.threads[4].id)).toBe(null);
   });
 
-  test("notifies for the viewed chat after hiding or minimizing and restores that chat", async ({}, testInfo) => {
+  test("notifies for the viewed chat after hiding or minimizing and restores that chat @desktop-session", async ({}, testInfo) => {
     let { page } = harness;
 
     await openSettings(page);

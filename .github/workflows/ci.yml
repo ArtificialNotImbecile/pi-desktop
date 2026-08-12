@@ -126,6 +126,9 @@ jobs:
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
+          # 104 of 111. The seven @desktop-session specs need a real desktop
+          # session; see tests/playwright.config.ts. A local run covers them.
+          JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
 
       - name: Upload failure artifacts
         if: failure()

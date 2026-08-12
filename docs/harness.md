@@ -11,6 +11,14 @@ Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generate
 - `npm run harness:visual`: writes screenshots and a matrix under `test-results/ui-harness/visual/`.
 - `npm run harness:accept`: runs the headed desktop acceptance path and writes `test-results/ui-harness/acceptance/`.
 - `npm run test:e2e:smoke`: fast critical paths in background/off-screen mode.
+- Seven specs are tagged `@desktop-session` and are skipped by CI's Full E2E job
+  through `JASMINE_E2E_SKIP_DESKTOP_SESSION=1`. They assert window maximize,
+  minimize, restore, window drags, and pointer-driven panel resizes, which a CI
+  runner cannot perform: they failed on Linux and macOS alike, in partly
+  different sets, while passing locally. A local `npm run test:e2e` still runs
+  all 111. Retiring the tag means either covering those assertions in renderer
+  tests or giving CI a session that can satisfy them -- not simply re-enabling
+  them.
 - `npm run test:e2e`: full Electron suite in background/off-screen mode.
 - `npm run test:e2e:headed`: explicit foreground run for interactive debugging.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.

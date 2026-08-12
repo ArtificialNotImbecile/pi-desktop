@@ -207,7 +207,7 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.locator(".empty-state")).toBeVisible();
   });
 
-  test("right panel terminal resizes and preserves terminal session", async () => {
+  test("right panel terminal resizes and preserves terminal session @desktop-session", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 

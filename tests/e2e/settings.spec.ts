@@ -330,7 +330,7 @@ test.describe("Jasmine settings", () => {
     }
   });
 
-  test("settings window has movable chrome plus minimize and restore states", async () => {
+  test("settings window has movable chrome plus minimize and restore states @desktop-session", async () => {
     const { page } = harness;
 
     await openProviderSettings(page);
