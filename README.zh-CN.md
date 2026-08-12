@@ -158,5 +158,3 @@ npm.cmd run test:e2e:smoke
 ## 许可证
 
 Jasmine 使用 [MIT 许可证](LICENSE)。
-</content>
-</invoke>

@@ -88,5 +88,3 @@ A future `pi-chrome` extension should cover:
    producing weaker evidence.
 4. Only then is it wired into the desktop app, with `docs/ui_inventory.md` and
    `docs/workflow_inventory.md` updated to record the new surface and its evidence.
-</content>
-</invoke>
