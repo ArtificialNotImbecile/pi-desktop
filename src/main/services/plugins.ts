@@ -321,10 +321,17 @@ class PluginPackageService {
   // normal state for a builtin nobody has switched on yet -- nothing to undo.
   async disableBuiltinSource(source: string): Promise<void> {
     const canonical = canonicalPluginSource(source);
-    const configured = this.listPackageEntries()
-      .some((entry) => this.sourcesMatch(entry.source, canonical, entry.scope));
-    if (!configured) return;
-    await this.setEnabled(canonical, false, "user");
+    // Every configured scope, not just "user": a project entry left enabled
+    // keeps the resolver loading the extension, so the setting would report
+    // off while the agent still held the tools.
+    const scopes = new Set(
+      this.listPackageEntries()
+        .filter((entry) => this.sourcesMatch(entry.source, canonical, entry.scope))
+        .map((entry) => entry.scope)
+    );
+    for (const scope of scopes) {
+      await this.setEnabled(canonical, false, scope);
+    }
   }
 
   async list(): Promise<PluginPackageRecord[]> {

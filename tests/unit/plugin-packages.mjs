@@ -6,6 +6,7 @@ import path from "node:path";
 const {
   listPluginPackages,
   resolvePiWebAccessPackageRoot,
+  setPluginPackageEnabled,
   syncBundledPluginPackages,
   syncPiWebAccessPluginWithWebSearch
 } = await import("../../dist/main/main/services/plugins.js");
@@ -78,6 +79,40 @@ try {
     const untouched = path.join(tempRoot, "web-access-untouched");
     await mkdir(path.join(untouched, "pi-agent"), { recursive: true });
     await syncPiWebAccessPluginWithWebSearch({ userDataDir: untouched }, { enabled: false, updatedAt: "" });
+
+    // A project-scoped entry must be disabled too. Disabling only the user
+    // scope leaves the resolver loading the extension while the setting reads
+    // off, which is the same lie as never disabling at all. The project cwd is
+    // a temp dir so this never writes into the checkout.
+    const bothScopes = path.join(tempRoot, "web-access-both-scopes");
+    const bothScopesProject = path.join(bothScopes, "project");
+    await mkdir(path.join(bothScopes, "pi-agent"), { recursive: true });
+    await mkdir(bothScopesProject, { recursive: true });
+    const bothScopesOptions = { userDataDir: bothScopes, cwd: bothScopesProject };
+    // setEnabled reuses whichever scope already holds the package, so the app
+    // cannot produce this state itself; it comes from a project that commits
+    // .pi/settings.json while the user also enabled the package globally.
+    await mkdir(path.join(bothScopesProject, ".pi"), { recursive: true });
+    await writeFile(
+      path.join(bothScopes, "pi-agent", "settings.json"),
+      JSON.stringify({ packages: [webAccessRoot] }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(bothScopesProject, ".pi", "settings.json"),
+      JSON.stringify({ packages: [webAccessRoot] }, null, 2),
+      "utf8"
+    );
+    const enabledScopes = (await listPluginPackages(bothScopesOptions))
+      .filter((item) => path.resolve(item.source) === path.resolve(webAccessRoot));
+    assert.equal(enabledScopes.length, 2, "both scopes should hold pi-web-access before disabling");
+    assert.deepEqual(enabledScopes.map((item) => item.enabled), [true, true]);
+
+    await syncPiWebAccessPluginWithWebSearch(bothScopesOptions, { enabled: false, updatedAt: "" });
+    for (const record of await listPluginPackages(bothScopesOptions)) {
+      if (path.resolve(record.source) !== path.resolve(webAccessRoot)) continue;
+      assert.equal(record.enabled, false, `${record.scope} scope should not keep pi-web-access enabled`);
+    }
   }
 
   console.log("plugin-packages unit test passed");

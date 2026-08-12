@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WebSearchSettingsUpdateRequest, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, PluginPackageScope, ReasoningEffort, SkillRecord, WebSearchSettingsUpdateRequest, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
@@ -140,6 +140,14 @@ function App(props: { initialAppSettings: AppSettings }) {
     if (next) await plugins.refresh();
     return next;
   }, [plugins.refresh, webSearch.updateSettings]);
+
+  // The pi-web-access row writes web_search_settings in main, so the Web Search
+  // page would keep rendering the state it loaded at mount. This is the mirror
+  // of updateWebSearchAndPackages: whichever control moves, both re-read.
+  const setPluginEnabledAndWebSearch = useCallback(async (source: string, scope: PluginPackageScope, enabled: boolean) => {
+    await plugins.setEnabled({ source, scope, enabled });
+    await webSearch.refresh();
+  }, [plugins.setEnabled, webSearch.refresh]);
 
   const askUserQuestion = useAskUserQuestion({
     onError: setAppError
@@ -772,7 +780,7 @@ function App(props: { initialAppSettings: AppSettings }) {
             onInstallPlugin={(source) => plugins.install({ source })}
             onUpdatePlugin={(source, scope) => plugins.update({ source, scope })}
             onRemovePlugin={(source, scope) => plugins.remove({ source, scope })}
-            onSetPluginEnabled={(source, scope, enabled) => plugins.setEnabled({ source, scope, enabled })}
+            onSetPluginEnabled={setPluginEnabledAndWebSearch}
             onSave={providers.updateProvider}
             onTest={providers.testProvider}
             onFetchModels={providers.fetchProviderModels}
