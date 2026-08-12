@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import type { WebSearchSettings, WebSearchSettingsUpdateRequest } from "../../../shared/ipc";
 import { SettingsHeader } from "./SettingsHeader";
 import { useI18n } from "../../i18n";
-import { Switch, TextInput } from "../ui";
-import { SettingsActions, SettingsPage, SettingsRow, SettingsSection, StatePill } from "./SettingsLayout";
+import { Switch } from "../ui";
+import { SettingsActions, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
 
 export function WebSearchSettingsPage(props: {
   settings: WebSearchSettings;
@@ -17,28 +17,19 @@ export function WebSearchSettingsPage(props: {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
 
   useEffect(() => {
-    setDraft({ ...props.settings, provider: "duckduckgo" });
+    setDraft(props.settings);
     setSaveState("idle");
   }, [props.settings.updatedAt]);
 
   useEffect(() => {
     setSaveState("idle");
-  }, [draft.enabled, draft.maxResults, draft.timeoutMs]);
+  }, [draft.enabled]);
 
-  const dirty =
-    draft.enabled !== props.settings.enabled ||
-    draft.provider !== props.settings.provider ||
-    draft.maxResults !== props.settings.maxResults ||
-    draft.timeoutMs !== props.settings.timeoutMs;
+  const dirty = draft.enabled !== props.settings.enabled;
 
   async function save() {
     setSaveState("saving");
-    const result = await props.onUpdate({
-      enabled: draft.enabled,
-      provider: "duckduckgo",
-      maxResults: draft.maxResults,
-      timeoutMs: draft.timeoutMs
-    });
+    const result = await props.onUpdate({ enabled: draft.enabled });
     setSaveState(result ? "saved" : "failed");
   }
 
@@ -49,6 +40,7 @@ export function WebSearchSettingsPage(props: {
         <SettingsSection>
           <SettingsRow
             label={t("settings.web.use")}
+            description={t("settings.web.useDescription")}
             actions={
               <Switch
                 checked={draft.enabled}
@@ -56,44 +48,6 @@ export function WebSearchSettingsPage(props: {
                 disabled={props.saving || props.loading}
                 onChange={(checked) => setDraft((current) => ({ ...current, enabled: checked }))}
               />
-            }
-          />
-          <SettingsRow
-            label={t("settings.web.results")}
-            actions={
-              <TextInput
-                type="number"
-                min={1}
-                max={8}
-                value={draft.maxResults}
-                aria-label={t("settings.web.resultLimit")}
-                disabled={props.saving || props.loading}
-                onChange={(event) => setDraft((current) => ({ ...current, maxResults: Number(event.target.value) }))}
-              />
-            }
-          />
-          <SettingsRow
-            label={t("settings.web.timeout")}
-            actions={
-              <TextInput
-                type="number"
-                min={1500}
-                max={15000}
-                step={500}
-                value={draft.timeoutMs}
-                aria-label={t("settings.web.timeoutAria")}
-                disabled={props.saving || props.loading}
-                onChange={(event) => setDraft((current) => ({ ...current, timeoutMs: Number(event.target.value) }))}
-              />
-            }
-          />
-          <SettingsRow
-            label={t("settings.web.last")}
-            description={props.settings.lastError ? props.settings.lastError : t("settings.web.lastDescription")}
-            actions={
-              <StatePill tone={props.settings.lastError ? "danger" : props.settings.enabled ? "success" : "neutral"}>
-                {props.settings.lastRunAt ? new Date(props.settings.lastRunAt).toLocaleString() : t("app.never")}
-              </StatePill>
             }
           />
         </SettingsSection>

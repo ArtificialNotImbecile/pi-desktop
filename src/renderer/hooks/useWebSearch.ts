@@ -5,9 +5,6 @@ import { errorMessage } from "../utils/errors";
 
 const fallbackSettings: WebSearchSettings = {
   enabled: false,
-  provider: "pi-web-access",
-  maxResults: 4,
-  timeoutMs: 7000,
   updatedAt: new Date(0).toISOString()
 };
 

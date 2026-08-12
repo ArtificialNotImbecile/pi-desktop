@@ -221,33 +221,6 @@ contextBridge.exposeInMainWorld("jasmine", {
   resolvePluginResources() {
     return ipcRenderer.invoke("plugins:resolveResources");
   },
-  getChromeTakeoverStatus() {
-    return ipcRenderer.invoke("chromeBridge:status");
-  },
-  registerChromeTakeover(request) {
-    return ipcRenderer.invoke("chromeBridge:register", request);
-  },
-  disableChromeTakeover() {
-    return ipcRenderer.invoke("chromeBridge:disable");
-  },
-  listMcpMarketplace(request) {
-    return ipcRenderer.invoke("mcp:marketplace:list", request);
-  },
-  listMcpServers() {
-    return ipcRenderer.invoke("mcp:servers:list");
-  },
-  installMcpServer(server) {
-    return ipcRenderer.invoke("mcp:servers:install", server);
-  },
-  createMcpServer(request) {
-    return ipcRenderer.invoke("mcp:servers:create", request);
-  },
-  updateMcpServer(request) {
-    return ipcRenderer.invoke("mcp:servers:update", request);
-  },
-  deleteMcpServer(id) {
-    return ipcRenderer.invoke("mcp:servers:delete", id);
-  },
   getAppSettings() {
     return ipcRenderer.invoke("appSettings:get");
   },

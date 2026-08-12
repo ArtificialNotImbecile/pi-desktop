@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -79,7 +78,7 @@ test.describe("Jasmine providers and models", () => {
     await openSettings(page, "Providers");
     await expect(page.locator(".settings-panel")).toHaveClass(/has-subnav/);
     await expect(page.locator(".settings-subnav")).toBeVisible();
-    await expect(page.locator(".settings-nav button .icon")).toHaveCount(11);
+    await expect(page.locator(".settings-nav button .icon")).toHaveCount(10);
 
     await page.locator(".settings-subnav button").first().click();
     await page.locator(".model-options-button").first().click();

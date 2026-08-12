@@ -11,7 +11,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,

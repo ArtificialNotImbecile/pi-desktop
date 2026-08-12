@@ -10,10 +10,6 @@ import type {
   ExecutableDiscovery,
   FileChangeTrackingMode,
   MemoryRecord,
-  McpMarketplaceServer,
-  McpServerCreateRequest,
-  McpServerRecord,
-  McpServerUpdateRequest,
   PluginPackageRecord,
   ReasoningEffort,
   PromptTemplateRecord,
@@ -28,7 +24,6 @@ import type {
   WebSearchSettingsUpdateRequest
 } from "../../../shared/ipc";
 import type { SettingsSection as SettingsSectionKey } from "./ProviderSettingsPanel";
-import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginsSettingsPage } from "./PluginsSettingsPage";
 import { PromptTemplatesSettingsPage } from "./PromptTemplatesSettingsPage";
 import { SkillsSettingsPage } from "./SkillsSettingsPage";
@@ -60,12 +55,6 @@ export function LocalSettingsPage(props: {
   promptTemplateSources: PromptTemplateSource[];
   promptTemplatesLoading: boolean;
   selectedSkillIds: string[];
-  mcpMarketplace: McpMarketplaceServer[];
-  mcpServers: McpServerRecord[];
-  installedMcpMarketplaceIds: Set<string>;
-  mcpMarketplaceLoading: boolean;
-  mcpServersLoading: boolean;
-  mcpSavingServerId: string | null;
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
@@ -87,13 +76,6 @@ export function LocalSettingsPage(props: {
   onRefreshPromptTemplates(): void;
   onAddPromptTemplateSources(): void;
   onDeletePromptTemplateSource(id: string): void;
-  onMcpMarketplaceOpened(): void;
-  onRefreshMcpMarketplace(request?: { query?: string; category?: string }): void;
-  onRefreshMcpServers(): void;
-  onInstallMcpServer(server: McpMarketplaceServer): void;
-  onCreateMcpServer(request: McpServerCreateRequest): Promise<McpServerRecord | null>;
-  onUpdateMcpServer(request: McpServerUpdateRequest): void;
-  onDeleteMcpServer(id: string): void;
   onRefreshPlugins(): void;
   onInstallPlugin(source: string): Promise<unknown>;
   onUpdatePlugin(source: string, scope: PluginPackageRecord["scope"]): Promise<unknown>;
@@ -219,27 +201,6 @@ export function LocalSettingsPage(props: {
         onRefresh={props.onRefreshPromptTemplates}
         onAddSources={props.onAddPromptTemplateSources}
         onDeleteSource={props.onDeletePromptTemplateSource}
-      />
-    );
-  }
-
-  if (props.section === "mcp") {
-    return (
-      <McpSettingsPage
-        marketplace={props.mcpMarketplace}
-        servers={props.mcpServers}
-        installedMarketplaceIds={props.installedMcpMarketplaceIds}
-        loadingMarketplace={props.mcpMarketplaceLoading}
-        loadingServers={props.mcpServersLoading}
-        savingServerId={props.mcpSavingServerId}
-        onClose={props.onClose}
-        onMarketplaceOpened={props.onMcpMarketplaceOpened}
-        onRefreshMarketplace={props.onRefreshMcpMarketplace}
-        onRefreshServers={props.onRefreshMcpServers}
-        onInstall={props.onInstallMcpServer}
-        onCreateServer={props.onCreateMcpServer}
-        onUpdateServer={props.onUpdateMcpServer}
-        onDeleteServer={props.onDeleteMcpServer}
       />
     );
   }

@@ -19,15 +19,10 @@ import type {
   ChatSendRequest,
   ChatSendResponse,
   ChatStreamEvent,
-  ChromeTakeoverRegisterRequest,
   ExecutableDiscovery,
   ExecutablePickerKind,
   FileSearchRequest,
   JasmineApi,
-  McpMarketplaceListRequest,
-  McpMarketplaceServer,
-  McpServerCreateRequest,
-  McpServerUpdateRequest,
   MessageListRequest,
   PickedPath,
   PermissionApprovalPrompt,
@@ -265,24 +260,6 @@ const api: JasmineApi = {
   pickPromptTemplatePaths() {
     return ipcRenderer.invoke("dialog:pickPromptTemplatePaths");
   },
-  listMcpMarketplace(request?: McpMarketplaceListRequest) {
-    return ipcRenderer.invoke("mcp:marketplace:list", request);
-  },
-  listMcpServers() {
-    return ipcRenderer.invoke("mcp:servers:list");
-  },
-  installMcpServer(server: McpMarketplaceServer) {
-    return ipcRenderer.invoke("mcp:servers:install", server);
-  },
-  createMcpServer(request: McpServerCreateRequest) {
-    return ipcRenderer.invoke("mcp:servers:create", request);
-  },
-  updateMcpServer(request: McpServerUpdateRequest) {
-    return ipcRenderer.invoke("mcp:servers:update", request);
-  },
-  deleteMcpServer(id: string) {
-    return ipcRenderer.invoke("mcp:servers:delete", id);
-  },
   listPlugins() {
     return ipcRenderer.invoke("plugins:list");
   },
@@ -303,15 +280,6 @@ const api: JasmineApi = {
   },
   resolvePluginResources() {
     return ipcRenderer.invoke("plugins:resolveResources");
-  },
-  getChromeTakeoverStatus() {
-    return ipcRenderer.invoke("chromeBridge:status");
-  },
-  registerChromeTakeover(request: ChromeTakeoverRegisterRequest) {
-    return ipcRenderer.invoke("chromeBridge:register", request);
-  },
-  disableChromeTakeover() {
-    return ipcRenderer.invoke("chromeBridge:disable");
   },
   getAppSettings() {
     return ipcRenderer.invoke("appSettings:get");

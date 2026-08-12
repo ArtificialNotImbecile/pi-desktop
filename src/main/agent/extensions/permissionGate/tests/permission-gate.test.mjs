@@ -79,8 +79,7 @@ function editEvent(filePath) {
 const nativeScope = (projectRoot, cwd = projectRoot) => ({
   projectRoot,
   cwd,
-  pathFlavor: "native",
-  target: "local"
+  pathFlavor: "native"
 });
 
 test("default factory registers the Pi CLI flag", () => {
@@ -336,7 +335,7 @@ test("no-project mutations always require approval", async () => {
   const harness = createHarness({
     cwd: path.parse(process.cwd()).root,
     options: {
-      getScope: () => ({ projectRoot: null, cwd: process.cwd(), pathFlavor: "native", target: "local" }),
+      getScope: () => ({ projectRoot: null, cwd: process.cwd(), pathFlavor: "native" }),
       requestApproval: async (request) => {
         requests.push(request);
         return "allow-once";
@@ -355,8 +354,7 @@ test("POSIX scope permits canonical targets inside the project", async () => {
       getScope: () => ({
         projectRoot: "/srv/repo",
         cwd: "/srv/repo/subdir",
-        pathFlavor: "posix",
-        target: "ssh"
+        pathFlavor: "posix"
       }),
       canonicalizePath: ({ path: candidate }) => candidate,
       requestApproval: async () => {
@@ -376,8 +374,7 @@ test("POSIX traversal outside the project asks for approval", async () => {
       getScope: () => ({
         projectRoot: "/srv/repo",
         cwd: "/srv/repo",
-        pathFlavor: "posix",
-        target: "ssh"
+        pathFlavor: "posix"
       }),
       canonicalizePath: ({ path: candidate }) => candidate,
       requestApproval: async (candidate) => {
@@ -388,7 +385,6 @@ test("POSIX traversal outside the project asks for approval", async () => {
   });
   assert.equal(await harness.invoke(writeEvent("../outside.txt")), undefined);
   assert.equal(request.reason, "outside-project");
-  assert.equal(request.target, "ssh");
 });
 
 test("POSIX scope without a canonical resolver asks instead of trusting lexical scope", async () => {
@@ -398,8 +394,7 @@ test("POSIX scope without a canonical resolver asks instead of trusting lexical 
       getScope: () => ({
         projectRoot: "/srv/repo",
         cwd: "/srv/repo",
-        pathFlavor: "posix",
-        target: "ssh"
+        pathFlavor: "posix"
       }),
       requestApproval: async (candidate) => {
         request = candidate;
@@ -418,8 +413,7 @@ test("canonical symlink escape requires approval even when lexical path is insid
       getScope: () => ({
         projectRoot: "/srv/repo",
         cwd: "/srv/repo",
-        pathFlavor: "posix",
-        target: "ssh"
+        pathFlavor: "posix"
       }),
       canonicalizePath: ({ kind }) => kind === "project-root" ? "/real/repo" : "/etc/passwd",
       requestApproval: async (candidate) => {
@@ -436,8 +430,7 @@ test("canonical resolver failures and relative results require approval", async 
   const scope = () => ({
     projectRoot: "/srv/repo",
     cwd: "/srv/repo",
-    pathFlavor: "posix",
-    target: "ssh"
+    pathFlavor: "posix"
   });
   await t.test("exception", async () => {
     let request;
@@ -478,8 +471,7 @@ test("checkPathScope rejects a non-absolute trusted root", async () => {
     scope: {
       projectRoot: "relative/repo",
       cwd: "relative/repo",
-      pathFlavor: "posix",
-      target: "ssh"
+      pathFlavor: "posix"
     },
     canonicalizePath: ({ path: candidate }) => candidate
   });

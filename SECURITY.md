@@ -12,6 +12,6 @@ Environment-variable references such as `env:DEEPSEEK_API_KEY` are recommended. 
 
 ## Privileged integrations
 
-Chrome automation is optional and uses broad browser permissions including `debugger`, `tabs`, `nativeMessaging`, `scripting`, and `<all_urls>`. Enable it only for a trusted local Jasmine installation. Disable the Chrome package and remove the extension/native host when it is not needed.
+Pi packages, local tools, provider calls, and web access may read files or transmit data according to their own configuration. Review a package before enabling it and grant only the access it needs.
 
-MCP servers, remote shells, local tools, provider calls, and web search may access files or transmit data according to their own configuration. Review an integration before enabling it and grant only the access it needs.
+Turning on Web Search enables the `pi-web-access` package, which lets the agent fetch arbitrary URLs. Page content is untrusted input: treat anything it returns as data, never as instructions.

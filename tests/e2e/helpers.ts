@@ -238,12 +238,6 @@ export async function waitForStableAssistant(page: Page, text: string, timeout =
   return assistant;
 }
 
-export async function enableWebSearchFallback(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    await window.jasmine.updateWebSearchSettings({ enabled: true, provider: "duckduckgo" });
-  });
-}
-
 export async function openMemoryFromCommandPalette(page: Page): Promise<void> {
   await page.keyboard.press("Control+K");
   await expect(page.locator(".command-panel")).toBeVisible();

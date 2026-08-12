@@ -23,7 +23,6 @@ const resourcesRoot = process.platform === "darwin"
   ? path.resolve(path.dirname(executablePath), "..", "Resources", "jasmine-resources")
   : path.join(path.dirname(executablePath), "resources", "jasmine-resources");
 for (const requiredPath of [
-  path.join(resourcesRoot, "chrome-extension", "manifest.json"),
   path.join(resourcesRoot, "builtin-skills", "code-reviewer", "SKILL.md"),
   path.join(resourcesRoot, "jasmine-logo.ico")
 ]) {
@@ -94,12 +93,11 @@ try {
     throw error;
   }
   const result = await page.evaluate(async () => {
-    const [providers, plugins, skills, appSettings, mcpServers] = await Promise.all([
+    const [providers, plugins, skills, appSettings] = await Promise.all([
       window.jasmine.listProviders(),
       window.jasmine.listPlugins(),
       window.jasmine.listSkills(),
-      window.jasmine.getAppSettings(),
-      window.jasmine.listMcpServers()
+      window.jasmine.getAppSettings()
     ]);
     return {
       title: document.title,
@@ -108,8 +106,7 @@ try {
       pluginNames: plugins.map((item) => item.displayName),
       pluginSources: plugins.map((item) => item.source),
       skillNames: skills.map((item) => item.name),
-      language: appSettings.language,
-      legacyMcp: mcpServers.find((item) => item.id === "legacy-packaged-mcp") ?? null
+      language: appSettings.language
     };
   });
   if (result.title !== "Jasmine — The desktop app for Pi" || result.bodyTextLength < 100) {
@@ -117,7 +114,7 @@ try {
   }
   if (result.pluginNames.some((name) => /^chrome$/i.test(name))) throw new Error(`Retired Chrome package was discovered: ${JSON.stringify(result)}`);
   if (!result.skillNames.includes("code-reviewer")) throw new Error(`Packaged built-in skills were not discovered: ${JSON.stringify(result)}`);
-  if (result.language !== "en" || result.legacyMcp?.transport !== "stdio" || result.legacyMcp?.source !== "manual") {
+  if (result.language !== "en") {
     throw new Error(`Packaged legacy database migration failed: ${JSON.stringify(result)}`);
   }
 
@@ -150,6 +147,24 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } finally {
   await app.close().catch(() => undefined);
+}
+
+// The retired MCP feature seeded a table above. Reading it back through the app
+// is impossible now that the bridge method is gone, so assert against the file
+// the packaged app just migrated.
+const migratedDb = new DatabaseSync(path.join(userDataDir, "data", "jasmine.sqlite"));
+try {
+  const survivors = migratedDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mcp_servers'")
+    .all();
+  if (survivors.length > 0) throw new Error("Packaged migration left the retired mcp_servers table behind.");
+  const appSettingsColumns = migratedDb.prepare("PRAGMA table_info(app_settings)").all().map((row) => row.name);
+  const retiredColumns = appSettingsColumns.filter((name) => name.startsWith("chrome_takeover_"));
+  if (retiredColumns.length > 0) {
+    throw new Error(`Packaged migration left retired Chrome columns behind: ${retiredColumns.join(", ")}`);
+  }
+} finally {
+  migratedDb.close();
 }
 
 async function firstExistingPath(candidates) {

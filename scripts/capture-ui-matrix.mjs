@@ -196,9 +196,6 @@ try {
   await page.getByRole("button", { name: "Add Source" }).click();
   await page.waitForSelector(".prompt-template-row");
   await capture(page, "07-settings-prompts", "Settings Prompt Templates compact source and slash-command list");
-  await page.locator(".settings-nav").getByRole("button", { name: "MCP Servers" }).click();
-  await page.waitForSelector(".mcp-card");
-  await capture(page, "07-settings-mcp", "Settings MCP marketplace with installable server cards");
   await page.locator(".settings-nav").getByRole("button", { name: "Memory" }).click();
   await capture(page, "07-settings-memory", "Settings Memory page");
   await page.locator(".settings-nav").getByRole("button", { name: "Activity" }).click();

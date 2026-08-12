@@ -17,7 +17,6 @@ import { useComposer } from "./hooks/useComposer";
 import { useFloatingSurfaceDismissal } from "./hooks/useFloatingSurfaceDismissal";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useMemories } from "./hooks/useMemories";
-import { useMcpServers } from "./hooks/useMcpServers";
 import { usePlugins } from "./hooks/usePlugins";
 import { useProviders } from "./hooks/useProviders";
 import { usePromptTemplates } from "./hooks/usePromptTemplates";
@@ -105,10 +104,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     onToast: showToast
   });
   const skills = useSkills({
-    onError: setAppError,
-    onToast: showToast
-  });
-  const mcp = useMcpServers({
     onError: setAppError,
     onToast: showToast
   });
@@ -735,12 +730,6 @@ function App(props: { initialAppSettings: AppSettings }) {
             promptTemplateSources={promptTemplates.sources}
             promptTemplatesLoading={promptTemplates.loading}
             selectedSkillIds={skills.selectedSkillIds}
-            mcpMarketplace={mcp.marketplace}
-            mcpServers={mcp.servers}
-            installedMcpMarketplaceIds={mcp.installedMarketplaceIds}
-            mcpMarketplaceLoading={mcp.loadingMarketplace}
-            mcpServersLoading={mcp.loadingServers}
-            mcpSavingServerId={mcp.savingServerId}
             plugins={plugins.packages}
             pluginsLoading={plugins.loading}
             pluginSavingSource={plugins.savingSource}
@@ -770,13 +759,6 @@ function App(props: { initialAppSettings: AppSettings }) {
             onRefreshPromptTemplates={() => void promptTemplates.refresh()}
             onAddPromptTemplateSources={() => void promptTemplates.addSourcesFromPicker()}
             onDeletePromptTemplateSource={(id) => void promptTemplates.deleteSource(id)}
-            onMcpMarketplaceOpened={mcp.ensureMarketplace}
-            onRefreshMcpMarketplace={(request) => void mcp.refreshMarketplace(request)}
-            onRefreshMcpServers={() => void mcp.refreshServers()}
-            onInstallMcpServer={(server) => void mcp.installMarketplaceServer(server)}
-            onCreateMcpServer={mcp.createServer}
-            onUpdateMcpServer={(request) => void mcp.updateServer(request)}
-            onDeleteMcpServer={(id) => void mcp.deleteServer(id)}
             onRefreshPlugins={() => void plugins.refresh()}
             onInstallPlugin={(source) => plugins.install({ source })}
             onUpdatePlugin={(source, scope) => plugins.update({ source, scope })}

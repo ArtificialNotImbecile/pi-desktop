@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -375,84 +374,31 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".trace-panel")).toBeHidden();
   });
 
-  test("web search can be configured, used in chat, and audited in traces", async () => {
+  test("web access setting persists what it claims", async () => {
     const { page } = harness;
     await startEmptyThread(page);
-
-    await enableWebSearchFallback(page);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWebSearchSettings()).enabled)).toBe(true);
-
-    await page.locator(".rich-composer-editor").fill("current jasmine web search check");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Web search used: Jasmine search result");
-    await expect(page.locator(".assistant-block").last().locator(".web-search-used-line")).toContainText("https://example.com/jasmine-search");
-
-    const traceMeta = await page.evaluate(async () => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("current jasmine web search"));
-      if (!thread) throw new Error("Web search thread missing.");
-      const messages = await window.jasmine.listMessages(thread.id);
-      const assistant = messages.find((message) => message.role === "assistant");
-      const runs = await window.jasmine.listTracesForThread(thread.id);
-      const relevantRuns = runs.filter((run) => run.title === "Web search" || run.title.includes("chat completion"));
-      return {
-        messageSearchCount: assistant?.webSearchUsed?.length ?? 0,
-        searchTrace: runs.find((run) => run.title === "Web search")?.outputSummary ?? "",
-        runCount: relevantRuns.length
-      };
-    });
-    expect(traceMeta.messageSearchCount).toBeGreaterThan(0);
-    expect(traceMeta.searchTrace).toContain("https://example.com/jasmine-search");
-    expect(traceMeta.runCount).toBe(2);
 
     await openSettings(page, "Web Search");
-    await expect(page.getByRole("switch", { name: "Use web search" }).locator(".ui-switch-label")).toHaveCount(0);
-    await expect(page.getByRole("spinbutton", { name: "Web search result limit" })).toBeEnabled();
-    await page.getByRole("spinbutton", { name: "Web search result limit" }).fill("3");
+    await expect(page.getByRole("switch", { name: "Use web search" })).toBeEnabled();
+    await page.getByRole("switch", { name: "Use web search" }).click();
     await page.locator(".settings-actions").getByRole("button", { name: "Save" }).click();
-    await expect.poll(() => page.evaluate(async () => {
-      const settings = await window.jasmine.getWebSearchSettings();
-      return `${settings.provider}:${settings.maxResults}`;
-    })).toBe("duckduckgo:3");
-  });
-
-  test("web search aborts are traced without failing the base chat", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-
-    await enableWebSearchFallback(page);
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWebSearchSettings()).enabled)).toBe(true);
+    await page.getByRole("button", { name: "Close settings" }).click();
 
-    await page.locator(".rich-composer-editor").fill("abort web search regression");
+    // Jasmine runs no search of its own, so nothing may be traced under the
+    // app's own name; pi-web-access owns every web tool call.
+    await page.locator(".rich-composer-editor").fill("current jasmine web access check");
     await page.getByRole("button", { name: "Send" }).click();
     await waitForStableAssistant(page, "Mock reply from Jasmine.");
     await expect(page.locator(".error-strip")).toBeHidden();
 
-    const traceMeta = await page.evaluate(async () => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("abort web search"));
-      if (!thread) throw new Error("Abort regression thread missing.");
-      const messages = await window.jasmine.listMessages(thread.id);
-      const runs = await window.jasmine.listTracesForThread(thread.id);
-      const searchTrace = runs.find((run) => run.title === "Web search");
-      const providerTrace = runs.find((run) => run.title.includes("chat completion"));
-      const relevantRuns = runs.filter((run) => run.title === "Web search" || run.title.includes("chat completion"));
-      const settings = await window.jasmine.getWebSearchSettings();
-      return {
-        assistantCount: messages.filter((message) => message.role === "assistant").length,
-        searchStatus: searchTrace?.status,
-        searchError: searchTrace?.error ?? "",
-        providerStatus: providerTrace?.status,
-        settingsError: settings.lastError ?? "",
-        runCount: relevantRuns.length
-      };
+    const traceTitles = await page.evaluate(async () => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("current jasmine web access"));
+      if (!thread) throw new Error("Web access thread missing.");
+      return (await window.jasmine.listTracesForThread(thread.id)).map((run) => run.title);
     });
-    expect(traceMeta.assistantCount).toBe(1);
-    expect(traceMeta.searchStatus).toBe("error");
-    expect(traceMeta.searchError).toContain("Web search timed out");
-    expect(traceMeta.providerStatus).toBe("success");
-    expect(traceMeta.settingsError).toContain("Web search timed out");
-    expect(traceMeta.runCount).toBe(2);
-
-    await expect(page.getByRole("button", { name: "Trace panel" })).toHaveCount(0);
+    expect(traceTitles.some((title) => title === "Web search")).toBe(false);
+    expect(traceTitles.some((title) => title.includes("chat completion"))).toBe(true);
   });
 
   test("regenerate replaces the selected assistant turn and truncates later messages", async () => {

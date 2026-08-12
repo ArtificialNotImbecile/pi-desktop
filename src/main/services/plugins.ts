@@ -196,12 +196,16 @@ export async function resolvePluginResources(options: PluginServiceOptions): Pro
   return { packages: await listPluginPackages(options) };
 }
 
-export async function bootstrapPiWebAccessPluginFromWebSearch(options: PluginServiceOptions, settings: WebSearchSettings): Promise<void> {
-  if (!settings.enabled || settings.provider !== "pi-web-access" || process.env.JASMINE_E2E_MOCK_AI === "1") return;
+// The Web Search toggle is the control for pi-web-access, so it has to move the
+// package both ways. Enabling only, as this once did, left the agent holding web
+// tools after the user switched the setting back off.
+export async function syncPiWebAccessPluginWithWebSearch(options: PluginServiceOptions, settings: WebSearchSettings): Promise<void> {
+  if (process.env.JASMINE_E2E_MOCK_AI === "1") return;
   const source = resolvePiWebAccessPackageRoot();
   if (!source) return;
   const service = await createPluginPackageService(options);
-  await service.enableBuiltinSource(source);
+  if (settings.enabled) await service.enableBuiltinSource(source);
+  else await service.disableBuiltinSource(source);
 }
 
 // Pre-stream sends resolve enabled package skill paths on every request, and
@@ -311,6 +315,16 @@ class PluginPackageService {
 
   async enableBuiltinSource(source: string): Promise<void> {
     await this.setEnabled(canonicalPluginSource(source), true, "user");
+  }
+
+  // setEnabled throws when the package was never configured, which is the
+  // normal state for a builtin nobody has switched on yet -- nothing to undo.
+  async disableBuiltinSource(source: string): Promise<void> {
+    const canonical = canonicalPluginSource(source);
+    const configured = this.listPackageEntries()
+      .some((entry) => this.sourcesMatch(entry.source, canonical, entry.scope));
+    if (!configured) return;
+    await this.setEnabled(canonical, false, "user");
   }
 
   async list(): Promise<PluginPackageRecord[]> {

@@ -175,7 +175,7 @@ test.describe("Jasmine cold start", () => {
     }
   });
 
-  test("upgrades the original MCP table before app settings hydrate and survives restart", async () => {
+  test("retires the original MCP table before app settings hydrate and survives restart", async () => {
     const userDataDir = path.join(rootDir, ".tmp", "e2e", `legacy-mcp-startup-${randomUUID()}`);
     const dataDir = path.join(userDataDir, "data");
     await rm(userDataDir, { recursive: true, force: true });
@@ -211,33 +211,25 @@ test.describe("Jasmine cold start", () => {
       const app = await launch();
       try {
         const page = await waitForAppShellPage(app, 20_000);
-        const hydrated = await page.evaluate(async () => {
-          const [settings, servers] = await Promise.all([
-            window.jasmine.getAppSettings(),
-            window.jasmine.listMcpServers()
-          ]);
-          return {
-            language: settings.language,
-            servers: servers.map((server) => ({
-              id: server.id,
-              description: server.description,
-              transport: server.transport,
-              source: server.source,
-              marketplaceId: server.marketplaceId ?? null
-            }))
-          };
-        });
+        const hydrated = await page.evaluate(async () => ({
+          language: (await window.jasmine.getAppSettings()).language
+        }));
         expect(hydrated.language).toBe("en");
-        expect(hydrated.servers).toContainEqual({
-          id: "legacy-mcp",
-          description: "",
-          transport: "stdio",
-          source: "manual",
-          marketplaceId: null
-        });
       } finally {
         await quitElectron(app);
       }
+    }
+
+    // MCP is gone, so the legacy table must be dropped rather than carried
+    // forward as rows nothing in the app can read.
+    const migratedDb = new DatabaseSync(path.join(dataDir, "jasmine.sqlite"));
+    try {
+      const tables = migratedDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mcp_servers'")
+        .all();
+      expect(tables).toHaveLength(0);
+    } finally {
+      migratedDb.close();
     }
 
     await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);

@@ -16,7 +16,6 @@ const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssista
 const {
   buildTurnContext,
   createAskUserQuestionTool,
-  createWebSearchTool,
   isJasmineFileChangesPackageExtensionPath,
   isJasmineFileChangesPackageSourcePath,
   runPiCodingAgentChat
@@ -28,7 +27,6 @@ const { modelContentForMessage, nonSecretError } = await import("../../dist/main
 const { prepareEnabledSkillManifests } = await import("../../dist/main/main/services/skillManifests.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
-const { parseBingResults } = await import("../../dist/main/main/services/webSearch.js");
 const {
   listPluginPackages,
   listPluginSkills,
@@ -61,17 +59,6 @@ await writeFile(fakeCmdPath, "");
 
 assert.throws(() => pluginPackageInstallSchema.parse({ source: "" }), /Package source is required/);
 assert.throws(() => pluginPackageInstallSchema.parse({ source: `npm:bad\nsource` }), /control characters/);
-
-const webSearchTool = createWebSearchTool(async (query) => [{
-  title: `Result for ${query}`,
-  url: "https://example.com/web-search-tool",
-  snippet: "Custom web search result"
-}]);
-assert.equal(webSearchTool.name, "web_search");
-assert.match(webSearchTool.promptSnippet, /current|external/i);
-const webSearchToolResult = await webSearchTool.execute("tool-call-1", { query: "current jasmine" });
-assert.match(webSearchToolResult.content[0].text, /https:\/\/example\.com\/web-search-tool/);
-assert.equal(webSearchToolResult.details.results.length, 1);
 
 const askUserQuestionTool = createAskUserQuestionTool(async (prompt) => ({
   id: "unit-question",
@@ -476,9 +463,8 @@ const jasminePromptAppend = buildJasminePromptAppend();
 assert.match(jasminePromptAppend, /operating through Jasmine/);
 assert.match(jasminePromptAppend, /user's language/);
 assert.doesNotMatch(jasminePromptAppend, /Current working directory/);
-assert.equal(buildTurnContext([], []), undefined);
-assert.match(buildTurnContext(["Remember the user's preference."], []) ?? "", /relevant_memories/);
-assert.match(buildTurnContext([], [{ title: "Current result", url: "https://example.com", snippet: "Current snippet" }]) ?? "", /web_search_results/);
+assert.equal(buildTurnContext([]), undefined);
+assert.match(buildTurnContext(["Remember the user's preference."]) ?? "", /relevant_memories/);
 if (process.platform === "win32") {
   const systemBashPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "bash.exe");
   const gitBashPath = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe");
@@ -526,25 +512,6 @@ if (process.platform === "win32") {
     assert.equal(terminalDiscovery.candidates.some((candidate) => candidate.command === systemBashPath && candidate.label === "Git Bash"), false);
   }
 }
-
-const bingResults = parseBingResults(`
-  <ol id="b_results">
-    <li class="b_algo">
-      <div class="b_algoheader">
-        <a href="https://weathernews.jp/onebox/tenki/tokyo/13100/"><h2><strong>東京</strong>の<strong>天気</strong>予報</h2></a>
-      </div>
-      <div class="b_caption"><p>東京都心の今日と明日の天気、気温、降水確率。</p></div>
-    </li>
-    <li class="b_algo">
-      <h2><a href="https://weather.yahoo.co.jp/weather/jp/13/4410.html">東京都の天気 - Yahoo!天気</a></h2>
-      <div class="b_caption"><p>東京地方の週間天気と警報情報。</p></div>
-    </li>
-  </ol>
-`);
-assert.equal(bingResults.length, 2);
-assert.equal(bingResults[0].url, "https://weathernews.jp/onebox/tenki/tokyo/13100/");
-assert.match(bingResults[0].title, /東京.*天気/);
-assert.match(bingResults[1].snippet, /週間天気/);
 
 const captures = [];
 const server = createServer(async (request, response) => {
@@ -955,11 +922,6 @@ try {
     jasminePromptAppend: "JASMINE_MINIMAL_APPEND",
     localRuntimePromptAppend: "LOCAL_RUNTIME_APPEND",
     memoryContext: ["TURN_MEMORY_MUST_NOT_BE_SYSTEM"],
-    webSearchContext: [{
-      title: "Turn web result",
-      url: "https://example.com/turn-context",
-      snippet: "TURN_WEB_MUST_NOT_BE_SYSTEM"
-    }],
     cwd: promptRegressionCwd,
     agentDir: promptRegressionAgentDir,
     toolsEnabled: true
@@ -972,10 +934,9 @@ try {
   assert.match(promptRegressionSystem, /JASMINE_MINIMAL_APPEND/);
   assert.match(promptRegressionSystem, /LOCAL_RUNTIME_APPEND/);
   assert.match(promptRegressionSystem, /PRESERVE_DISCOVERED_APPEND_SYSTEM/);
-  assert.doesNotMatch(promptRegressionSystem, /TURN_MEMORY_MUST_NOT_BE_SYSTEM|TURN_WEB_MUST_NOT_BE_SYSTEM/);
+  assert.doesNotMatch(promptRegressionSystem, /TURN_MEMORY_MUST_NOT_BE_SYSTEM/);
   assert.equal((promptRegressionSystem.match(/Current working directory:/g) ?? []).length, 1);
   assert.match(promptRegressionMessages, /TURN_MEMORY_MUST_NOT_BE_SYSTEM/);
-  assert.match(promptRegressionMessages, /TURN_WEB_MUST_NOT_BE_SYSTEM/);
 
   const captureThinkingPayload = async (provider, reasoningEffort, content) => {
     const captureCount = captures.length;

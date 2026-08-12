@@ -79,15 +79,6 @@ export function useCommandPaletteCommands(input: {
       }
     },
     {
-      id: "mcp",
-      label: t("command.mcp"),
-      detail: t("command.mcp.detail"),
-      action: () => {
-        input.closeFloatingSurfaces();
-        input.navigate({ name: "settings", section: "mcp" });
-      }
-    },
-    {
       id: "activity",
       label: t("command.activity"),
       detail: t("command.activity.detail"),

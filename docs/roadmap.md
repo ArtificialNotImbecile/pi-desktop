@@ -55,10 +55,12 @@ and connection layer exist.
 
 ## Chrome and browser control
 
-Jasmine keeps an unreleased Chrome bridge and extension source in the repository, but
-Settings exposes no Chrome Control page and no built-in Chrome package ships. Browser
-control belongs in its own extension for the same reason SSH does: it is a separate
-protocol surface with its own permission and safety model.
+An unreleased Chrome takeover bridge, its native-messaging host, and a bundled
+extension lived in the repository without any way to switch them on: no Settings
+page ever called them. They have been removed, and the `chrome_takeover_*` columns
+are dropped on upgrade. Browser control belongs in its own extension for the same
+reason SSH does: it is a separate protocol surface with its own permission and
+safety model.
 
 A future `pi-chrome` extension should cover:
 
@@ -72,6 +74,37 @@ A future `pi-chrome` extension should cover:
   cookie exfiltration paths, and no silent cross-origin actions.
 - **Automated coverage** — a headless fixture profile so navigation and action paths
   are tested without a human browser.
+
+## MCP servers
+
+Settings once listed a marketplace and let servers be installed, enabled, and
+removed, but nothing ever started a server or handed its tools to the agent — the
+records only sat in SQLite. Pi ships no MCP support of its own — its README states
+"No MCP" and points at extensions for anyone who wants it — so a half-wired panel
+promised a capability the app could not deliver. The UI, IPC, marketplace, and
+`mcp_servers` table are gone.
+
+Bringing MCP back means a real client, not a settings page:
+
+- **Live sessions** — stdio and HTTP transports with process lifecycle, restarts,
+  and cancellation owned by Electron main.
+- **Tools in the turn** — discovered tools registered as pi custom tools through the
+  same path the agent already uses, so they appear in timelines and traces.
+- **Permission parity** — MCP tool calls pass the permission gate like bash and file
+  writes do, with the server identified in the prompt.
+- **Honest status** — connection state, handshake failures, and tool-count drift
+  visible in Settings instead of a stored boolean.
+
+## Web access
+
+Jasmine used to run its own DuckDuckGo and Bing HTML scraping as a fallback search
+provider, prefetching results and injecting them into every request. Scraped result
+pages are brittle and the prefetch spent a request whether or not the turn needed
+one. Web access is now
+[`pi-web-access`](https://github.com/nicobailon/pi-web-access) only: the Settings
+toggle enables that package and pi decides when to call `web_search`,
+`fetch_content`, and friends. The provider choice and the scraper's result-limit,
+timeout, and last-run columns are dropped on upgrade.
 
 ## Other candidates
 

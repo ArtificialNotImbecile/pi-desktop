@@ -165,11 +165,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE TABLE IF NOT EXISTS web_search_settings (
       id TEXT PRIMARY KEY,
       enabled INTEGER NOT NULL DEFAULT 0,
-      provider TEXT NOT NULL DEFAULT 'pi-web-access',
-      max_results INTEGER NOT NULL DEFAULT 4,
-      timeout_ms INTEGER NOT NULL DEFAULT 7000,
-      last_run_at TEXT,
-      last_error TEXT,
       updated_at TEXT NOT NULL
     );
 
@@ -193,25 +188,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS mcp_servers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      command TEXT NOT NULL,
-      args_json TEXT NOT NULL DEFAULT '[]',
-      env_json TEXT NOT NULL DEFAULT '{}',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      transport TEXT NOT NULL DEFAULT 'stdio',
-      url TEXT,
-      source TEXT NOT NULL DEFAULT 'manual',
-      marketplace_id TEXT,
-      package_name TEXT,
-      homepage TEXT,
-      category TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS app_settings (
       id TEXT PRIMARY KEY,
       tool_provider_id TEXT NOT NULL DEFAULT 'deepseek',
@@ -226,8 +202,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       brand_main_title TEXT NOT NULL DEFAULT '${sqlLiteral(DEFAULT_BRAND_SETTINGS.mainTitle)}',
       brand_subtitle TEXT NOT NULL DEFAULT '${sqlLiteral(DEFAULT_BRAND_SETTINGS.subtitle)}',
       language TEXT NOT NULL DEFAULT 'en',
-      chrome_takeover_enabled INTEGER NOT NULL DEFAULT 0,
-      chrome_takeover_extension_id TEXT,
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
       permission_mode TEXT NOT NULL DEFAULT 'ask',
@@ -302,27 +276,9 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   addColumnIfMissing(db, "app_settings", "skill_editor_path", "TEXT");
   markMigration(db, 10, "appearance theme settings", now);
   markMigration(db, 11, "app language setting", now);
-  // Jasmine's first desktop schema already had a smaller mcp_servers table.
-  // CREATE TABLE IF NOT EXISTS does not add later marketplace columns, so repair
-  // the table shape before creating indexes or running repository queries.
-  addColumnIfMissing(db, "mcp_servers", "description", "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(db, "mcp_servers", "transport", "TEXT NOT NULL DEFAULT 'stdio'");
-  addColumnIfMissing(db, "mcp_servers", "url", "TEXT");
-  addColumnIfMissing(db, "mcp_servers", "source", "TEXT NOT NULL DEFAULT 'manual'");
-  addColumnIfMissing(db, "mcp_servers", "marketplace_id", "TEXT");
-  addColumnIfMissing(db, "mcp_servers", "package_name", "TEXT");
-  addColumnIfMissing(db, "mcp_servers", "homepage", "TEXT");
-  addColumnIfMissing(db, "mcp_servers", "category", "TEXT");
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_mcp_servers_marketplace_id ON mcp_servers(marketplace_id);
-    CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled_name ON mcp_servers(enabled, name);
-  `);
   markMigration(db, 12, "mcp server settings", now);
   markMigration(db, 13, "skill editor path setting", now);
   markMigration(db, 14, "remote ssh connections", now);
-  if (!hasMigration(db, 15)) {
-    db.prepare("UPDATE web_search_settings SET provider = 'pi-web-access', updated_at = ? WHERE provider = 'duckduckgo'").run(now());
-  }
   markMigration(db, 15, "pi web access provider default", now);
   markMigration(db, 16, "prompt template sources", now);
   addColumnIfMissing(db, "app_settings", "terminal_shell_path", "TEXT");
@@ -348,8 +304,6 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     `);
   }
   markMigration(db, 22, "denormalized thread message counts", now);
-  addColumnIfMissing(db, "app_settings", "chrome_takeover_enabled", "INTEGER NOT NULL DEFAULT 0");
-  addColumnIfMissing(db, "app_settings", "chrome_takeover_extension_id", "TEXT");
   markMigration(db, 23, "chrome takeover settings", now);
   if (!hasMigration(db, 24)) {
     db.prepare(`
@@ -398,6 +352,20 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   // app must not leave rows sitting in a table it cannot read.
   db.exec("DROP TABLE IF EXISTS remote_connections;");
   markMigration(db, 38, "remove remote ssh connections", now);
+  // MCP and Chrome takeover are gone. Like the SSH drop above, these run on
+  // every launch rather than behind the version guard, so a downgrade that
+  // recreates them cannot leave the current app holding state it cannot read.
+  db.exec("DROP TABLE IF EXISTS mcp_servers;");
+  dropColumnIfPresent(db, "app_settings", "chrome_takeover_enabled");
+  dropColumnIfPresent(db, "app_settings", "chrome_takeover_extension_id");
+  markMigration(db, 39, "remove mcp servers and chrome takeover", now);
+  // Jasmine no longer runs its own search, so the provider choice and the
+  // scraper's tuning and run state have nothing left to configure. Dropped on
+  // every launch for the same downgrade reason as the removals above.
+  for (const column of ["provider", "max_results", "timeout_ms", "last_run_at", "last_error"]) {
+    dropColumnIfPresent(db, "web_search_settings", column);
+  }
+  markMigration(db, 40, "web search without a local fallback", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {
@@ -636,6 +604,12 @@ function addColumnIfMissing(db: SqlDatabase, table: string, column: string, defi
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
   if (rows.some((row) => row.name === column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+}
+
+function dropColumnIfPresent(db: SqlDatabase, table: string, column: string): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  if (!rows.some((row) => row.name === column)) return;
+  db.exec(`ALTER TABLE ${table} DROP COLUMN ${column};`);
 }
 
 function hasMigration(db: SqlDatabase, version: number): boolean {

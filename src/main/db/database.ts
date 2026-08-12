@@ -27,10 +27,6 @@ import type {
   SkillRecord,
   SkillSource,
   SkillReference,
-  McpMarketplaceServer,
-  McpServerCreateRequest,
-  McpServerRecord,
-  McpServerUpdateRequest,
   WebSearchResult,
   WebSearchSettings,
   WebSearchSettingsUpdateRequest,
@@ -119,13 +115,6 @@ import {
   listPromptTemplateSources as listPromptTemplateSourceRows
 } from "./repositories/promptTemplates.js";
 import {
-  createMcpServer as createMcpServerRow,
-  deleteMcpServer as deleteMcpServerRow,
-  getMcpServer as getMcpServerRow,
-  listMcpServers as listMcpServerRows,
-  updateMcpServer as updateMcpServerRow
-} from "./repositories/mcpServers.js";
-import {
   createToolRun as createToolRunRow,
   finishToolRun as finishToolRunRow,
   getToolRun as getToolRunRow,
@@ -135,7 +124,6 @@ import {
 import {
   ensureWebSearchSettings as ensureWebSearchSettingsRow,
   getWebSearchSettings as getWebSearchSettingsRow,
-  updateWebSearchRun as updateWebSearchRunRow,
   updateWebSearchSettings as updateWebSearchSettingsRow
 } from "./repositories/webSearch.js";
 import type { SqlDatabase } from "./repositories/types.js";
@@ -462,12 +450,6 @@ export class JasmineDatabase {
     return this.getWebSearchSettings();
   }
 
-  updateWebSearchRun(input: { lastError?: string | null }): WebSearchSettings {
-    this.ensureWebSearchSettings();
-    updateWebSearchRunRow(this.db, input, now());
-    return this.getWebSearchSettings();
-  }
-
   getAppSettings(): AppSettings {
     this.ensureAppSettings();
     const settings = getAppSettingsRow(this.db);
@@ -714,44 +696,6 @@ export class JasmineDatabase {
 
   deletePromptTemplateSource(sourceId: string): void {
     deletePromptTemplateSourceRow(this.db, sourceId);
-  }
-
-  listMcpServers(): McpServerRecord[] {
-    return listMcpServerRows(this.db);
-  }
-
-  createMcpServer(input: McpServerCreateRequest): McpServerRecord {
-    return createMcpServerRow(this.db, input, now());
-  }
-
-  installMcpServer(input: McpMarketplaceServer): McpServerRecord {
-    return createMcpServerRow(this.db, {
-      name: input.name,
-      description: input.description,
-      command: input.command,
-      args: input.args,
-      envJson: input.envJson,
-      enabled: true,
-      transport: input.transport,
-      source: "marketplace",
-      marketplaceId: input.id,
-      packageName: input.packageName,
-      homepage: input.homepage,
-      category: input.category
-    }, now());
-  }
-
-  updateMcpServer(input: McpServerUpdateRequest): McpServerRecord {
-    const existing = getMcpServerRow(this.db, input.id);
-    if (!existing) throw new Error("MCP server does not exist.");
-    updateMcpServerRow(this.db, existing, input, now());
-    const updated = getMcpServerRow(this.db, input.id);
-    if (!updated) throw new Error("MCP server does not exist.");
-    return updated;
-  }
-
-  deleteMcpServer(id: string): void {
-    deleteMcpServerRow(this.db, id);
   }
 
   async getSkillsForPrompt(skillIds: string[] = []): Promise<SkillRecord[]> {

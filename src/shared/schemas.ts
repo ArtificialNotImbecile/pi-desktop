@@ -293,59 +293,6 @@ export const promptTemplateSourceCreateSchema = z.object({
   path: z.string().trim().min(1).max(1000)
 });
 
-export const mcpMarketplaceListSchema = z.object({
-  query: z.string().trim().max(120).optional(),
-  category: z.string().trim().max(80).optional()
-}).optional();
-
-const mcpTransportSchema = z.enum(["stdio", "http"]);
-const mcpArgsSchema = z.array(z.string().max(500)).max(40).optional();
-
-export const mcpMarketplaceServerSchema = z.object({
-  id: z.string().trim().min(1).max(200),
-  name: z.string().trim().min(1).max(100),
-  description: z.string().trim().max(500),
-  author: z.string().trim().max(100),
-  category: z.string().trim().max(80),
-  tags: z.array(z.string().trim().min(1).max(40)).max(12),
-  verified: z.boolean(),
-  featured: z.boolean(),
-  transport: mcpTransportSchema,
-  command: z.string().trim().min(1).max(500),
-  args: z.array(z.string().max(500)).max(40),
-  envJson: z.string().trim().max(4000),
-  packageName: z.string().trim().max(200).optional(),
-  homepage: z.string().trim().max(500).optional()
-});
-
-export const mcpServerCreateSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  description: z.string().trim().max(500).optional(),
-  command: z.string().trim().min(1).max(500),
-  args: mcpArgsSchema,
-  envJson: z.string().trim().max(4000).optional(),
-  enabled: z.boolean().optional(),
-  transport: mcpTransportSchema.optional(),
-  url: z.string().trim().max(500).optional(),
-  source: z.enum(["manual", "marketplace"]).optional(),
-  marketplaceId: z.string().trim().max(200).optional(),
-  packageName: z.string().trim().max(200).optional(),
-  homepage: z.string().trim().max(500).optional(),
-  category: z.string().trim().max(80).optional()
-});
-
-export const mcpServerUpdateSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().trim().min(1).max(100).optional(),
-  description: z.string().trim().max(500).optional(),
-  command: z.string().trim().min(1).max(500).optional(),
-  args: mcpArgsSchema,
-  envJson: z.string().trim().max(4000).optional(),
-  enabled: z.boolean().optional(),
-  transport: mcpTransportSchema.optional(),
-  url: z.string().trim().max(500).optional()
-});
-
 export const pluginPackageSourceSchema = z.string()
   .trim()
   .min(1, "Package source is required.")
@@ -365,10 +312,6 @@ export const pluginPackageOperationSchema = z.object({
 
 export const pluginPackageEnableSchema = pluginPackageOperationSchema.extend({
   enabled: z.boolean()
-});
-
-export const chromeTakeoverRegisterSchema = z.object({
-  extensionId: z.string().trim().toLowerCase().regex(/^[a-p]{32}$/).optional()
 });
 
 export const reasoningEffortSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -399,10 +342,6 @@ export const appSettingsUpdateSchema = z.object({
     subtitle: z.string().trim().max(MAX_BRAND_SUBTITLE_LENGTH).optional()
   }).optional(),
   language: z.enum(["en", "zh"]).optional(),
-  chromeTakeover: z.object({
-    enabled: z.boolean().optional(),
-    extensionId: z.union([z.string().trim().toLowerCase().regex(/^[a-p]{32}$/), z.null()]).optional()
-  }).optional(),
   workingNotifications: z.object({
     mode: z.enum(["background", "always", "never"]).optional(),
     includeDetails: z.boolean().optional()
@@ -462,10 +401,7 @@ export const activityObservationCreateSchema = z.object({
 });
 
 export const webSearchSettingsUpdateSchema = z.object({
-  enabled: z.boolean().optional(),
-  provider: z.enum(["pi-web-access", "duckduckgo"]).optional(),
-  maxResults: z.number().int().min(1).max(8).optional(),
-  timeoutMs: z.number().int().min(1500).max(15_000).optional()
+  enabled: z.boolean().optional()
 });
 
 export const windowActionSchema = z.enum(["minimize", "maximize", "close"]);

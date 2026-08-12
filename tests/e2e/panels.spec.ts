@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -172,14 +171,6 @@ test.describe("Jasmine panels and tools", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator(".settings-panel")).toBeVisible();
     await expect(page.locator(".settings-nav").getByRole("button", { name: "Packages" })).toHaveClass(/active/);
-    await page.getByRole("button", { name: "Close settings" }).click();
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("mcp");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-nav").getByRole("button", { name: "MCP Servers" })).toHaveClass(/active/);
-    await expect(page.locator(".settings-detail")).toContainText("Marketplace");
     await page.getByRole("button", { name: "Close settings" }).click();
 
     await page.keyboard.press("Control+K");

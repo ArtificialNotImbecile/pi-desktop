@@ -2,8 +2,6 @@ export type PermissionMode = "ask" | "full-access";
 
 export type PermissionToolName = "bash" | "edit" | "write";
 
-export type PermissionTarget = "local" | "ssh";
-
 export type PermissionApprovalReason =
   | "bash"
   | "outside-project"
@@ -17,8 +15,6 @@ export type PermissionApprovalPrompt = {
   toolName: PermissionToolName;
   reason: PermissionApprovalReason;
   summary: string;
-  target: PermissionTarget;
-  targetLabel?: string;
   cwd: string;
   projectRoot: string | null;
   command?: string;

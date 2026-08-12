@@ -6,7 +6,6 @@ export const settingsSections = [
   "skills",
   "plugins",
   "prompts",
-  "mcp",
   "activity",
   "webSearch",
   "about"

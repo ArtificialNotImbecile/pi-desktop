@@ -1,7 +1,5 @@
 import type { ChatMessage, ChatSendRequest, SkillReference } from "../../shared/ipc.js";
-import type { JasmineDatabase } from "../db/database.js";
 import { fallbackTitle } from "../services/threadTitles.js";
-import { searchWeb } from "../services/webSearch.js";
 
 export function buildRetryPlan(messages: ChatMessage[], messageId?: string) {
   if (messageId) {
@@ -95,42 +93,11 @@ export function titleFromAttachments(attachments: ChatSendRequest["attachments"]
   return first.name ? `Attachment: ${first.name}` : "Attachment chat";
 }
 
-export async function runWebSearchForChat(db: JasmineDatabase, threadId: string, content: string, enabled: boolean, signal?: AbortSignal) {
-  if (!enabled || !content.trim()) return [];
-  const startedAt = Date.now();
-  const trace = db.createToolRun({
-    threadId,
-    title: "Web search",
-    providerId: "web-search",
-    inputSummary: summarizeOutput(content)
-  });
-  try {
-    const results = await searchWeb(db, content, signal);
-    db.finishToolRun({
-      id: trace.id,
-      status: "success",
-      outputSummary: summarizeSearchResults(results),
-      elapsedMs: Date.now() - startedAt
-    });
-    return results;
-  } catch (error) {
-    const message = nonSecretError(error);
-    db.finishToolRun({
-      id: trace.id,
-      status: "error",
-      error: message,
-      elapsedMs: Date.now() - startedAt
-    });
-    return [];
-  }
-}
-
-export function summarizeInput(messageCount: number, attachmentCount: number, memoryCount = 0, skillCount = 0, webSearchCount = 0): string {
+export function summarizeInput(messageCount: number, attachmentCount: number, memoryCount = 0, skillCount = 0): string {
   const parts = [`${messageCount} message${messageCount === 1 ? "" : "s"}`];
   if (attachmentCount > 0) parts.push(`${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`);
   if (memoryCount > 0) parts.push(`${memoryCount} memor${memoryCount === 1 ? "y" : "ies"}`);
   if (skillCount > 0) parts.push(`${skillCount} skill${skillCount === 1 ? "" : "s"}`);
-  if (webSearchCount > 0) parts.push(`${webSearchCount} web result${webSearchCount === 1 ? "" : "s"}`);
   return parts.join(", ");
 }
 
@@ -142,9 +109,4 @@ export function summarizeOutput(content: string): string {
 export function nonSecretError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/sk-[A-Za-z0-9_-]+/g, "sk-...");
-}
-
-function summarizeSearchResults(results: Array<{ title: string; url: string }>): string {
-  if (results.length === 0) return "No web results";
-  return results.map((result) => `${result.title} - ${result.url}`).join("; ").slice(0, 180);
 }

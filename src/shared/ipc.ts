@@ -10,7 +10,6 @@ export type {
   PermissionApprovalReason,
   PermissionApprovalResponse,
   PermissionMode,
-  PermissionTarget,
   PermissionToolName
 } from "./permissions.js";
 
@@ -237,44 +236,6 @@ export type SkillReference = {
   instructions?: string;
 };
 
-export type McpTransport = "stdio" | "http";
-
-export type McpServerRecord = {
-  id: string;
-  name: string;
-  description: string;
-  command: string;
-  args: string[];
-  envJson: string;
-  enabled: boolean;
-  transport: McpTransport;
-  url?: string;
-  source: "manual" | "marketplace";
-  marketplaceId?: string;
-  packageName?: string;
-  homepage?: string;
-  category?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type McpMarketplaceServer = {
-  id: string;
-  name: string;
-  description: string;
-  author: string;
-  category: string;
-  tags: string[];
-  verified: boolean;
-  featured: boolean;
-  transport: McpTransport;
-  command: string;
-  args: string[];
-  envJson: string;
-  packageName?: string;
-  homepage?: string;
-};
-
 export type PluginResourceKind = "extensions" | "skills" | "prompts" | "themes";
 
 export type PluginResourceCount = {
@@ -333,54 +294,6 @@ export type PluginResolveResourcesResponse = {
   packages: PluginPackageRecord[];
 };
 
-export type ChromeTakeoverStatus = {
-  enabled: boolean;
-  bridgeRunning: boolean;
-  extensionConnected: boolean;
-  extensionResponsive: boolean;
-  hostRegistered: boolean;
-  extensionId: string | null;
-  extensionPath: string | null;
-  bridgePort: number | null;
-};
-
-export type ChromeTakeoverRegisterRequest = {
-  extensionId?: string;
-};
-
-export type McpMarketplaceListRequest = {
-  query?: string;
-  category?: string;
-};
-
-export type McpServerCreateRequest = {
-  name: string;
-  description?: string;
-  command: string;
-  args?: string[];
-  envJson?: string;
-  enabled?: boolean;
-  transport?: McpTransport;
-  url?: string;
-  source?: "manual" | "marketplace";
-  marketplaceId?: string;
-  packageName?: string;
-  homepage?: string;
-  category?: string;
-};
-
-export type McpServerUpdateRequest = {
-  id: string;
-  name?: string;
-  description?: string;
-  command?: string;
-  args?: string[];
-  envJson?: string;
-  enabled?: boolean;
-  transport?: McpTransport;
-  url?: string;
-};
-
 export type ToolModelSettings = {
   providerId: string;
   modelId: string;
@@ -402,11 +315,6 @@ export type BrandSettings = {
   mainTitle: string;
   subtitle: string;
   updatedAt: string;
-};
-
-export type ChromeTakeoverSettings = {
-  enabled: boolean;
-  extensionId: string | null;
 };
 
 export type WorkingNotificationMode = "background" | "always" | "never";
@@ -492,7 +400,6 @@ export type AppSettings = {
   appearance: AppearanceSettings;
   brand: BrandSettings;
   language: AppLanguage;
-  chromeTakeover: ChromeTakeoverSettings;
   workingNotifications: WorkingNotificationSettings;
   permissionMode: PermissionMode;
   fileChangeTrackingMode: FileChangeTrackingMode;
@@ -509,7 +416,6 @@ export type AppSettingsUpdateRequest = {
   appearance?: Partial<Pick<AppearanceSettings, "accent" | "surface" | "ink" | "success" | "danger">>;
   brand?: Partial<Pick<BrandSettings, "logoDataUrl" | "mainTitle" | "subtitle">>;
   language?: AppLanguage;
-  chromeTakeover?: Partial<ChromeTakeoverSettings>;
   workingNotifications?: Partial<WorkingNotificationSettings>;
   permissionMode?: PermissionMode;
   fileChangeTrackingMode?: FileChangeTrackingMode;
@@ -1214,23 +1120,16 @@ export type ActivitySnapshot = {
   status: ActivityStatus;
 };
 
-export type WebSearchProvider = "pi-web-access" | "duckduckgo";
-
+// Web access is served by the pi-web-access package, so Jasmine only stores
+// whether the agent may reach for it. Search execution, result shaping, and
+// timeouts all belong to that extension.
 export type WebSearchSettings = {
   enabled: boolean;
-  provider: WebSearchProvider;
-  maxResults: number;
-  timeoutMs: number;
-  lastRunAt?: string;
-  lastError?: string;
   updatedAt: string;
 };
 
 export type WebSearchSettingsUpdateRequest = {
   enabled?: boolean;
-  provider?: WebSearchProvider;
-  maxResults?: number;
-  timeoutMs?: number;
 };
 
 export type WebSearchResult = {
@@ -1397,12 +1296,6 @@ export type JasmineApi = {
   addPromptTemplateSource(request: PromptTemplateSourceCreateRequest): Promise<PromptTemplateSource>;
   deletePromptTemplateSource(id: string): Promise<void>;
   pickPromptTemplatePaths(): Promise<string[]>;
-  listMcpMarketplace(request?: McpMarketplaceListRequest): Promise<McpMarketplaceServer[]>;
-  listMcpServers(): Promise<McpServerRecord[]>;
-  installMcpServer(server: McpMarketplaceServer): Promise<McpServerRecord>;
-  createMcpServer(request: McpServerCreateRequest): Promise<McpServerRecord>;
-  updateMcpServer(request: McpServerUpdateRequest): Promise<McpServerRecord>;
-  deleteMcpServer(id: string): Promise<void>;
   listPlugins(): Promise<PluginPackageRecord[]>;
   listPluginSkills(): Promise<SkillRecord[]>;
   installPlugin(request: PluginPackageInstallRequest): Promise<PluginPackageRecord[]>;
@@ -1410,9 +1303,6 @@ export type JasmineApi = {
   removePlugin(request: PluginPackageOperationRequest): Promise<PluginPackageRecord[]>;
   setPluginEnabled(request: PluginPackageEnableRequest): Promise<PluginPackageRecord[]>;
   resolvePluginResources(): Promise<PluginResolveResourcesResponse>;
-  getChromeTakeoverStatus(): Promise<ChromeTakeoverStatus>;
-  registerChromeTakeover(request: ChromeTakeoverRegisterRequest): Promise<ChromeTakeoverStatus>;
-  disableChromeTakeover(): Promise<ChromeTakeoverStatus>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(request: AppSettingsUpdateRequest): Promise<AppSettings>;
   getAppUpdateState(): Promise<AppUpdateState>;
