@@ -86,3 +86,49 @@ jobs:
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
+
+  # The smoke tag covers 12 of the ~111 E2E tests, so the platform matrix above
+  # cannot be the only automated E2E signal. The full suite runs once on Linux:
+  # it is the cheapest runner, and the paths this suite exercises that do differ
+  # by operating system -- window state, tray, terminal, packaging -- are
+  # already tagged @smoke and therefore covered on all three platforms.
+  e2e:
+    name: Full E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux runtime dependencies
+        run: npx playwright install-deps
+
+      - name: Build application
+        run: npm run build
+
+      # The suite is serial-bound, not test-bound: a full local run spent 316s of
+      # test time in 324s of wall clock, so one worker buys nothing but latency.
+      # Two rather than the config's Linux default of four -- each test launches
+      # its own Electron against a 45s timeout, and a standard runner has four
+      # vCPUs, which is where the starvation the Playwright config documents on
+      # macOS starts. Raise it once a few runs prove stable.
+      - name: Run full E2E suite
+        run: xvfb-run -a npm run test:e2e
+        env:
+          JASMINE_E2E_OFFSCREEN: "1"
+          JASMINE_E2E_WORKERS: "2"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failures
+          path: test-results/
+          retention-days: 7
