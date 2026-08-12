@@ -451,9 +451,18 @@ function parseCoverage(value: string): FileChangeCoverage {
     if (
       parsed
       && (parsed.status === "complete" || parsed.status === "partial" || parsed.status === "failed" || parsed.status === "unsupported")
-      && (parsed.target === "local" || parsed.target === "remote")
+      && parsed.target === "local"
     ) {
       return parsed as FileChangeCoverage;
+    }
+    if (parsed && (parsed as { target?: string }).target === "remote") {
+      // Captures written by the retired remote SSH runs; they never held local
+      // evidence, so report them as unsupported instead of corrupt.
+      return {
+        status: "unsupported",
+        target: "local",
+        reason: "Remote SSH runs are no longer supported; this capture holds no evidence."
+      };
     }
   } catch {
     // Fall through to an explicit corrupt-metadata state.

@@ -248,24 +248,6 @@ contextBridge.exposeInMainWorld("jasmine", {
   deleteMcpServer(id) {
     return ipcRenderer.invoke("mcp:servers:delete", id);
   },
-  listRemoteConnections() {
-    return ipcRenderer.invoke("remoteConnections:list");
-  },
-  importRemoteConnections() {
-    return ipcRenderer.invoke("remoteConnections:import");
-  },
-  createRemoteConnection(request) {
-    return ipcRenderer.invoke("remoteConnections:create", request);
-  },
-  updateRemoteConnection(request) {
-    return ipcRenderer.invoke("remoteConnections:update", request);
-  },
-  deleteRemoteConnection(id) {
-    return ipcRenderer.invoke("remoteConnections:delete", id);
-  },
-  testRemoteConnection(id) {
-    return ipcRenderer.invoke("remoteConnections:test", id);
-  },
   getAppSettings() {
     return ipcRenderer.invoke("appSettings:get");
   },

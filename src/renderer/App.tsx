@@ -22,7 +22,6 @@ import { usePlugins } from "./hooks/usePlugins";
 import { useProviders } from "./hooks/useProviders";
 import { usePromptTemplates } from "./hooks/usePromptTemplates";
 import { useProjects } from "./hooks/useProjects";
-import { useRemoteConnections } from "./hooks/useRemoteConnections";
 import { useSkills } from "./hooks/useSkills";
 import { useSpotlightCommandBridge } from "./hooks/useSpotlightCommandBridge";
 import { useStableCallbacks } from "./hooks/useStableCallbacks";
@@ -121,10 +120,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     () => [...skills.skills, ...plugins.skills],
     [plugins.skills, skills.skills]
   );
-  const remotes = useRemoteConnections({
-    onError: setAppError,
-    onToast: showToast
-  });
   const promptTemplates = usePromptTemplates({
     onError: setAppError,
     onToast: showToast
@@ -602,10 +597,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     onToggleMemory: () => setMemoryEnabled((enabled) => !enabled),
     onSelectPermissionMode: (mode: PermissionMode) => void appSettings.updateSettings({ permissionMode: mode }),
     onToggleTools: () => setToolsEnabled((enabled) => !enabled),
-    onSelectRemoteConnection: (id: string | null) => {
-      if (id) void remotes.updateConnection({ id, active: true });
-      else if (remotes.activeConnection) void remotes.updateConnection({ id: remotes.activeConnection.id, active: false });
-    },
     onSelectRightPanel: (mode: RightPanelMode) => selectRightPanel(mode),
     onAddRightPanel: (mode: RightPanelMode) => addRightPanel(mode),
     onSelectRightPanelTab: (tabId: string) => selectRightPanelTab(tabId),
@@ -692,8 +683,6 @@ function App(props: { initialAppSettings: AppSettings }) {
         permissionModeSaving={appSettings.saving}
         webSearchSettings={webSearch.settings}
         webSearchLoading={webSearch.loading}
-        remoteConnections={remotes.connections}
-        activeRemoteConnection={remotes.activeConnection}
         toolsEnabled={toolsEnabled}
         reasoningEffort={reasoningEffort}
         draft={composer.draft}
@@ -755,9 +744,6 @@ function App(props: { initialAppSettings: AppSettings }) {
             plugins={plugins.packages}
             pluginsLoading={plugins.loading}
             pluginSavingSource={plugins.savingSource}
-            remoteConnections={remotes.connections}
-            remoteConnectionsLoading={remotes.loading}
-            remoteConnectionSavingId={remotes.savingId}
             webSearchSettings={webSearch.settings}
             webSearchLoading={webSearch.loading}
             webSearchSaving={webSearch.saving}
@@ -796,12 +782,6 @@ function App(props: { initialAppSettings: AppSettings }) {
             onUpdatePlugin={(source, scope) => plugins.update({ source, scope })}
             onRemovePlugin={(source, scope) => plugins.remove({ source, scope })}
             onSetPluginEnabled={(source, scope, enabled) => plugins.setEnabled({ source, scope, enabled })}
-            onRefreshRemoteConnections={() => void remotes.refresh()}
-            onImportRemoteConnections={() => void remotes.importFromConfig()}
-            onCreateRemoteConnection={remotes.createConnection}
-            onUpdateRemoteConnection={remotes.updateConnection}
-            onDeleteRemoteConnection={(id) => void remotes.deleteConnection(id)}
-            onTestRemoteConnection={(id) => void remotes.testConnection(id)}
             onSave={providers.updateProvider}
             onTest={providers.testProvider}
             onFetchModels={providers.fetchProviderModels}

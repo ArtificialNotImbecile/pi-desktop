@@ -42,8 +42,6 @@ import type {
   PromptTemplateSourceCreateRequest,
   ProviderModelUpdateRequest,
   ProviderUpdateRequest,
-  RemoteConnectionCreateRequest,
-  RemoteConnectionUpdateRequest,
   WebSearchSettingsUpdateRequest,
   MemoryArchiveRequest,
   MemoryCreateRequest,
@@ -314,24 +312,6 @@ const api: JasmineApi = {
   },
   disableChromeTakeover() {
     return ipcRenderer.invoke("chromeBridge:disable");
-  },
-  listRemoteConnections() {
-    return ipcRenderer.invoke("remoteConnections:list");
-  },
-  importRemoteConnections() {
-    return ipcRenderer.invoke("remoteConnections:import");
-  },
-  createRemoteConnection(request: RemoteConnectionCreateRequest) {
-    return ipcRenderer.invoke("remoteConnections:create", request);
-  },
-  updateRemoteConnection(request: RemoteConnectionUpdateRequest) {
-    return ipcRenderer.invoke("remoteConnections:update", request);
-  },
-  deleteRemoteConnection(id: string) {
-    return ipcRenderer.invoke("remoteConnections:delete", id);
-  },
-  testRemoteConnection(id: string) {
-    return ipcRenderer.invoke("remoteConnections:test", id);
   },
   getAppSettings() {
     return ipcRenderer.invoke("appSettings:get");

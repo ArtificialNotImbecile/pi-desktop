@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, RemoteConnectionRecord, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
+import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
@@ -63,7 +63,6 @@ type RuntimeChatRequest = ChatSendRequest & {
   requestPermissionApproval?: (request: Readonly<PermissionApprovalRequest>, signal?: AbortSignal) => Promise<"allow-once" | "deny">;
   availableSkillPaths?: string[];
   promptTemplatePaths?: string[];
-  remoteConnection?: RemoteConnectionRecord | null;
   sessionManager?: SessionManager;
   sessionMessageIds?: string[];
   currentMessageId?: string;
@@ -125,14 +124,11 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     const mockQueue = createMockQueueControls(options);
     const imageCount = countModelVisibleImages(parsed.messages, request.attachments ?? [], parsed.content);
     const lastUserText = parsed.content || parsed.messages.at(-1)?.content || "";
-    const fileChangeCaptures = request.remoteConnection?.active
-      ? [unsupportedRemoteFileChangeCapture(request.remoteConnection.remotePath?.trim() || cwd, startedAt)]
-      : mockFileChangeCaptures(lastUserText, cwd, startedAt);
+    const fileChangeCaptures = mockFileChangeCaptures(lastUserText, cwd, startedAt);
     for (const capture of fileChangeCaptures) options.onFileChangeCapture?.(capture);
     const inlineSkillNames = (request.skillContext ?? [])
       .filter((skill) => (parsed.inlineSkillIds ?? []).includes(skill.id))
       .map((skill) => skill.name);
-    const remotePrefix = request.remoteConnection?.active && request.toolsEnabled ? `Remote coding target: ${request.remoteConnection.name}. ` : "";
     let chromeTakeoverFlow: Awaited<ReturnType<typeof runMockChromeTakeoverFlow>> = null;
     let content = "";
     const latestUpdate: { current?: RuntimeUpdate } = {};
@@ -145,7 +141,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     try {
       chromeTakeoverFlow = await runMockChromeTakeoverFlow(request, lastUserText, options.signal);
       const permissionFlow = await runMockPermissionFlow(request, lastUserText, options.signal);
-      content = permissionFlow ?? remotePrefix + (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
+      content = permissionFlow ?? (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
       if (lastUserText.toLowerCase().includes("working failure")) {
         throw new Error("Mock Working failure.");
       }
@@ -253,10 +249,6 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   const { runPiCodingAgentChat } = await import("./providers/piCodingAgent.js");
   const capturedTaxonomies: ContextTaxonomy[] = [];
   const capturedFileChanges: FileChangeCaptureInput[] = [];
-  const remoteFileChangeCapture = request.remoteConnection?.active
-    ? unsupportedRemoteFileChangeCapture(request.remoteConnection.remotePath?.trim() || cwd, startedAt)
-    : null;
-  if (remoteFileChangeCapture) options.onFileChangeCapture?.(remoteFileChangeCapture);
   const result = await runPiCodingAgentChat({
     provider,
     messages: request.messages,
@@ -280,7 +272,6 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     availableSkillPaths: request.availableSkillPaths ?? [],
     packageExtensionPaths: request.packageExtensionPaths ?? [],
     promptTemplatePaths: request.promptTemplatePaths,
-    remoteConnection: request.remoteConnection,
     shellPath: piShell.shellPath,
     signal: options.signal,
     onUpdate: options.onUpdate,
@@ -320,8 +311,6 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       })
     : undefined;
 
-  const fileChangeCaptures = remoteFileChangeCapture ? [remoteFileChangeCapture] : capturedFileChanges;
-
   return {
     content: normalizedResult.content,
     model: provider.modelId,
@@ -330,7 +319,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     webSearchUsed: mergeWebSearchResults(request.webSearchContext ?? [], result.webSearchUsed),
     contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
     contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
-    fileChangeCaptures,
+    fileChangeCaptures: capturedFileChanges,
     generatedMessages: result.generatedMessages
   };
 }
@@ -404,27 +393,6 @@ function packageRevision(
       content: image.base64,
       mediaType: image.mediaType
     } : {})
-  };
-}
-
-function unsupportedRemoteFileChangeCapture(cwd: string, startedAtMs: number): FileChangeCaptureInput {
-  const completedAt = new Date().toISOString();
-  return {
-    producerCaptureId: crypto.randomUUID(),
-    schemaVersion: 1,
-    startedAt: new Date(startedAtMs).toISOString(),
-    completedAt,
-    capturedAt: completedAt,
-    cwd,
-    roots: [],
-    excludes: [],
-    warnings: [],
-    coverage: {
-      status: "unsupported",
-      target: "remote",
-      reason: "Remote SSH filesystem snapshots are not supported in this release; no local paths were treated as remote evidence."
-    },
-    changes: []
   };
 }
 
@@ -1171,9 +1139,7 @@ async function runMockPermissionFlow(
   if (request.permissionMode === "full-access") return "Full access allowed the fixture without an approval prompt.";
   if (!request.requestPermissionApproval) throw new Error("Permission approval fixture requires a host approval broker.");
 
-  const remote = request.remoteConnection?.active ? request.remoteConnection : null;
-  const target = remote ? "ssh" as const : "local" as const;
-  const cwd = remote?.remotePath?.trim() || request.cwd?.trim() || process.cwd();
+  const cwd = request.cwd?.trim() || process.cwd();
   const projectRoot = request.permissionProjectRoot ?? null;
   const fileRequest = normalized.includes("write");
   const insideProjectRequest = fileRequest && normalized.includes("inside");
@@ -1185,8 +1151,7 @@ async function runMockPermissionFlow(
     toolName: "write",
     reason: projectRoot ? "outside-project" : "no-project",
     summary: projectRoot ? "Write outside the current project: ../outside.txt" : "Write without an open project: fixture.txt",
-    target,
-    ...(remote ? { targetLabel: remote.name } : {}),
+    target: "local",
     cwd,
     projectRoot,
     path: projectRoot ? "../outside.txt" : "fixture.txt",
@@ -1196,8 +1161,7 @@ async function runMockPermissionFlow(
     toolName: "bash",
     reason: "bash",
     summary: "Run shell command: echo jasmine-permission-fixture",
-    target,
-    ...(remote ? { targetLabel: remote.name } : {}),
+    target: "local",
     cwd,
     projectRoot,
     command: "echo jasmine-permission-fixture"

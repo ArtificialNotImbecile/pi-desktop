@@ -46,7 +46,7 @@ import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon, WorkingIcon 
 import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
 
 export function LocalSettingsPage(props: {
-  section: Exclude<SettingsSectionKey, "providers" | "remote">;
+  section: Exclude<SettingsSectionKey, "providers">;
   providers: AiProvider[];
   memories: MemoryRecord[];
   activitySettings: ActivitySettings;

@@ -5,15 +5,13 @@ import { createAgentSessionFromServices, createAgentSessionServices, defineTool,
 import type { ExtensionFactory, LoadExtensionsResult, SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, Type } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent, ThinkingContent, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, FileChangeTrackingMode, PermissionMode, PickedPath, ReasoningEffort, RemoteConnectionRecord, WebSearchResult } from "../../../shared/ipc.js";
+import type { AskUserQuestionOption, AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatQueuedMessage, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, FileChangeTrackingMode, PermissionMode, PickedPath, ReasoningEffort, WebSearchResult } from "../../../shared/ipc.js";
 import type { RuntimeProviderConfig } from "../runtime.js";
 import type { RuntimeGeneratedMessage, RuntimeQueueControls } from "../runtime.js";
 import type { RuntimeSkillManifest } from "../../services/skillManifests.js";
-import { createSshCodingTools } from "../tools/sshCodingTools.js";
 import { createContextCaptureExtension } from "../extensions/contextCapture/index.js";
 import { createFileChangeExtension, type FileChangeCapture } from "../extensions/fileChanges/index.js";
 import { createJasminePermissionGateExtension, type PermissionApprovalRequest } from "../extensions/permissionGate/index.js";
-import { remoteLabel, sshExec, testRemoteConnection } from "../../services/remoteConnections.js";
 import { abortError } from "../../utils/abort.js";
 import { mergeWebSearchResultsInto } from "../../utils/webSearchResults.js";
 
@@ -44,7 +42,6 @@ type PiCodingAgentChatInput = {
   packageSkillPaths?: string[];
   availableSkillPaths?: string[];
   packageExtensionPaths?: string[];
-  remoteConnection?: RemoteConnectionRecord | null;
   shellPath?: string;
   signal?: AbortSignal;
   onUpdate?(update: { content: string; timeline: ChatTimelineItem[]; liveMessages?: RuntimeGeneratedMessage[] }): void;
@@ -218,7 +215,6 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const previousEntryCount = sessionManager.getEntries().length;
   const webSearchUsed: WebSearchResult[] = [];
   const webSearchEnabled = Boolean(input.webSearchTool?.enabled);
-  const remote = input.remoteConnection ? await resolveRemoteConnection(input.remoteConnection) : null;
   const customTools = webSearchEnabled && input.webSearchTool?.provider === "duckduckgo"
     ? [
         createWebSearchTool(async (query, signal) => {
@@ -232,26 +228,15 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     customTools.push(createAskUserQuestionTool(input.askUserQuestion));
   }
   const additionalSkillPaths = runtimeSkillPaths(input.skillContext, input.packageSkillPaths, input.availableSkillPaths);
-  if (remote) {
-    customTools.push(...createSshCodingTools({
-      connection: remote.connection,
-      localCwd: cwd,
-      remoteCwd: remote.remoteCwd,
-      localResourcePaths: additionalSkillPaths
-    }));
-  }
   const currentPromptText = promptText(input.content, input.attachments);
   const currentPromptAnchorText = promptAnchorText(input.content, input.attachments);
   const promptAppends = [
     input.jasminePromptAppend,
-    remote
-      ? remoteRuntimePromptAppend(remote.connection, remote.remoteCwd)
-      : input.localRuntimePromptAppend
+    input.localRuntimePromptAppend
   ].filter((value): value is string => Boolean(value?.trim()));
   const extensionFactories: ExtensionFactory[] = [];
   const turnContext = buildTurnContext(input.memoryContext ?? [], input.webSearchContext ?? []);
   if (turnContext) extensionFactories.push(createTurnContextExtension(turnContext));
-  if (remote) extensionFactories.push(createRemoteSystemPromptExtension(cwd, remote.connection, remote.remoteCwd));
   if (input.onContextTaxonomy) {
     extensionFactories.push(createContextCaptureExtension({
       provider: input.provider.providerName,
@@ -264,32 +249,19 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   if (input.permissionMode) {
     extensionFactories.push(createJasminePermissionGateExtension({
       getMode: () => input.permissionMode ?? "ask",
-      getScope: () => remote ? {
-        projectRoot: input.permissionProjectRoot ? remote.remoteCwd : null,
-        cwd: remote.remoteCwd,
-        pathFlavor: "posix",
-        target: "ssh",
-        label: remoteLabel({ ...remote.connection, remotePath: remote.remoteCwd })
-      } : {
+      getScope: () => ({
         projectRoot: input.permissionProjectRoot ?? null,
         cwd,
         pathFlavor: "native",
         target: "local"
-      },
-      ...(input.requestPermissionApproval ? { requestApproval: input.requestPermissionApproval } : {}),
-      ...(remote ? {
-        canonicalizePath: async ({ path: candidate }) => {
-          const canonical = await sshExec(remote.connection, `realpath -m -- ${quotePosixShell(candidate)}`, { signal: input.signal, timeoutMs: 8_000 });
-          const value = canonical.toString("utf8").trim();
-          if (!value.startsWith("/")) throw new Error("SSH realpath did not return an absolute path.");
-          return value;
-        }
-      } : {})
+      }),
+      ...(input.requestPermissionApproval ? { requestApproval: input.requestPermissionApproval } : {})
     }));
   }
-  const suppressStandaloneFileChangesPackage = Boolean(input.onFileChanges);
-  const usesJasmineFileChanges = !remote && suppressStandaloneFileChangesPackage;
-  if (usesJasmineFileChanges && input.onFileChanges) {
+  // Jasmine owns file-change tracking whenever the host wants captures, so the
+  // standalone package must stay out of the run to avoid duplicate evidence.
+  const usesJasmineFileChanges = Boolean(input.onFileChanges);
+  if (input.onFileChanges) {
     extensionFactories.push(createFileChangeExtension({
       trackingMode: input.fileChangeTrackingMode ?? "managed-tools-only",
       watchRoot: input.fileChangeWatchRoot ?? input.permissionProjectRoot ?? cwd,
@@ -300,7 +272,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   }
 
   const additionalExtensionPaths = Array.from(new Set(input.packageExtensionPaths ?? []))
-    .filter((extensionPath) => !suppressStandaloneFileChangesPackage
+    .filter((extensionPath) => !usesJasmineFileChanges
       || !isJasmineFileChangesPackageSourcePath(extensionPath, [cwd, input.agentDir ?? cwd]));
 
   const resourceLoaderOptions = {
@@ -310,7 +282,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     ...(additionalSkillPaths.length ? { additionalSkillPaths } : {}),
     ...(input.promptTemplatePaths?.length ? { additionalPromptTemplatePaths: input.promptTemplatePaths } : {}),
     ...(extensionFactories.length ? { extensionFactories } : {}),
-    ...(suppressStandaloneFileChangesPackage ? {
+    ...(usesJasmineFileChanges ? {
       extensionsOverride: (base: LoadExtensionsResult): LoadExtensionsResult => ({
         ...base,
         extensions: base.extensions.filter((extension) =>
@@ -548,11 +520,6 @@ function runtimeSkillPaths(
   ]));
 }
 
-function quotePosixShell(value: string): string {
-  if (value.includes("\0")) throw new Error("Path contains a null byte.");
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
 type TrackedQueuedMessage = ChatQueuedMessage & {
   piText: string;
 };
@@ -668,41 +635,6 @@ function removeQueuedMessage(bucket: TrackedQueuedMessage[], id: string): Tracke
   if (index < 0) return undefined;
   const [removed] = bucket.splice(index, 1);
   return removed;
-}
-
-async function resolveRemoteConnection(connection: RemoteConnectionRecord): Promise<{ connection: RemoteConnectionRecord; remoteCwd: string }> {
-  if (connection.remotePath?.trim()) return { connection, remoteCwd: connection.remotePath.trim() };
-  const tested = await testRemoteConnection(connection);
-  return {
-    connection: { ...connection, remotePath: tested.remotePath },
-    remoteCwd: tested.remotePath
-  };
-}
-
-function remoteRuntimePromptAppend(connection: RemoteConnectionRecord, remoteCwd: string): string {
-  const target = remoteLabel({ ...connection, remotePath: remoteCwd });
-  return `Runtime: the read, write, edit, and bash tools operate on the SSH target ${target}; use POSIX shell syntax and remote paths.`;
-}
-
-function createRemoteSystemPromptExtension(localCwd: string, connection: RemoteConnectionRecord, remoteCwd: string): ExtensionFactory {
-  return async (pi) => {
-    pi.on("before_agent_start", (event) => ({
-      systemPrompt: replaceWorkingDirectory(
-        event.systemPrompt,
-        event.systemPromptOptions.cwd || localCwd,
-        `Current working directory: ${remoteCwd} (via SSH: ${remoteLabel({ ...connection, remotePath: remoteCwd })})`
-      )
-    }));
-  };
-}
-
-export function replaceWorkingDirectory(systemPrompt: string, localCwd: string, replacement: string): string {
-  const localLine = `Current working directory: ${localCwd.replace(/\\/g, "/")}`;
-  if (systemPrompt.includes(localLine)) return systemPrompt.replace(localLine, replacement);
-  if (/Current working directory: [^\r\n]*$/.test(systemPrompt)) {
-    return systemPrompt.replace(/Current working directory: [^\r\n]*$/, replacement);
-  }
-  return `${systemPrompt}\n${replacement}`;
 }
 
 export function buildTurnContext(memoryContext: string[], webSearchContext: WebSearchResult[]): string | undefined {

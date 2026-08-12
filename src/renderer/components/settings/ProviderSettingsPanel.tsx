@@ -16,9 +16,6 @@ import type {
   ProviderUpdateRequest,
   PromptTemplateRecord,
   PromptTemplateSource,
-  RemoteConnectionCreateRequest,
-  RemoteConnectionRecord,
-  RemoteConnectionUpdateRequest,
   SkillCreateRequest,
   SkillOpenResponse,
   SkillRecord,
@@ -30,7 +27,6 @@ import type {
 import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, SearchIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
 import { LocalSettingsPage } from "./LocalSettingsPage";
 import { ProviderDetailPage } from "./ProviderDetailPage";
-import { RemoteConnectionsSettingsPage } from "./RemoteConnectionsSettingsPage";
 import { useI18n } from "../../i18n";
 import { FadeScale } from "../ui";
 import type { SettingsSection } from "../../navigation/routes";
@@ -65,9 +61,6 @@ export function ProviderSettingsPanel(props: {
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
-  remoteConnections: RemoteConnectionRecord[];
-  remoteConnectionsLoading: boolean;
-  remoteConnectionSavingId: string | null;
   webSearchSettings: WebSearchSettings;
   webSearchLoading: boolean;
   webSearchSaving: boolean;
@@ -100,12 +93,6 @@ export function ProviderSettingsPanel(props: {
   onUpdatePlugin(source: string, scope: PluginPackageRecord["scope"]): Promise<unknown>;
   onRemovePlugin(source: string, scope: PluginPackageRecord["scope"]): Promise<unknown>;
   onSetPluginEnabled(source: string, scope: PluginPackageRecord["scope"], enabled: boolean): Promise<unknown>;
-  onRefreshRemoteConnections(): void;
-  onImportRemoteConnections(): void;
-  onCreateRemoteConnection(request: RemoteConnectionCreateRequest): Promise<RemoteConnectionRecord | null>;
-  onUpdateRemoteConnection(request: RemoteConnectionUpdateRequest): Promise<RemoteConnectionRecord | null>;
-  onDeleteRemoteConnection(id: string): void;
-  onTestRemoteConnection(id: string): void;
   onSave(request: ProviderUpdateRequest): Promise<AiProvider | null>;
   onTest(providerId: string): Promise<unknown>;
   onFetchModels(providerId: string): Promise<unknown>;
@@ -202,7 +189,6 @@ export function ProviderSettingsPanel(props: {
           <button className={section === "skills" ? "active" : ""} type="button" onClick={() => selectSection("skills")}><SkillIcon /><span>{t("settings.nav.skills")}</span></button>
           <button className={section === "plugins" ? "active" : ""} type="button" onClick={() => selectSection("plugins")}><PlugIcon /><span>{t("settings.nav.plugins")}</span></button>
           <button className={section === "prompts" ? "active" : ""} type="button" onClick={() => selectSection("prompts")}><TerminalIcon /><span>{t("settings.nav.prompts")}</span></button>
-          <button className={section === "remote" ? "active" : ""} type="button" onClick={() => selectSection("remote")}><TerminalIcon /><span>{t("settings.nav.remote")}</span></button>
           <button className={section === "mcp" ? "active" : ""} type="button" onClick={() => selectSection("mcp")}><PlugIcon /><span>{t("settings.nav.mcp")}</span></button>
           <button className={section === "activity" ? "active" : ""} type="button" onClick={() => selectSection("activity")}><ActivityIcon /><span>{t("settings.nav.activity")}</span></button>
           <button className={section === "webSearch" ? "active" : ""} type="button" onClick={() => selectSection("webSearch")}><SearchIcon /><span>{t("settings.nav.webSearch")}</span></button>
@@ -239,19 +225,6 @@ export function ProviderSettingsPanel(props: {
               onTest={props.onTest}
               onFetchModels={props.onFetchModels}
               onUpdateModel={props.onUpdateModel}
-            />
-          ) : section === "remote" ? (
-            <RemoteConnectionsSettingsPage
-              connections={props.remoteConnections}
-              loading={props.remoteConnectionsLoading}
-              savingId={props.remoteConnectionSavingId}
-              onClose={props.onClose}
-              onRefresh={props.onRefreshRemoteConnections}
-              onImport={props.onImportRemoteConnections}
-              onCreate={props.onCreateRemoteConnection}
-              onUpdate={props.onUpdateRemoteConnection}
-              onDelete={props.onDeleteRemoteConnection}
-              onTest={props.onTestRemoteConnection}
             />
           ) : (
             <LocalSettingsPage

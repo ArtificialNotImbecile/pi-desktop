@@ -880,7 +880,6 @@ async function buildChatTurnContext(
   const selectedSkills = await db.getSkillsForPrompt(input.skillIds);
   const skillManifests = await prepareSkillManifests(mergeRuntimeSkills(selectedSkills, input.inlineSkills, input.inlinePluginSkills), userDataDir);
   const availableSkillManifests = await prepareEnabledSkillManifests(await db.listAllSkills(), userDataDir);
-  const remoteConnection = db.getActiveRemoteConnection();
   const webSearchSettings = db.getWebSearchSettings();
   const effectiveWebSearchEnabled = Boolean(webSearchSettings.enabled);
   await bootstrapPiWebAccessPluginFromWebSearch({ userDataDir }, webSearchSettings);
@@ -906,7 +905,6 @@ async function buildChatTurnContext(
     memoryUsed,
     skillManifests,
     availableSkillPaths: availableSkillManifests.map((skill) => skill.skillFilePath),
-    remoteConnection,
     webSearchSettings,
     effectiveWebSearchEnabled,
     packageSkillPaths,
@@ -972,8 +970,7 @@ function runtimeContextOptions(
         if (!signal?.aborted) working.resumed(requestId);
       }
     },
-    promptTemplatePaths: turn.promptTemplatePaths,
-    remoteConnection: turn.remoteConnection
+    promptTemplatePaths: turn.promptTemplatePaths
   };
 }
 

@@ -23,7 +23,6 @@ try {
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
   const workingTasks = await import("../../dist/main/main/db/repositories/workingTasks.js");
   const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
-  const remoteConnections = await import("../../dist/main/main/db/repositories/remoteConnections.js");
   const skillFiles = await import("../../dist/main/main/services/skillFiles.js");
   const skillManifests = await import("../../dist/main/main/services/skillManifests.js");
   const skillRuntimeContext = await import("../../dist/main/main/services/skillRuntimeContext.js");
@@ -121,23 +120,6 @@ try {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE remote_connections (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      host TEXT NOT NULL,
-      user TEXT,
-      port INTEGER,
-      remote_path TEXT,
-      config_host TEXT,
-      config_path TEXT,
-      source TEXT NOT NULL DEFAULT 'manual',
-      active INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'unchecked',
-      last_connected_at TEXT,
-      last_error TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
   `);
 
   const timestamp = new Date().toISOString();
@@ -208,6 +190,25 @@ try {
         '一个想法、半句话、一段粘贴——剩下交给 Hiri One。',
         '${timestamp}'
       );
+      CREATE TABLE remote_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        host TEXT NOT NULL,
+        user TEXT,
+        port INTEGER,
+        remote_path TEXT,
+        config_host TEXT,
+        config_path TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        active INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'unchecked',
+        last_connected_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO remote_connections (id, name, host, created_at, updated_at)
+      VALUES ('legacy-remote', 'Legacy remote', 'example.internal', '${timestamp}', '${timestamp}');
       CREATE TABLE mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -273,6 +274,10 @@ try {
       );
     `);
     migrations.migrateDatabase(legacyDb, () => timestamp);
+    // Migration 38 retires the remote SSH feature, so its table must be gone
+    // even for databases that already carried connections.
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = 'remote_connections'").get(), undefined);
+    assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 38").get().exists_flag, 1);
     const backfilled = legacyDb.prepare("SELECT project_id FROM chat_threads WHERE id = 'legacy-thread'").get();
     assert.equal(typeof backfilled.project_id, "string");
     assert.deepEqual(JSON.parse(legacyDb.prepare("SELECT active_plugin_ids_json FROM chat_threads WHERE id = 'legacy-thread'").get().active_plugin_ids_json), []);
@@ -1033,35 +1038,6 @@ try {
   assert.equal(disabledContext7.envJson, "{\"CONTEXT7_TOKEN\":\"secret\"}");
   mcpServers.deleteMcpServer(db, context7.id);
   assert.equal(mcpServers.listMcpServers(db).length, 0);
-
-  const manualRemote = remoteConnections.createRemoteConnection(db, {
-    name: "Local WSL",
-    host: "localhost",
-    user: "dev",
-    port: 2222,
-    remotePath: "/home/dev/project",
-    active: true
-  }, timestamp);
-  assert.equal(manualRemote.active, true);
-  assert.equal(remoteConnections.getActiveRemoteConnection(db).id, manualRemote.id);
-  const importedRemote = remoteConnections.upsertRemoteConnection(db, {
-    name: "VS Code host",
-    host: "example.internal",
-    user: "ubuntu",
-    configHost: "prod-box",
-    configPath: path.join(dir, "ssh-config"),
-    source: "vscode",
-    active: true
-  }, timestamp);
-  assert.equal(importedRemote.source, "vscode");
-  assert.equal(remoteConnections.getActiveRemoteConnection(db).id, importedRemote.id);
-  assert.equal(remoteConnections.getRemoteConnection(db, manualRemote.id).active, false);
-  remoteConnections.updateRemoteConnectionStatus(db, importedRemote.id, { status: "connected", lastConnectedAt: timestamp, remotePath: "/srv/app" }, timestamp);
-  assert.equal(remoteConnections.getRemoteConnection(db, importedRemote.id).remotePath, "/srv/app");
-  remoteConnections.updateRemoteConnection(db, importedRemote, { id: importedRemote.id, active: false }, timestamp);
-  assert.equal(remoteConnections.getActiveRemoteConnection(db), null);
-  remoteConnections.deleteRemoteConnection(db, importedRemote.id);
-  assert.equal(remoteConnections.listRemoteConnections(db).length, 1);
 
   db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial schema', ?), (2, 'metadata', ?), (3, 'drafts', ?)")
     .run(timestamp, timestamp, timestamp);

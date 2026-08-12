@@ -2,6 +2,8 @@
 
 ### The desktop app for Pi
 
+English | [简体中文](README.zh-CN.md)
+
 Jasmine is an independent, open-source desktop GUI for the Pi coding agent, bringing Pi-compatible sessions, terminal workflows, skills, extensions, and agent interactions into a modern desktop app.
 
 > Jasmine is a community-built project and is not affiliated with or endorsed by Pi.
@@ -13,11 +15,11 @@ Jasmine is an independent, open-source desktop GUI for the Pi coding agent, brin
 - **Pi Sessions** — keep Pi-compatible JSONL as the canonical conversation record, with persistent local threads, drafts, projects, search, and session import.
 - **Desktop GUI for Pi** — use rich chat, attachments, Working tasks, memories, activity, and project context without leaving the desktop app.
 - **Pi Skills & Extensions** — work with reusable skills, prompt templates, Pi packages, MCP servers, and web access.
-- **Integrated Terminal** — run project terminals and remote shells alongside coding-agent conversations.
+- **Integrated Terminal** — run project terminals alongside coding-agent conversations.
 - **Fast file-change artifacts** — inspect managed `write/edit` targets with unified text diffs and before/after image snapshots, or opt into an event-based filesystem watcher for broader shell visibility without crawling the workspace.
 - **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
 
-Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, remote hosts, and browser automation can send data outside the computer. Review each integration before enabling it.
+Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, and browser automation can send data outside the computer. Review each integration before enabling it.
 
 Pi-compatible JSONL is the canonical model conversation record. SQLite remains the transactional projection for thread lists, search, UI paging, settings, traces, and links back to JSONL entry IDs. See [session storage](docs/session_storage.md) and [Pi session import](docs/pi_session_import.md).
 
@@ -33,7 +35,7 @@ The example above uses two real model turns and opens the captured conversation 
 
 Jasmine consumes the standalone [`@jasmine-ai/pi-file-changes`](src/main/agent/extensions/fileChanges/README.md) package through its host factory. The default `managed-tools-only` mode captures only exact approved `write/edit` targets and never walks the project, so unrelated large files cannot delay chat. The optional watcher mode observes native filesystem events for broader Bash visibility, but clearly reports that before content and causal attribution are not guaranteed. Neither mode parses shell commands or guesses renames.
 
-The Artifacts panel stores each capture as a run-level observation ledger and lazily opens GitHub-style unified text diffs or bounded before/after image snapshots when those revisions are available. Editing or retrying conversation messages does not erase earlier captures because it also does not roll back the filesystem. Files selected by sensitive-path or high-confidence-content rules retain their path, status, hash, size, and mode, while preview bytes and diffs are redacted. Failed runs keep any evidence already captured. Remote SSH tracking is reported as unsupported instead of treating local paths as remote evidence.
+The Artifacts panel stores each capture as a run-level observation ledger and lazily opens GitHub-style unified text diffs or bounded before/after image snapshots when those revisions are available. Editing or retrying conversation messages does not erase earlier captures because it also does not roll back the filesystem. Files selected by sensitive-path or high-confidence-content rules retain their path, status, hash, size, and mode, while preview bytes and diffs are redacted. Failed runs keep any evidence already captured.
 
 ## Product tour
 
@@ -60,12 +62,12 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 | ![Appearance settings](docs/assets/screenshots/settings-appearance.png) | ![Memory settings](docs/assets/screenshots/settings-memory.png) |
 | Skills | Packages |
 | ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Package settings](docs/assets/screenshots/settings-packages.png) |
-| Prompt Templates | Remote |
-| ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![Remote settings](docs/assets/screenshots/settings-remote.png) |
-| MCP Servers | Activity |
-| ![MCP server settings](docs/assets/screenshots/settings-mcp.png) | ![Activity settings](docs/assets/screenshots/settings-activity.png) |
-| Web Search | About |
-| ![Web Search settings](docs/assets/screenshots/settings-web-search.png) | ![About Jasmine](docs/assets/screenshots/settings-about.png) |
+| Prompt Templates | MCP Servers |
+| ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![MCP server settings](docs/assets/screenshots/settings-mcp.png) |
+| Activity | Web Search |
+| ![Activity settings](docs/assets/screenshots/settings-activity.png) | ![Web Search settings](docs/assets/screenshots/settings-web-search.png) |
+| About | |
+| ![About Jasmine](docs/assets/screenshots/settings-about.png) | |
 
 </details>
 
@@ -123,6 +125,10 @@ Environment-variable references are the recommended credential method. For examp
 Jasmine also supports entering a key directly. Direct keys are stored as plain text in the local SQLite database. They are masked in renderer-visible settings, but they are not protected by the operating system credential vault. Do not use direct storage on an untrusted or shared computer.
 
 The unreleased Chrome bridge and extension source remain in the repository for future package work, but Jasmine does not currently expose Chrome Control in Settings or ship a built-in Chrome package.
+
+## Roadmap
+
+Remote development over SSH and Chrome browser control are built and validated as standalone Pi extensions or packages before the desktop app consumes them. See the [roadmap](docs/roadmap.md) for what each one has to do first.
 
 ## Testing
 

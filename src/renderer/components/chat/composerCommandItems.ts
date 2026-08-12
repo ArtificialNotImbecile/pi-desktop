@@ -1,14 +1,6 @@
-import type { FileSearchResult, PluginPackageRecord, PromptTemplateRecord, RemoteConnectionRecord, SkillRecord } from "../../../shared/ipc";
+import type { FileSearchResult, PluginPackageRecord, PromptTemplateRecord, SkillRecord } from "../../../shared/ipc";
 
 export type MentionItem =
-  | {
-      id: string;
-      type: "remote";
-      label: string;
-      description: string;
-      active: boolean;
-      connectionId: string | null;
-    }
   | {
       id: string;
       type: "file";
@@ -63,17 +55,12 @@ export type PromptCommandItem =
     };
 
 export function buildMentionItems(
-  remotes: RemoteConnectionRecord[],
-  activeRemote: RemoteConnectionRecord | null,
   plugins: PluginPackageRecord[],
   selectedPluginIds: string[],
   files: FileSearchResult[],
   query: string,
   loading: boolean,
   copy: {
-    localMachine: string;
-    localMachineActive: string;
-    localMachineDescription: string;
     plugins: string;
     pluginEnabled: string;
     pluginTemporary: string;
@@ -84,26 +71,6 @@ export function buildMentionItems(
   }
 ): MentionItem[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const remoteItems: MentionItem[] = [
-    {
-      id: "remote:local",
-      type: "remote",
-      label: copy.localMachine,
-      description: activeRemote ? copy.localMachineDescription : copy.localMachineActive,
-      active: !activeRemote,
-      connectionId: null
-    },
-    ...remotes
-      .filter((remote) => !normalizedQuery || remote.name.toLowerCase().includes(normalizedQuery) || remoteTarget(remote).toLowerCase().includes(normalizedQuery))
-      .map((remote) => ({
-        id: `remote:${remote.id}`,
-        type: "remote" as const,
-        label: remote.name,
-        description: remoteTarget(remote),
-        active: remote.active,
-        connectionId: remote.id
-      }))
-  ];
   const pluginItems: MentionItem[] = plugins
     .filter((plugin) => !normalizedQuery || plugin.displayName.toLowerCase().includes(normalizedQuery) || plugin.source.toLowerCase().includes(normalizedQuery))
     .map((plugin) => ({
@@ -127,7 +94,7 @@ export function buildMentionItems(
           }))
         : [{ id: "file:empty", type: "status", label: copy.noFiles, description: normalizedQuery }]
     : [{ id: "file:hint", type: "status", label: copy.typeToSearch, description: copy.fileHint }];
-  return [...remoteItems, ...pluginItems, ...fileItems];
+  return [...pluginItems, ...fileItems];
 }
 
 export function buildSkillCommandItems(
@@ -175,9 +142,4 @@ export function buildPromptCommandItems(
     description: template.description || template.filePath,
     argumentHint: template.argumentHint
   }));
-}
-
-export function remoteTarget(connection: RemoteConnectionRecord): string {
-  if (connection.configHost) return connection.configHost;
-  return `${connection.user ? `${connection.user}@` : ""}${connection.host}${connection.remotePath ? `:${connection.remotePath}` : ""}`;
 }

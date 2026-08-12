@@ -98,7 +98,6 @@ try {
     ["Skills", "settings-skills"],
     ["Packages", "settings-packages"],
     ["Prompt Templates", "settings-prompt-templates"],
-    ["Remote", "settings-remote"],
     ["MCP Servers", "settings-mcp"],
     ["Activity", "settings-activity"],
     ["Web Search", "settings-web-search"],

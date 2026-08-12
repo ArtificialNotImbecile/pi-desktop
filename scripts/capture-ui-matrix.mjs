@@ -12,7 +12,6 @@ await resetDirectory(userDataDir);
 await ensureDirectory(outputDir);
 const redSquarePath = await createRedSquare(userDataDir);
 const skillRootPath = await createExternalSkillFixture(userDataDir);
-const sshConfigPath = await createSshConfigFixture(userDataDir);
 const promptTemplateRootPath = await createPromptTemplateFixture(userDataDir);
 
 const app = await launchHarnessApp({
@@ -22,8 +21,7 @@ const app = await launchHarnessApp({
     JASMINE_E2E_MANY_MODELS: "1",
     JASMINE_E2E_PICK_FILE: redSquarePath,
     JASMINE_E2E_PICK_SKILL_FOLDERS: skillRootPath,
-    JASMINE_E2E_PICK_PROMPT_TEMPLATE_PATHS: promptTemplateRootPath,
-    JASMINE_E2E_SSH_CONFIG_FILE: sshConfigPath
+    JASMINE_E2E_PICK_PROMPT_TEMPLATE_PATHS: promptTemplateRootPath
   }
 });
 
@@ -201,10 +199,6 @@ try {
   await page.locator(".settings-nav").getByRole("button", { name: "MCP Servers" }).click();
   await page.waitForSelector(".mcp-card");
   await capture(page, "07-settings-mcp", "Settings MCP marketplace with installable server cards");
-  await page.locator(".settings-nav").getByRole("button", { name: "Remote" }).click();
-  await page.getByRole("button", { name: "Import from SSH Config" }).click();
-  await page.waitForSelector(".remote-row");
-  await capture(page, "07-settings-remote", "Settings Remote Connections with imported SSH host");
   await page.locator(".settings-nav").getByRole("button", { name: "Memory" }).click();
   await capture(page, "07-settings-memory", "Settings Memory page");
   await page.locator(".settings-nav").getByRole("button", { name: "Activity" }).click();
@@ -221,7 +215,7 @@ try {
   await page.getByRole("button", { name: "Close settings" }).click();
   await fillComposer(page, "@");
   await page.waitForSelector(".mention-menu");
-  await capture(page, "02-mention-menu", "Composer @ menu with remote target and file groups");
+  await capture(page, "02-mention-menu", "Composer @ menu with package and file groups");
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "More", exact: true }).click();
@@ -351,23 +345,6 @@ async function createExternalSkillFixture(baseDir) {
     "Use this external skill from a custom path."
   ].join("\n"));
   return root;
-}
-
-async function createSshConfigFixture(baseDir) {
-  const sshDir = path.join(baseDir, "ssh");
-  const configPath = path.join(sshDir, "config");
-  await mkdir(sshDir, { recursive: true });
-  await writeFile(configPath, [
-    "Host visual-dev",
-    "  HostName 127.0.0.1",
-    "  User dev",
-    "  Port 2222",
-    "",
-    "Host *",
-    "  ForwardAgent yes",
-    ""
-  ].join("\n"));
-  return configPath;
 }
 
 async function createPromptTemplateFixture(baseDir) {

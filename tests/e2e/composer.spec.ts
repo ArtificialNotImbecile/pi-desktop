@@ -13,7 +13,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  createSshConfigFixture,
   enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
@@ -31,7 +30,6 @@ import {
   navigationPath,
   openMemoryFromCommandPalette,
   openProviderSettings,
-  openSettings,
   quitElectron,
   resolveElectronExecutable,
   rootDir,
@@ -427,27 +425,18 @@ test.describe("Jasmine composer", () => {
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
   });
 
-  test("composer @ menu selects remote machines and searchable files", async () => {
+  test("composer @ menu lists searchable project files", async () => {
     const { page } = harness;
-
-    await openSettings(page, "Remote");
-    await page.getByRole("button", { name: "Import from SSH Config" }).click();
-    await expect(page.locator(".remote-row", { hasText: "vscode-dev" }).first()).toBeVisible();
-    await page.getByRole("button", { name: "Close settings" }).click();
 
     const textarea = page.locator(".rich-composer-editor");
     await textarea.fill("@");
     await expect(page.locator(".mention-menu")).toBeVisible();
-    await expect(page.locator(".mention-menu")).toContainText("Remote machines");
     await expect(page.locator(".mention-menu")).toContainText("Files");
-    await expect(page.locator(".mention-row", { hasText: "vscode-dev" })).toBeVisible();
     await expectFloatingMenuInViewport(page, ".mention-menu", ".rich-composer-editor");
     await expect(page.locator(".mention-row", { hasText: "Open a project to search files" })).toBeDisabled();
     await expectComposerEditorText(textarea, "@");
-    await page.locator(".mention-row", { hasText: "vscode-dev" }).click();
-    await expect(page.locator(".remote-meter")).toHaveText("vscode-dev");
-    await expectComposerEditorText(textarea, "");
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listRemoteConnections()).find((connection) => connection.name === "vscode-dev")?.active)).toBe(true);
+    await textarea.fill("");
+    await expect(page.locator(".mention-menu")).toBeHidden();
 
     const defaultProjectName = await page.evaluate(async () => {
       const projects = await window.jasmine.listProjects();
@@ -455,11 +444,11 @@ test.describe("Jasmine composer", () => {
       return project?.name ?? "";
     });
     await page.locator(".project-row", { hasText: defaultProjectName }).locator(".project-item").click();
-    await textarea.fill("@remoteConnections");
-    const fileRow = page.locator(".mention-row", { hasText: "remoteConnections.ts" }).first();
+    await textarea.fill("@composerCommandItems");
+    const fileRow = page.locator(".mention-row", { hasText: "composerCommandItems.ts" }).first();
     await expect(fileRow).toBeVisible();
     await fileRow.click();
-    await expect(page.locator(".attachment-row")).toContainText("remoteConnections.ts");
+    await expect(page.locator(".attachment-row")).toContainText("composerCommandItems.ts");
     await expectComposerEditorText(textarea, "");
   });
 });

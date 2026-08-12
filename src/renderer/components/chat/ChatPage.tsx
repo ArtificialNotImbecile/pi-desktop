@@ -18,7 +18,6 @@ import type {
   PluginPackageRecord,
   PromptTemplateRecord,
   ReasoningEffort,
-  RemoteConnectionRecord,
   SkillRecord,
   WebSearchSettings,
   WorkspaceProject
@@ -79,8 +78,6 @@ export function ChatPage(props: {
   permissionModeSaving: boolean;
   webSearchSettings: WebSearchSettings;
   webSearchLoading: boolean;
-  remoteConnections: RemoteConnectionRecord[];
-  activeRemoteConnection: RemoteConnectionRecord | null;
   toolsEnabled: boolean;
   reasoningEffort: ReasoningEffort;
   skills: SkillRecord[];
@@ -150,7 +147,6 @@ export function ChatPage(props: {
   onToggleMemory(): void;
   onSelectPermissionMode(mode: PermissionMode): void;
   onToggleTools(): void;
-  onSelectRemoteConnection(id: string | null): void;
   onSelectRightPanel(mode: RightPanelMode): void;
   onAddRightPanel(mode: RightPanelMode): void;
   onSelectRightPanelTab(tabId: string): void;
@@ -292,8 +288,6 @@ export function ChatPage(props: {
         skillMenuOpen={props.skillMenuOpen}
         webSearchEnabled={props.webSearchSettings.enabled}
         webSearchLoading={props.webSearchLoading}
-        remoteConnections={props.remoteConnections}
-        activeRemoteConnection={props.activeRemoteConnection}
         toolsEnabled={props.toolsEnabled}
         permissionMode={props.permissionMode}
         permissionModeSaving={props.permissionModeSaving}
@@ -342,7 +336,6 @@ export function ChatPage(props: {
         onOpenSettings={stable.onOpenSettings}
         onTestProvider={stable.onTestProvider}
         onToggleWebSearch={stable.onToggleWebSearch}
-        onSelectRemoteConnection={stable.onSelectRemoteConnection}
       />
     </section>
   );
