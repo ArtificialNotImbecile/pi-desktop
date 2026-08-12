@@ -213,16 +213,21 @@ test.describe("Jasmine composer", () => {
     const { page } = harness;
     await startEmptyThread(page);
 
-    // "slow timeline" streams 8 chunks at 1s intervals so the measurement window
-    // below is guaranteed to contain several real stream ticks.
-    const prompt = "slow response slow timeline render isolation boundary";
+    // The long answer streams 8 chunks at 1s intervals. Measure between explicit
+    // assistant-output growths so a saturated worker cannot accidentally include
+    // the terminal Working/threads updates in the stream-only render window.
+    const prompt = "render isolation boundary slow response slow timeline long answer";
     await page.locator(".rich-composer-editor").fill(prompt);
     await page.getByRole("button", { name: "Send" }).click();
 
-    // Wait until the run is live and the one-off thread-title patch (which
-    // legitimately re-renders the sidebar) has already landed before measuring.
+    // Wait until the run is live and both one-off sidebar updates (the generated
+    // title and Working registration) have landed before measuring stream ticks.
+    // Under a saturated full-suite worker the Working event can trail the first
+    // assistant chunk, so live-message visibility alone is not a sufficient
+    // boundary for the zero-sidebar-render assertion below.
     await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
     await expect(page.locator(".thread-row", { hasText: "render isolation boundary" }).first()).toBeVisible();
+    await expect(page.locator(".sidebar-feature-badge")).toHaveText("1");
 
     await page.evaluate(() => {
       const harnessWindow = window as Window & {
@@ -235,8 +240,15 @@ test.describe("Jasmine composer", () => {
       harnessWindow.__JASMINE_COMPOSER_RENDERS__ = 0;
     });
 
-    // Cover at least three stream ticks.
-    await page.waitForTimeout(3200);
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    const liveOutput = liveAssistant.getByLabel("Assistant output");
+    for (let tick = 0; tick < 3; tick += 1) {
+      const previousLength = (await liveOutput.textContent())?.length ?? 0;
+      await expect.poll(async () => (await liveOutput.textContent())?.length ?? 0)
+        .toBeGreaterThan(previousLength);
+    }
+    await expect(liveAssistant).toBeVisible();
+    await expect(page.locator(".sidebar-feature-badge")).toHaveText("1");
 
     const counts = await page.evaluate(() => {
       const harnessWindow = window as Window & {
@@ -254,7 +266,7 @@ test.describe("Jasmine composer", () => {
     expect(counts.sidebar).toBe(0);
     expect(counts.composer).toBe(0);
 
-    await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.", { timeout: 15000 });
+    await expect(page.locator(".assistant-block").last()).toContainText("Long answer paragraph 42", { timeout: 15000 });
   });
 
   test("Pi tools stay enabled for send, regenerate, and edit requests", async () => {

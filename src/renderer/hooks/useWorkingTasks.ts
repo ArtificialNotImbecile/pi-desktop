@@ -14,15 +14,22 @@ export function useWorkingTasks(options: {
 
   useEffect(() => {
     let cancelled = false;
+    let receivedLiveSnapshot = false;
     const bridge = getBridge();
     const unsubscribeChanged = bridge.onWorkingChanged((next) => {
-      if (!cancelled) setSnapshot(next);
+      if (cancelled) return;
+      receivedLiveSnapshot = true;
+      setSnapshot(next);
     });
     const unsubscribeNavigate = bridge.onWorkingNavigate(options.onNavigate);
     void Promise.all([bridge.getWorkingSnapshot(), bridge.consumePendingWorkingNavigation()])
       .then(([next, pending]) => {
         if (cancelled) return;
-        setSnapshot(next);
+        // The initial IPC read and live subscription start together. Under a
+        // busy renderer, a run can publish its active snapshot before the older
+        // initial read resolves; never let that stale response briefly roll the
+        // Working badge (and Sidebar) back to zero.
+        if (!receivedLiveSnapshot) setSnapshot(next);
         if (pending) options.onNavigate(pending);
       })
       .catch((caught) => options.onError(errorMessage(caught, "Failed to load Working tasks.")))

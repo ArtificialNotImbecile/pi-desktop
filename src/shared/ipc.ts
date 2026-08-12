@@ -26,6 +26,8 @@ export type ChatTimelineItem =
   | {
       id: string;
       kind: "tool_call";
+      /** Provider/session correlation id; `id` remains the stable renderer key. */
+      toolCallId?: string;
       toolName: string;
       title: string;
       argumentsJson: string;
@@ -33,6 +35,8 @@ export type ChatTimelineItem =
   | {
       id: string;
       kind: "tool_result";
+      /** Provider/session correlation id; `id` remains the stable renderer key. */
+      toolCallId?: string;
       toolName: string;
       title: string;
       content: string;
@@ -55,6 +59,14 @@ export type ChatTimelineItem =
 
 export type ChatMessage = {
   id: string;
+  // Renderer-only identity used to keep a live message's DOM node mounted when
+  // the same message is replaced by its database-backed representation. It is
+  // intentionally not persisted; ordinary message lists fall back to `id`.
+  renderId?: string;
+  // Renderer-only presentation hint. When a reader has explicitly paused tail
+  // following inside live work, settlement keeps that recap open so the text
+  // under their eyes does not disappear. Ordinary database reads omit it.
+  preserveRunDetails?: boolean;
   threadId: string;
   runId?: string;
   role: ChatRole;
@@ -80,8 +92,21 @@ export type ChatStreamEvent = {
   liveMessages?: ChatStreamMessage[];
   delta?: ChatStreamDelta;
   queue?: ChatQueueState;
+  settlement?: ChatStreamSettlement;
   threadTitle?: string;
   error?: string;
+};
+
+export type ChatStreamSettlement = {
+  // Keep the current timeline through this persisted message, then replace the
+  // remaining tail with `messages`. When omitted, the supplied messages replace
+  // the whole currently loaded timeline (used for a run at the start of a chat).
+  replaceAfterMessageId?: string;
+  // First persisted row superseded by this run. This is only needed when the
+  // retained anchor is outside the renderer's loaded page: if the stale row is
+  // present, truncate from it before appending the authoritative run tail.
+  replaceFromMessageId?: string;
+  messages: ChatMessage[];
 };
 
 export type ChatStreamMessage = {
@@ -104,6 +129,20 @@ export type ChatStreamMessageDelta = {
   content?: string;
   attachments?: PickedPath[];
   timeline?: ChatTimelineItem[];
+  timelineDelta?: ChatTimelineDelta;
+};
+
+export type ChatTimelineItemDelta = {
+  index: number;
+  item?: ChatTimelineItem;
+  textAppend?: string;
+  argumentsJsonAppend?: string;
+  contentAppend?: string;
+};
+
+export type ChatTimelineDelta = {
+  itemCount: number;
+  items: ChatTimelineItemDelta[];
 };
 
 export type ChatStreamDelta = {

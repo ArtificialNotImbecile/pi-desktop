@@ -25,6 +25,7 @@ const { classifyTextSegments, estimateTokens, providerPayloadToContextTaxonomy, 
 const { validateReasoningRetention } = await import("../../dist/main/main/agent/extensions/contextCapture/reasoningPolicy.js");
 const { modelContentForMessage, nonSecretError } = await import("../../dist/main/main/ipc/chatSupport.js");
 const { prepareEnabledSkillManifests } = await import("../../dist/main/main/services/skillManifests.js");
+const { jasmineSessionDir } = await import("../../dist/main/main/services/piSessions.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
 const {
@@ -56,6 +57,21 @@ const fakeCmdPath = path.join(tempDir, "cmd.exe");
 await writeFile(fakeBashPath, "");
 await writeFile(fakePowerShellPath, "");
 await writeFile(fakeCmdPath, "");
+
+const shortSessionCwd = path.join(tempDir, "short-workspace");
+const legacyShortComponent = `--${path.resolve(shortSessionCwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+assert.equal(path.basename(jasmineSessionDir(userDataDir, shortSessionCwd)), legacyShortComponent);
+
+const longAsciiSessionCwd = path.join(tempDir, "a".repeat(400));
+const longMultibyteSessionCwd = path.join(tempDir, "界".repeat(120));
+const longAsciiComponent = path.basename(jasmineSessionDir(userDataDir, longAsciiSessionCwd));
+const longMultibyteComponent = path.basename(jasmineSessionDir(userDataDir, longMultibyteSessionCwd));
+assert.match(longAsciiComponent, /^--cwd-sha256-[0-9a-f]{64}--$/);
+assert.match(longMultibyteComponent, /^--cwd-sha256-[0-9a-f]{64}--$/);
+assert.equal(Buffer.byteLength(longAsciiComponent, "utf8") < 100, true);
+assert.equal(Buffer.byteLength(longMultibyteComponent, "utf8") < 100, true);
+assert.equal(path.basename(jasmineSessionDir(userDataDir, longAsciiSessionCwd)), longAsciiComponent);
+assert.notEqual(longAsciiComponent, longMultibyteComponent);
 
 assert.throws(() => pluginPackageInstallSchema.parse({ source: "" }), /Package source is required/);
 assert.throws(() => pluginPackageInstallSchema.parse({ source: `npm:bad\nsource` }), /control characters/);
@@ -514,6 +530,18 @@ if (process.platform === "win32") {
 }
 
 const captures = [];
+let resolveQueuedAbortRequestStarted;
+const queuedAbortRequestStarted = new Promise((resolve) => {
+  resolveQueuedAbortRequestStarted = resolve;
+});
+let resolveSteerAbortRequestStarted;
+const steerAbortRequestStarted = new Promise((resolve) => {
+  resolveSteerAbortRequestStarted = resolve;
+});
+let resolveSteerAbortRequestFinished;
+const steerAbortRequestFinished = new Promise((resolve) => {
+  resolveSteerAbortRequestFinished = resolve;
+});
 const server = createServer(async (request, response) => {
   if (request.method !== "POST" || !request.url?.endsWith("/chat/completions")) {
     response.writeHead(404).end();
@@ -613,6 +641,31 @@ const server = createServer(async (request, response) => {
     response.end();
     return;
   }
+  if (requestText.includes("timeline correlation replay follow-up")) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-correlation-replay",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant", content: "timeline correlation replay passed" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-correlation-replay",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 }
+    })}\n\n`);
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
   if (requestText.includes("reasoning replay regression")) {
     const toolResultPresent = (body.messages ?? []).some((message) => message.role === "tool");
     response.writeHead(200, {
@@ -635,7 +688,12 @@ const server = createServer(async (request, response) => {
         model: body.model,
         choices: [{
           index: 0,
-          delta: { tool_calls: [{ index: 0, id: "replay-tool-call", type: "function", function: { name: "read", arguments: JSON.stringify({ path: path.join(tempDir, "reasoning-replay.txt") }) } }] },
+          delta: {
+            tool_calls: [
+              { index: 0, id: "replay-tool-call-1", type: "function", function: { name: "read", arguments: JSON.stringify({ path: path.join(tempDir, "reasoning-replay.txt") }) } },
+              { index: 1, id: "replay-tool-call-2", type: "function", function: { name: "read", arguments: JSON.stringify({ path: path.join(tempDir, "reasoning-replay-2.txt") }) } }
+            ]
+          },
           finish_reason: null
         }]
       })}\n\n`);
@@ -666,6 +724,41 @@ const server = createServer(async (request, response) => {
     }
     response.write("data: [DONE]\n\n");
     response.end();
+    return;
+  }
+  if (requestText.includes("abort stable timeline regression")) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-abort-stable-timeline",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "abort reasoning stays mounted" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-abort-stable-timeline",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { content: "partial answer stays mounted" }, finish_reason: null }]
+    })}\n\n`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (!response.destroyed && !response.writableEnded) {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-abort-stable-timeline",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+      })}\n\n`);
+      response.write("data: [DONE]\n\n");
+      response.end();
+    }
     return;
   }
   if (requestText.includes("quarterly planning title")) {
@@ -770,6 +863,86 @@ const server = createServer(async (request, response) => {
       model: "jasmine-test",
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
       usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 }
+    })}\n\n`);
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
+  if (requestText.includes("steer abort before assistant update")) {
+    resolveSteerAbortRequestStarted?.();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (!response.destroyed && !response.writableEnded) {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-steer-abort",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "late steer answer must not arrive" }, finish_reason: null }]
+      })}\n\n`);
+      response.write("data: [DONE]\n\n");
+      response.end();
+    }
+    resolveSteerAbortRequestFinished?.();
+    return;
+  }
+  if (requestText.includes("steer abort runtime start")) {
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-steer-abort-initial",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "unit steer abort previous reasoning" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-steer-abort-initial",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { content: "unit steer abort previous answer" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-steer-abort-initial",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 }
+    })}\n\n`);
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
+  if (requestText.includes("queued abort before assistant update")) {
+    resolveQueuedAbortRequestStarted?.();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (!response.destroyed && !response.writableEnded) {
+      response.write(`data: ${JSON.stringify({
+        id: "chatcmpl-queued-abort",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant", content: "late queued answer must not arrive" }, finish_reason: null }]
+      })}\n\n`);
+      response.write("data: [DONE]\n\n");
+      response.end();
+    }
+    return;
+  }
+  if (requestText.includes("queue abort runtime start")) {
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-queued-abort-initial",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant", content: "unit queued abort previous answer" }, finish_reason: null }]
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-queued-abort-initial",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
     })}\n\n`);
     response.write("data: [DONE]\n\n");
     response.end();
@@ -1041,6 +1214,295 @@ try {
     streamingUpdates.slice(firstLiveAnswerIndex).map(liveAssistantContent),
     streamingUpdates.slice(firstLiveAnswerIndex).map(() => "new streaming answer")
   );
+  const streamingTimelineIds = new Map();
+  for (const update of streamingUpdates) {
+    const liveTimeline = update.liveMessages
+      ?.filter((message) => message.role === "assistant")
+      .at(-1)?.timeline ?? update.timeline;
+    for (const item of liveTimeline ?? []) {
+      if (item.kind !== "thinking" && item.kind !== "assistant_text") continue;
+      const previousId = streamingTimelineIds.get(item.kind);
+      if (previousId) assert.equal(item.id, previousId, `${item.kind} must keep its id across Pi message updates`);
+      else streamingTimelineIds.set(item.kind, item.id);
+    }
+  }
+  assert.equal(streamingTimelineIds.size, 2);
+  for (const kind of ["thinking", "assistant_text"]) {
+    assert.equal(
+      streamingReply.timeline.find((item) => item.kind === kind)?.id,
+      streamingTimelineIds.get(kind),
+      `${kind} must keep its live id after Pi persists the session entry`
+    );
+  }
+
+  const abortController = new AbortController();
+  const abortUpdates = [];
+  const abortedReply = await runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: true,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "abort stable timeline regression" }],
+    content: "abort stable timeline regression",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    agentDir,
+    toolsEnabled: true,
+    signal: abortController.signal,
+    onUpdate: (update) => {
+      abortUpdates.push(update);
+      if (!abortController.signal.aborted && update.content.includes("partial answer stays mounted")) {
+        abortController.abort();
+      }
+    }
+  });
+  const abortLiveTimeline = abortUpdates
+    .findLast((update) => update.content.includes("partial answer stays mounted"))
+    ?.liveMessages?.filter((message) => message.role === "assistant").at(-1)?.timeline ?? [];
+  const abortedAssistant = abortedReply.generatedMessages?.filter((message) => message.role === "assistant").at(-1);
+  assert.ok(abortedAssistant);
+  for (const kind of ["thinking", "assistant_text"]) {
+    const liveItem = abortLiveTimeline.find((item) => item.kind === kind);
+    const settledItem = abortedAssistant.timeline?.find((item) => item.kind === kind);
+    assert.ok(liveItem, `aborted live Pi snapshot should contain ${kind}`);
+    assert.equal(settledItem?.id, liveItem.id, `aborted ${kind} must retain its last live id`);
+    assert.equal(abortedReply.timeline.find((item) => item.kind === kind)?.id, liveItem.id);
+  }
+  assert.equal(abortedAssistant.timeline?.some((item) => item.id === "assistant-output"), false);
+  assert.equal(abortedAssistant.timeline?.some((item) => item.kind === "system" && item.title === "Stopped"), true);
+
+  const queuedAbortController = new AbortController();
+  const queuedAbortUpdates = [];
+  let queuedAbortControls;
+  let queuedAbortAdded = false;
+  let queuedAbortQueuePromise = Promise.resolve();
+  const queuedAbortReplyPromise = runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: false,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "queue abort runtime start" }],
+    content: "queue abort runtime start",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    agentDir,
+    toolsEnabled: true,
+    signal: queuedAbortController.signal,
+    onQueueReady: (controls) => {
+      queuedAbortControls = controls;
+    },
+    onUpdate: (update) => {
+      queuedAbortUpdates.push(update);
+      if (queuedAbortAdded || !update.content.includes("unit queued abort previous answer")) return;
+      queuedAbortAdded = true;
+      queuedAbortQueuePromise = queuedAbortControls.queueMessage({
+        mode: "followUp",
+        content: "queued abort before assistant update",
+        attachments: []
+      });
+    }
+  });
+  await Promise.race([
+    queuedAbortRequestStarted,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("queued abort request did not start")), 5_000))
+  ]);
+  queuedAbortController.abort();
+  const queuedAbortReply = await queuedAbortReplyPromise;
+  await queuedAbortQueuePromise;
+  const trailingQueuedUserSnapshot = queuedAbortUpdates.find((update) => (
+    update.liveMessages?.at(-1)?.role === "user"
+    && update.liveMessages.at(-1)?.content === "queued abort before assistant update"
+  ));
+  assert.ok(trailingQueuedUserSnapshot, "Pi must expose the delivered queued user before its first assistant update");
+  assert.equal(trailingQueuedUserSnapshot.content, "");
+  assert.deepEqual(trailingQueuedUserSnapshot.timeline, []);
+  const generatedMessages = queuedAbortReply.generatedMessages ?? [];
+  assert.deepEqual(generatedMessages.map((message) => message.role), ["assistant", "user", "assistant"]);
+  const [completedAssistant, queuedUser, stoppedQueuedAssistant] = generatedMessages;
+  const liveCompletedAssistant = trailingQueuedUserSnapshot.liveMessages.findLast((message) => message.role === "assistant");
+  assert.ok(liveCompletedAssistant);
+  assert.equal(completedAssistant.content, liveCompletedAssistant.content);
+  assert.deepEqual(completedAssistant.timeline, liveCompletedAssistant.timeline);
+  assert.equal(queuedUser.content, "queued abort before assistant update");
+  assert.equal(stoppedQueuedAssistant.content, "Response stopped.");
+  assert.deepEqual(stoppedQueuedAssistant.timeline, [{
+    id: "user-abort",
+    kind: "system",
+    title: "Stopped",
+    text: "The response was stopped by the user."
+  }]);
+  assert.equal(queuedAbortReply.content, "Response stopped.");
+  assert.deepEqual(queuedAbortReply.timeline, stoppedQueuedAssistant.timeline);
+
+  const steerAbortController = new AbortController();
+  const steerAbortUpdates = [];
+  const steerAbortSession = SessionManager.inMemory(tempDir);
+  const steerAbortGateExtensionPath = path.join(tempDir, "steer-abort-input-gate.mjs");
+  let resolveSteerAbortGateEntered;
+  const steerAbortGateEntered = new Promise((resolve) => {
+    resolveSteerAbortGateEntered = resolve;
+  });
+  let resolveSteerAbortGateIdle;
+  const steerAbortGateIdle = new Promise((resolve) => {
+    resolveSteerAbortGateIdle = resolve;
+  });
+  let releaseSteerAbortGate;
+  const steerAbortGateRelease = new Promise((resolve) => {
+    releaseSteerAbortGate = resolve;
+  });
+  globalThis.__JASMINE_PI_STEER_ABORT_GATE__ = {
+    entered: () => resolveSteerAbortGateEntered?.(),
+    idle: () => resolveSteerAbortGateIdle?.(),
+    release: steerAbortGateRelease
+  };
+  await writeFile(steerAbortGateExtensionPath, [
+    "export default function steerAbortInputGate(pi) {",
+    "  pi.on('input', async (event, ctx) => {",
+    "    if (event.streamingBehavior !== 'steer' || !event.text.includes('steer abort before assistant update')) {",
+    "      return { action: 'continue' };",
+    "    }",
+    "    const gate = globalThis.__JASMINE_PI_STEER_ABORT_GATE__;",
+    "    if (!gate) throw new Error('Steer abort input gate is missing.');",
+    "    gate.entered();",
+    "    while (!ctx.isIdle()) await new Promise((resolve) => setTimeout(resolve, 1));",
+    "    gate.idle();",
+    "    await gate.release;",
+    "    return { action: 'continue' };",
+    "  });",
+    "}"
+  ].join("\n"));
+  let steerAbortControls;
+  let steerAbortAdded = false;
+  let steerAbortQueuePromise = Promise.resolve();
+  const steerAbortReplyPromise = runPiCodingAgentChat({
+    provider: {
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: {
+        vision: false,
+        imageOutput: false,
+        toolCalling: true,
+        reasoning: true,
+        embedding: false
+      },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    },
+    messages: [{ role: "user", content: "steer abort runtime start" }],
+    content: "steer abort runtime start",
+    attachments: [],
+    jasminePromptAppend: systemPrompt,
+    agentDir,
+    toolsEnabled: true,
+    signal: steerAbortController.signal,
+    sessionManager: steerAbortSession,
+    packageExtensionPaths: [steerAbortGateExtensionPath],
+    onQueueReady: (controls) => {
+      steerAbortControls = controls;
+    },
+    onUpdate: (update) => {
+      steerAbortUpdates.push(update);
+      if (steerAbortAdded || !update.content.includes("unit steer abort previous answer")) return;
+      steerAbortAdded = true;
+      steerAbortQueuePromise = steerAbortControls.queueMessage({
+        mode: "steer",
+        content: "steer abort before assistant update",
+        attachments: []
+      });
+    }
+  });
+  await Promise.race([
+    steerAbortGateEntered,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("steer abort input did not reach its gate")), 5_000))
+  ]);
+  await Promise.race([
+    steerAbortGateIdle,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("initial steer-abort agent loop did not become idle")), 5_000))
+  ]);
+  assert.equal(steerAbortSession.getEntries().some((entry) => (
+    entry.type === "message"
+    && entry.message?.role === "assistant"
+    && entry.message.stopReason === "stop"
+    && JSON.stringify(entry.message.content).includes("unit steer abort previous answer")
+  )), true, "Pi must commit the initial answer before the independent steer starts");
+  // Let the outer runtime observe the completed initial prompt and enter its
+  // steering-task join before the gate starts the independent provider call.
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseSteerAbortGate?.();
+  await Promise.race([
+    steerAbortRequestStarted,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("independent steer abort HTTP request did not start")), 5_000))
+  ]);
+  steerAbortController.abort();
+  const steerAbortReply = await steerAbortReplyPromise;
+  await steerAbortQueuePromise;
+  await Promise.race([
+    steerAbortRequestFinished,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("steer abort held response did not finish")), 5_000))
+  ]);
+  delete globalThis.__JASMINE_PI_STEER_ABORT_GATE__;
+
+  const trailingSteerUserSnapshot = steerAbortUpdates.find((update) => (
+    update.liveMessages?.at(-1)?.role === "user"
+    && update.liveMessages.at(-1)?.content === "steer abort before assistant update"
+  ));
+  assert.ok(trailingSteerUserSnapshot, "Pi must expose the delivered steer user before its first assistant update");
+  assert.equal(trailingSteerUserSnapshot.content, "");
+  assert.deepEqual(trailingSteerUserSnapshot.timeline, []);
+  assert.equal(trailingSteerUserSnapshot.liveMessages.at(-1).role, "user");
+
+  const steerGeneratedMessages = steerAbortReply.generatedMessages ?? [];
+  assert.deepEqual(steerGeneratedMessages.map((message) => message.role), ["assistant", "user", "assistant"]);
+  const [completedSteerAssistant, deliveredSteerUser, stoppedSteerAssistant] = steerGeneratedMessages;
+  assert.equal(completedSteerAssistant.content, "unit steer abort previous answer");
+  assert.equal(completedSteerAssistant.timeline?.some((item) => (
+    item.kind === "thinking" && item.text === "unit steer abort previous reasoning"
+  )), true);
+  assert.equal(completedSteerAssistant.timeline?.some((item) => (
+    item.kind === "assistant_text" && item.text === "unit steer abort previous answer"
+  )), true);
+  assert.equal(completedSteerAssistant.timeline?.some((item) => item.id === "user-abort"), false);
+  assert.equal(deliveredSteerUser.content, "steer abort before assistant update");
+  assert.equal(deliveredSteerUser.timeline, undefined);
+  assert.equal(stoppedSteerAssistant.content, "Response stopped.");
+  assert.deepEqual(stoppedSteerAssistant.timeline, [{
+    id: "user-abort",
+    kind: "system",
+    title: "Stopped",
+    text: "The response was stopped by the user."
+  }]);
+  assert.equal(steerAbortReply.content, stoppedSteerAssistant.content);
+  assert.deepEqual(steerAbortReply.timeline, stoppedSteerAssistant.timeline);
+  assert.equal(JSON.stringify(steerAbortUpdates).includes("late steer answer must not arrive"), false);
+  assert.equal(JSON.stringify(steerAbortReply).includes("late steer answer must not arrive"), false);
+  assert.equal(JSON.stringify(stoppedSteerAssistant.timeline).includes("unit steer abort previous"), false);
 
   const queueUpdates = [];
   let queueControls;
@@ -1125,11 +1587,13 @@ try {
   assert.equal(reasoningOnlyReply.timeline.some((item) => item.kind === "thinking" && item.text.includes("thinking without producing final text")), true);
 
   await writeFile(path.join(tempDir, "reasoning-replay.txt"), "tool replay fixture");
+  await writeFile(path.join(tempDir, "reasoning-replay-2.txt"), "second tool replay fixture");
   for (const provider of [
     { providerName: "deepseek", modelId: "deepseek-v4-flash" },
     { providerName: "moonshot", modelId: "kimi-k2.6" }
   ]) {
     const captureStart = captures.length;
+    const replayUpdates = [];
     const replayReply = await runPiCodingAgentChat({
       provider: {
         providerName: provider.providerName,
@@ -1151,16 +1615,102 @@ try {
       cwd: tempDir,
       agentDir,
       toolsEnabled: true,
-      reasoningEffort: "high"
+      reasoningEffort: "high",
+      onUpdate: (update) => replayUpdates.push(update)
     });
     assert.equal(replayReply.content, "reasoning replay passed");
     const replayPayloads = captures.slice(captureStart);
     assert.equal(replayPayloads.length, 2, `${provider.providerName} should perform exactly one tool loop`);
     const replayAssistant = replayPayloads[1].messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls));
     assert.equal(replayAssistant.reasoning_content, "exact reasoning chain for tool replay");
-    assert.equal(replayAssistant.tool_calls[0].id, "replay-tool-call");
-    assert.equal(replayPayloads[1].messages.some((message) => message.role === "tool" && message.tool_call_id === "replay-tool-call"), true);
+    const expectedToolCallIds = ["replay-tool-call-1", "replay-tool-call-2"];
+    assert.deepEqual(replayAssistant.tool_calls.map((call) => call.id), expectedToolCallIds);
+    assert.deepEqual(
+      replayPayloads[1].messages.filter((message) => message.role === "tool").map((message) => message.tool_call_id),
+      expectedToolCallIds
+    );
     assert.equal(replayPayloads[1].temperature, undefined);
+    const stableKinds = ["thinking", "tool_call", "tool_result", "assistant_text"];
+    const expectedKindCounts = new Map([
+      ["thinking", 1],
+      ["tool_call", 2],
+      ["tool_result", 2],
+      ["assistant_text", 1]
+    ]);
+    const liveIdsByKind = new Map(stableKinds.map((kind) => [kind, new Set()]));
+    for (const update of replayUpdates) {
+      const liveTimeline = update.liveMessages
+        ?.filter((message) => message.role === "assistant")
+        .flatMap((message) => message.timeline ?? []) ?? update.timeline;
+      for (const item of liveTimeline) liveIdsByKind.get(item.kind)?.add(item.id);
+    }
+    for (const kind of stableKinds) {
+      const liveIds = liveIdsByKind.get(kind);
+      const persistedItems = replayReply.timeline.filter((item) => item.kind === kind);
+      assert.equal(liveIds.size, expectedKindCounts.get(kind), `${provider.providerName} ${kind} must not remount across real Pi events`);
+      assert.equal(persistedItems.length, expectedKindCounts.get(kind), `${provider.providerName} should persist every ${kind}`);
+      assert.deepEqual(
+        [...liveIds].sort(),
+        persistedItems.map((item) => item.id).sort(),
+        `${provider.providerName} ${kind} must retain every live id after persistence`
+      );
+    }
+    const persistedVisibleItems = replayReply.timeline.filter((item) => stableKinds.includes(item.kind));
+    assert.deepEqual(
+      persistedVisibleItems.map((item) => item.kind),
+      ["thinking", "tool_call", "tool_call", "tool_result", "tool_result", "assistant_text"]
+    );
+    assert.equal(new Set(persistedVisibleItems.map((item) => item.id)).size, persistedVisibleItems.length);
+    assert.deepEqual(
+      persistedVisibleItems.filter((item) => item.kind === "tool_call").map((item) => item.toolCallId),
+      expectedToolCallIds
+    );
+    assert.deepEqual(
+      persistedVisibleItems.filter((item) => item.kind === "tool_result").map((item) => item.toolCallId),
+      expectedToolCallIds
+    );
+
+    const correlationCaptureStart = captures.length;
+    await runPiCodingAgentChat({
+      provider: {
+        providerName: provider.providerName,
+        apiKey: "test-key",
+        baseUrl,
+        modelId: provider.modelId,
+        capabilities: {
+          vision: provider.providerName === "moonshot",
+          imageOutput: false,
+          toolCalling: true,
+          reasoning: true,
+          embedding: false
+        }
+      },
+      messages: [
+        { role: "user", content: "persisted double-tool history" },
+        {
+          role: "assistant",
+          content: replayReply.content,
+          // Match SQLite's JSON round trip before restoring this history into Pi.
+          timeline: JSON.parse(JSON.stringify(replayReply.timeline))
+        },
+        { role: "user", content: `timeline correlation replay follow-up ${provider.providerName}` }
+      ],
+      content: `timeline correlation replay follow-up ${provider.providerName}`,
+      attachments: [],
+      jasminePromptAppend: "Keep persisted tool correlation ids unchanged.",
+      cwd: tempDir,
+      agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    });
+    const correlationPayloads = captures.slice(correlationCaptureStart);
+    assert.equal(correlationPayloads.length, 1);
+    const correlationAssistant = correlationPayloads[0].messages.find((message) => message.role === "assistant" && Array.isArray(message.tool_calls));
+    assert.deepEqual(correlationAssistant.tool_calls.map((call) => call.id), expectedToolCallIds);
+    assert.deepEqual(
+      correlationPayloads[0].messages.filter((message) => message.role === "tool").map((message) => message.tool_call_id),
+      expectedToolCallIds
+    );
   }
 
   const foreignHistorySession = SessionManager.inMemory(tempDir);

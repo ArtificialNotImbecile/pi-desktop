@@ -814,9 +814,17 @@ async function streamMockReply(
   options: RuntimeOptions & MockTimelineMeta & { liveMessagesPrefix?: RuntimeGeneratedMessage[] }
 ): Promise<void> {
   if (!options.onUpdate) return;
-  const chunkCount = content.length > 60 ? 8 : 4;
   const lowerUserText = lastUserText.toLowerCase();
-  const chunkDelayMs = lowerUserText.includes("queue base") ? 3500 : lowerUserText.includes("slow timeline") ? 1000 : 35;
+  // The rendering regression mirrors a real provider stream: many small
+  // cumulative updates that cross a visual line boundary every few frames.
+  const chunkCount = lowerUserText.includes("smooth stream") ? 84 : content.length > 60 ? 8 : 4;
+  const chunkDelayMs = lowerUserText.includes("scroll intent")
+    ? 120
+    : lowerUserText.includes("queue base")
+      ? 3500
+      : lowerUserText.includes("slow timeline")
+        ? 1000
+        : 35;
   for (let index = 1; index <= chunkCount; index += 1) {
     throwIfAborted(options.signal);
     const text = content.slice(0, Math.ceil((content.length * index) / chunkCount));

@@ -17,6 +17,7 @@ import type {
   ChatRetryResponse,
   ChatSendRequest,
   ChatSendResponse,
+  ChatStreamSettlement,
   ChatStreamMessage,
   ChatTimelineItem,
   FileChangeCaptureInput,
@@ -27,6 +28,7 @@ import type {
 } from "../../shared/ipc.js";
 import { chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSchema, chatQueueSteerRequestSchema, chatQueueUpdateRequestSchema, chatRetryRequestSchema, chatSendRequestSchema } from "../../shared/schemas.js";
 import { computeStreamDelta } from "../../shared/streamDelta.js";
+import { createChatStreamSettlement } from "../../shared/streamSettlement.js";
 import { generateAssistantReply } from "../agent/runtime.js";
 import type { AssistantReply, RuntimeGeneratedMessage, RuntimeQueueControls } from "../agent/runtime.js";
 import type { JasmineDatabase } from "../db/database.js";
@@ -62,6 +64,7 @@ import type { WorkingRegistry } from "../services/workingRegistry.js";
 type ActiveRun = {
   threadId: string;
   abortController: AbortController;
+  streamSettled: boolean;
   queueControls?: RuntimeQueueControls;
   queueReady: Promise<RuntimeQueueControls>;
   resolveQueueReady(controls: RuntimeQueueControls): void;
@@ -150,6 +153,14 @@ export function registerChatIpc(context: IpcContext): void {
     db.updateThreadActivePlugins({ threadId: request.threadId, pluginIds: inlinePluginIds });
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
+    const initialSettlementAnchorId = db.listMessagesPage({ threadId: request.threadId, limit: 1 }).at(-1)?.id;
+    let abortedSettlement = createChatStreamSettlement(
+      requestId,
+      initialSettlementAnchorId,
+      [],
+      [],
+      true
+    );
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
     working.start({ requestId, threadId: request.threadId });
 
@@ -169,12 +180,20 @@ export function registerChatIpc(context: IpcContext): void {
         skillsUsed: inlineSkillsUsed,
         pluginsUsed: inlinePluginsUsed
       });
+      abortedSettlement = createChatStreamSettlement(
+        requestId,
+        initialSettlementAnchorId,
+        [userMessage],
+        [],
+        true
+      );
 
       if (previousCount === 0) {
         queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
       }
 
       const storedMessages = db.listMessages(request.threadId);
+      const settlementAnchorId = initialSettlementAnchorId ?? storedMessages.at(-2)?.id;
       const messages = storedMessages.map(toModelHistoryMessage);
       const modelContent = modelContentForMessage(userMessage);
       const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
@@ -221,7 +240,7 @@ export function registerChatIpc(context: IpcContext): void {
         working
       });
 
-      const assistantMessage = persistRuntimeGeneratedMessages(db, {
+      const persisted = persistRuntimeGeneratedMessages(db, {
         threadId: request.threadId,
         runId: trace.id,
         reply,
@@ -232,7 +251,15 @@ export function registerChatIpc(context: IpcContext): void {
         webSearchUsed: reply.webSearchUsed,
         reasoningEffort: request.reasoningEffort
       });
+      const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      settleChatStream({
+        sender: _event.sender,
+        requestId,
+        threadId: request.threadId,
+        status: abortController.signal.aborted ? "aborted" : "done",
+        settlement: createChatStreamSettlement(requestId, settlementAnchorId, [userMessage], persisted.messages, true)
+      });
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         userMessage,
@@ -242,6 +269,9 @@ export function registerChatIpc(context: IpcContext): void {
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
     } catch (error) {
+      if (abortController.signal.aborted) {
+        settleAbortedChatStream(_event.sender, requestId, request.threadId, abortedSettlement);
+      }
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
       throw error;
     } finally {
@@ -257,16 +287,28 @@ export function registerChatIpc(context: IpcContext): void {
     if (!db.hasThread(request.threadId)) throw new Error("Thread does not exist.");
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
+    const existingMessages = db.listMessages(request.threadId);
+    const retryPlan = buildRetryPlan(existingMessages, request.messageId);
+    const lastUserMessage = retryPlan.lastUserMessage;
+    if (!lastUserMessage) throw new Error("No user message is available to retry.");
+    const deleteFromIndex = retryPlan.deleteMessageIds.length > 0
+      ? existingMessages.findIndex((message) => message.id === retryPlan.deleteMessageIds[0])
+      : existingMessages.length;
+    const settlementAnchorId = existingMessages[Math.max(0, deleteFromIndex) - 1]?.id;
+    const settlementReplaceFromId = retryPlan.deleteMessageIds[0];
+    const abortedSettlement = createChatStreamSettlement(
+      requestId,
+      settlementAnchorId,
+      [],
+      existingMessages.slice(deleteFromIndex),
+      false,
+      settlementReplaceFromId
+    );
+    const modelContent = modelContentForMessage(lastUserMessage);
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
     working.start({ requestId, threadId: request.threadId, activity: "Preparing retry" });
 
     try {
-      const existingMessages = db.listMessages(request.threadId);
-      const retryPlan = buildRetryPlan(existingMessages, request.messageId);
-      const lastUserMessage = retryPlan.lastUserMessage;
-      if (!lastUserMessage) throw new Error("No user message is available to retry.");
-      const modelContent = modelContentForMessage(lastUserMessage);
-
       const userDataDir = app.getPath("userData");
       const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
       const branchBeforePromptEntryId = branchParentForMessage(
@@ -332,7 +374,7 @@ export function registerChatIpc(context: IpcContext): void {
 
       // Delete the superseded turn and persist its replacement atomically so an
       // interrupted retry cannot drop messages without writing the new ones.
-      const assistantMessage = db.runInTransaction(() => {
+      const persisted = db.runInTransaction(() => {
         db.deleteMessagesByIds(request.threadId, retryPlan.deleteMessageIds);
         return persistRuntimeGeneratedMessages(db, {
           threadId: request.threadId,
@@ -346,7 +388,15 @@ export function registerChatIpc(context: IpcContext): void {
           reasoningEffort: request.reasoningEffort
         });
       });
+      const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      settleChatStream({
+        sender: _event.sender,
+        requestId,
+        threadId: request.threadId,
+        status: abortController.signal.aborted ? "aborted" : "done",
+        settlement: createChatStreamSettlement(requestId, settlementAnchorId, [], persisted.messages, false, settlementReplaceFromId)
+      });
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         assistantMessage,
@@ -355,6 +405,9 @@ export function registerChatIpc(context: IpcContext): void {
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
     } catch (error) {
+      if (abortController.signal.aborted) {
+        settleAbortedChatStream(_event.sender, requestId, request.threadId, abortedSettlement);
+      }
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
       throw error;
     } finally {
@@ -373,14 +426,23 @@ export function registerChatIpc(context: IpcContext): void {
     if (!db.hasThread(request.threadId)) throw new Error("Thread does not exist.");
     const cwd = db.getThreadCwd(request.threadId);
     const startedAt = Date.now();
+    const existingMessages = db.listMessages(request.threadId);
+    const targetIndex = existingMessages.findIndex((message) => message.id === request.messageId && message.role === "user");
+    if (targetIndex < 0) throw new Error("User message to edit does not exist.");
+    const settlementAnchorId = existingMessages[targetIndex - 1]?.id;
+    const settlementReplaceFromId = existingMessages[targetIndex].id;
+    let abortedSettlement = createChatStreamSettlement(
+      requestId,
+      settlementAnchorId,
+      existingMessages.slice(targetIndex),
+      [],
+      false,
+      settlementReplaceFromId
+    );
     activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
     working.start({ requestId, threadId: request.threadId, activity: "Preparing edited response" });
 
     try {
-      const existingMessages = db.listMessages(request.threadId);
-      const targetIndex = existingMessages.findIndex((message) => message.id === request.messageId && message.role === "user");
-      if (targetIndex < 0) throw new Error("User message to edit does not exist.");
-
       const userDataDir = app.getPath("userData");
       const piSession = prepareThreadPiSession(db, userDataDir, request.threadId, cwd);
       const branchBeforePromptEntryId = branchParentForMessage(
@@ -415,6 +477,14 @@ export function registerChatIpc(context: IpcContext): void {
           pluginsUsed: inlinePluginsUsed
         });
       });
+      abortedSettlement = createChatStreamSettlement(
+        requestId,
+        settlementAnchorId,
+        [userMessage],
+        [],
+        false,
+        settlementReplaceFromId
+      );
 
       if (targetIndex === 0) {
         queueFirstMessageTitle(db, _event.sender, requestId, request.threadId, content, attachments);
@@ -472,7 +542,7 @@ export function registerChatIpc(context: IpcContext): void {
         working
       });
 
-      const assistantMessage = persistRuntimeGeneratedMessages(db, {
+      const persisted = persistRuntimeGeneratedMessages(db, {
         threadId: request.threadId,
         runId: trace.id,
         reply,
@@ -483,7 +553,15 @@ export function registerChatIpc(context: IpcContext): void {
         webSearchUsed: reply.webSearchUsed,
         reasoningEffort: request.reasoningEffort
       });
+      const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
+      settleChatStream({
+        sender: _event.sender,
+        requestId,
+        threadId: request.threadId,
+        status: abortController.signal.aborted ? "aborted" : "done",
+        settlement: createChatStreamSettlement(requestId, settlementAnchorId, [userMessage], persisted.messages, false, settlementReplaceFromId)
+      });
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "completed");
       return {
         userMessage,
@@ -493,6 +571,9 @@ export function registerChatIpc(context: IpcContext): void {
         elapsedMs: assistantMessage.elapsedMs ?? reply.elapsedMs
       };
     } catch (error) {
+      if (abortController.signal.aborted) {
+        settleAbortedChatStream(_event.sender, requestId, request.threadId, abortedSettlement);
+      }
       working.finish(requestId, abortController.signal.aborted ? "cancelled" : "failed");
       throw error;
     } finally {
@@ -512,6 +593,7 @@ function createActiveRun(threadId: string, abortController: AbortController): Ac
   return {
     threadId,
     abortController,
+    streamSettled: false,
     queueReady,
     resolveQueueReady,
     rejectQueueReady
@@ -558,6 +640,7 @@ function emitQueueUpdate(
   threadId: string,
   queue: ChatQueueState
 ): void {
+  if (!canEmitRunUpdate(requestId, threadId)) return;
   sendChatStream(sender, {
     requestId,
     threadId,
@@ -584,6 +667,11 @@ type StreamSender = {
 };
 
 const streamSenders = new Map<string, StreamSender>();
+
+function canEmitRunUpdate(requestId: string, threadId: string): boolean {
+  const run = activeRuns.get(requestId);
+  return Boolean(run && run.threadId === threadId && !run.streamSettled);
+}
 
 function streamMessagesFromUpdate(update: StreamUpdate): ChatStreamMessage[] {
   if (update.liveMessages && update.liveMessages.length > 0) {
@@ -676,6 +764,7 @@ function emitStreamUpdate(
   threadId: string,
   update: StreamUpdate
 ): void {
+  if (!canEmitRunUpdate(requestId, threadId)) return;
   let send = streamSenders.get(requestId);
   if (!send) {
     send = createThrottledStreamSender(sender, requestId, threadId);
@@ -683,6 +772,52 @@ function emitStreamUpdate(
   }
   send.send(update);
 }
+
+function settleChatStream(input: {
+  sender: WebContents;
+  requestId: string;
+  threadId: string;
+  status: "done" | "aborted";
+  settlement: ChatStreamSettlement;
+}): void {
+  const run = activeRuns.get(input.requestId);
+  if (!run || run.threadId !== input.threadId || run.streamSettled) return;
+  // Mark settled before flushing so a late runtime callback cannot create a new
+  // sender between the final running snapshot and the authoritative settlement.
+  run.streamSettled = true;
+  streamSenders.get(input.requestId)?.finish();
+  streamSenders.delete(input.requestId);
+  sendChatStream(input.sender, {
+    requestId: input.requestId,
+    threadId: input.threadId,
+    status: input.status,
+    settlement: input.settlement
+  });
+}
+
+function settleAbortedChatStream(
+  sender: WebContents,
+  requestId: string,
+  threadId: string,
+  settlement: ChatStreamSettlement
+): void {
+  settleChatStream({
+    sender,
+    requestId,
+    threadId,
+    status: "aborted",
+    // Preserve the operation-specific anchor and render identities computed
+    // before the first await. A generic latest-page snapshot would discard any
+    // already-loaded prefix beyond the database page cap and remount optimistic
+    // rows when a stop lands before the first runtime chunk.
+    settlement
+  });
+}
+
+type PersistedRuntimeMessages = {
+  assistantMessage: ChatMessage;
+  messages: ChatMessage[];
+};
 
 function persistRuntimeGeneratedMessages(
   db: JasmineDatabase,
@@ -697,7 +832,7 @@ function persistRuntimeGeneratedMessages(
     webSearchUsed: WebSearchResult[];
     reasoningEffort?: ReasoningEffort;
   }
-): ChatMessage {
+): PersistedRuntimeMessages {
   const generated = input.reply.generatedMessages?.length
     ? input.reply.generatedMessages
     : [{
@@ -711,17 +846,18 @@ function persistRuntimeGeneratedMessages(
   return db.runInTransaction(() => {
     let lastAssistantMessage: ChatMessage | null = null;
     const assistantMessages: ChatMessage[] = [];
+    const persistedMessages: ChatMessage[] = [];
 
     for (const [index, message] of generated.entries()) {
       if (message.role === "user") {
-        db.addMessage({
+        persistedMessages.push(db.addMessage({
           threadId: input.threadId,
           runId: input.runId,
           role: "user",
           content: message.content,
           attachments: message.attachments ?? [],
           sessionEntryId: message.sessionEntryId
-        });
+        }));
         continue;
       }
 
@@ -742,6 +878,7 @@ function persistRuntimeGeneratedMessages(
         sessionEntryId: message.sessionEntryId
       });
       assistantMessages.push(lastAssistantMessage);
+      persistedMessages.push(lastAssistantMessage);
     }
 
     if (!lastAssistantMessage) {
@@ -760,6 +897,7 @@ function persistRuntimeGeneratedMessages(
         timeline: withRunMetadata(input.fallbackTimeline, input.reply.model, input.reasoningEffort)
       });
       assistantMessages.push(lastAssistantMessage);
+      persistedMessages.push(lastAssistantMessage);
     }
     const captures = input.reply.contextTaxonomies?.length
       ? input.reply.contextTaxonomies
@@ -778,7 +916,7 @@ function persistRuntimeGeneratedMessages(
       runId: input.runId,
       captures: input.reply.fileChangeCaptures ?? []
     });
-    return lastAssistantMessage;
+    return { assistantMessage: lastAssistantMessage, messages: persistedMessages };
   });
 }
 
@@ -959,19 +1097,21 @@ async function runTracedGeneration(
   }
 ): Promise<AssistantReply> {
   const observedFileChanges: FileChangeCaptureInput[] = [];
-  return generateAssistantReply(input.request, input.runtimeProvider, {
-    signal: input.signal,
-    onUpdate: (update) => {
-      emitStreamUpdate(input.sender, input.requestId, input.threadId, update);
-      input.working.activity(input.requestId, activityFromTimeline(update.timeline));
-    },
-    onQueueReady: (controls) => setActiveRunQueueControls(input.requestId, controls),
-    onQueueUpdate: (queue) => {
-      emitQueueUpdate(input.sender, input.requestId, input.threadId, queue);
-      input.working.queue(input.requestId, queueCount(queue));
-    },
-    onFileChangeCapture: (capture) => observedFileChanges.push(capture)
-  }).catch((error: unknown) => {
+  return delayChatGenerationForRegression(input.signal).then(() => generateAssistantReply(input.request, input.runtimeProvider, {
+      signal: input.signal,
+      onUpdate: (update) => {
+        if (!canEmitRunUpdate(input.requestId, input.threadId)) return;
+        emitStreamUpdate(input.sender, input.requestId, input.threadId, update);
+        input.working.activity(input.requestId, activityFromTimeline(update.timeline));
+      },
+      onQueueReady: (controls) => setActiveRunQueueControls(input.requestId, controls),
+      onQueueUpdate: (queue) => {
+        if (!canEmitRunUpdate(input.requestId, input.threadId)) return;
+        emitQueueUpdate(input.sender, input.requestId, input.threadId, queue);
+        input.working.queue(input.requestId, queueCount(queue));
+      },
+      onFileChangeCapture: (capture) => observedFileChanges.push(capture)
+    })).catch((error: unknown) => {
     db.finishToolRun({
       id: input.traceId,
       status: "error",
@@ -984,6 +1124,28 @@ async function runTracedGeneration(
       captures: observedFileChanges
     });
     throw error;
+  });
+}
+
+async function delayChatGenerationForRegression(signal: AbortSignal): Promise<void> {
+  if (process.env.JASMINE_E2E_HARNESS !== "1") return;
+  const delayMs = Number.parseInt(process.env.JASMINE_E2E_CHAT_GENERATION_DELAY_MS ?? "", 10);
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      const error = new Error("Response stopped before generation.");
+      error.name = "AbortError";
+      reject(error);
+    };
+    const timer = setTimeout(finish, Math.min(delayMs, 5_000));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -1027,10 +1189,11 @@ function queueFirstMessageTitle(
   const fallbackTitle = titleFromMessage(content || titleFromAttachments(attachments));
   db.updateThreadTitle(threadId, fallbackTitle);
   queueTitleGeneration(db, threadId, content, fallbackTitle, (title) => {
+    const run = activeRuns.get(requestId);
     sendChatStream(sender, {
       requestId,
       threadId,
-      status: "running",
+      status: run && run.threadId === threadId && !run.streamSettled ? "running" : "done",
       threadTitle: title
     });
   });

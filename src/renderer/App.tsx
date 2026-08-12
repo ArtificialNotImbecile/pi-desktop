@@ -34,6 +34,7 @@ import { useJasmineNavigation } from "./navigation/navigationState";
 import { isSettingsSection, rightPanelModeLabel, type JasmineRoute, type RightPanelMode, type RightPanelTab, type SettingsSection } from "./navigation/routes";
 import { getBridge } from "./desktopApi";
 import { I18nProvider, translate } from "./i18n";
+import { optimisticChatReferences } from "./utils/optimisticChatReferences";
 
 const ProviderSettingsPanel = lazy(() =>
   import("./components/settings/ProviderSettingsPanel").then((module) => ({ default: module.ProviderSettingsPanel }))
@@ -161,7 +162,13 @@ function App(props: { initialAppSettings: AppSettings }) {
       if (!targetThread) return false;
       setActiveProjectId(targetThread.projectId);
       navigation.replace({ name: "thread", threadId: targetThread.id, projectId: targetThread.projectId });
-      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread);
+      const { skillsUsed, pluginsUsed } = optimisticChatReferences({
+        inlineSkillIds,
+        inlinePluginIds,
+        skillChoices: inlineSkillChoices,
+        pluginChoices: plugins.packages
+      });
+      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread, skillsUsed, pluginsUsed);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -172,7 +179,13 @@ function App(props: { initialAppSettings: AppSettings }) {
       return queued;
     },
     onEditSubmit: async (messageId, content, attachments) => {
-      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds);
+      const { skillsUsed, pluginsUsed } = optimisticChatReferences({
+        inlineSkillIds,
+        inlinePluginIds,
+        skillChoices: inlineSkillChoices,
+        pluginChoices: plugins.packages
+      });
+      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, skillsUsed, pluginsUsed);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -501,6 +514,8 @@ function App(props: { initialAppSettings: AppSettings }) {
     },
     onRemember: (message: ChatMessage) => setRememberingMessage(message),
     onMessageWheel: (deltaY: number) => chat.onMessageWheel(deltaY),
+    onMessageInteraction: () => chat.onMessageInteraction(),
+    onMessageTailIntent: () => chat.onMessageTailIntent(),
     onMessageScroll: () => chat.onMessageScroll(),
     onCloseMemory: () => surfaces.setMemoryOpen(false),
     onRefreshMemories: () => void memories.refresh(),

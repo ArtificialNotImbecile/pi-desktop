@@ -104,21 +104,28 @@ test.describe("Jasmine message rendering", () => {
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
     const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
+    const thinkingItem = latestAssistant.locator(".thinking-item").first();
     await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
     await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
+    await expect(thinkingItem).toBeHidden();
+    await expect(thinkingItem).toContainText("Need to inspect");
     await expect(latestAssistant.getByLabel("Assistant output")).toContainText("Mock reply from Jasmine.");
     await recapToggle.click();
     await expect(latestAssistant.locator(".run-recap-details")).toBeVisible();
+    await expect(thinkingItem).toBeVisible();
     await expect(latestAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
     await expect(latestAssistant.locator(".message-timeline")).not.toContainText("Thinking level");
-    await expect(latestAssistant.locator(".thinking-item")).not.toContainText("Need to inspect");
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "AGENTS.md" });
+    const readDetails = readTool.locator(".tool-run-details");
     await expect(readTool).toContainText("read");
     await expect(readTool).toContainText("read - 1 line");
-    await expect(readTool).not.toContainText("Project instructions loaded.");
 
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
+    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(thinkingItem.locator(".thinking-markdown")).toBeVisible();
+    await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(thinkingItem.locator(".thinking-markdown")).toBeHidden();
     await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
     await expect(latestAssistant.locator(".thinking-item")).toContainText("Need to inspect");
@@ -126,8 +133,10 @@ test.describe("Jasmine message rendering", () => {
 
     const toolToggle = readTool.getByRole("button");
     await expect(toolToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(readDetails).toHaveCount(0);
     await toolToggle.click();
     await expect(toolToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(readDetails).toBeVisible();
     await expect(readTool).toContainText("INPUT");
     await expect(readTool).toContainText("OUTPUT");
     await expect(readTool).toContainText("Project instructions loaded.");
@@ -191,14 +200,32 @@ test.describe("Jasmine message rendering", () => {
     });
   });
 
-  test("assistant timeline pairs tool results across interleaved thinking", async () => {
+  test("pairs interleaved tool results and lazily mounts directly loaded tool details", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 
     await page.locator(".rich-composer-editor").fill("show timeline interleaved tools");
     await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expect.poll(async () => page.evaluate(async () => (
+      (await window.jasmine.listThreads()).some((thread) => thread.title.includes("show timeline interleaved tools"))
+    ))).toBe(true);
+    const threadTitle = await page.evaluate(async () => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes("show timeline interleaved tools"));
+      if (!thread) throw new Error("Interleaved timeline thread missing.");
+      return thread.title;
+    });
 
-    const latestAssistant = page.locator(".assistant-block").last();
+    // Reload so the timeline is instantiated directly from its persisted,
+    // settled message instead of retaining any live-stream component state.
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: threadTitle }).click();
+
+    const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
+    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
+    await recapToggle.click();
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "document-analysis" }).first();
     const bashTool = latestAssistant.locator(".tool-run-item", { hasText: "ls -R" }).first();
     await expect(readTool).toContainText("read - 202 lines");
@@ -206,6 +233,44 @@ test.describe("Jasmine message rendering", () => {
     await expect(readTool.locator(".tool-run-status")).not.toContainText("reading");
     await expect(bashTool.locator(".tool-run-status")).not.toContainText("running");
     await expect(latestAssistant.locator(".tool-run-status.running")).toHaveCount(0);
+    const toolToggle = readTool.getByRole("button");
+    const details = readTool.locator(".tool-run-details");
+    const codeBlocks = readTool.locator(".shiki-code-block");
+    const toolOutput = Array.from({ length: 202 }, (_entry, index) => `skill line ${index + 1}`).join("\n");
+    await expect(toolToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(details).toHaveCount(0);
+    await expect(codeBlocks).toHaveCount(0);
+    await expect(readTool.locator(".shiki")).toHaveCount(0);
+
+    await toolToggle.click();
+    await expect(toolToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(details).toBeVisible();
+    await expect(codeBlocks).toHaveCount(2);
+    const outputBlock = readTool.locator(".shiki-code-block[data-language='markdown']");
+    await expect(outputBlock).toHaveAttribute("data-code-length", String(toolOutput.length));
+    await expect(outputBlock).toHaveAttribute("data-highlighted-length", String(toolOutput.length), { timeout: 15_000 });
+    await details.evaluate((node) => {
+      const scope = window as Window & {
+        __JASMINE_LAZY_TOOL_DETAILS_NODE__?: Element;
+        __JASMINE_LAZY_TOOL_CODE_NODE__?: Element;
+      };
+      scope.__JASMINE_LAZY_TOOL_DETAILS_NODE__ = node;
+      scope.__JASMINE_LAZY_TOOL_CODE_NODE__ = node.querySelector(".shiki-code-block[data-language='markdown']") ?? undefined;
+    });
+
+    await toolToggle.click();
+    await expect(toolToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(details).toHaveCount(1);
+    await expect(details).toBeHidden();
+    await expect(codeBlocks).toHaveCount(2);
+    expect(await readTool.evaluate((row) => {
+      const scope = window as Window & {
+        __JASMINE_LAZY_TOOL_DETAILS_NODE__?: Element;
+        __JASMINE_LAZY_TOOL_CODE_NODE__?: Element;
+      };
+      return scope.__JASMINE_LAZY_TOOL_DETAILS_NODE__ === row?.querySelector(".tool-run-details")
+        && scope.__JASMINE_LAZY_TOOL_CODE_NODE__ === row?.querySelector(".shiki-code-block[data-language='markdown']");
+    })).toBe(true);
   });
 
   test("expanded thinking markdown stays in one left-aligned column", async () => {
@@ -217,8 +282,10 @@ test.describe("Jasmine message rendering", () => {
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
     await expandWorkDetails(latestAssistant);
-    await latestAssistant.getByRole("button", { name: "Thinking", exact: true }).click();
+    const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
+    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
     const thinkingMarkdown = latestAssistant.locator(".thinking-markdown .markdown-message");
+    await expect(thinkingMarkdown).toBeVisible();
     await expect(thinkingMarkdown).toContainText("fenced yaml blocks");
     await expect(thinkingMarkdown.locator("code", { hasText: "yaml" })).toBeVisible();
     const layout = await thinkingMarkdown.evaluate((element) => {
@@ -254,10 +321,10 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
     const writeMessage = page.locator(".assistant-block").last();
     const writeTool = writeMessage.locator(".tool-run-item", { hasText: "src/example.ts" });
+    const writeDetails = writeTool.locator(".tool-run-details");
     await expect(writeTool).toContainText("write");
     await expect(writeTool).toContainText("wrote - 4 lines, 44 bytes");
-    await expect(writeTool).not.toContainText("Successfully wrote");
-    await expect(writeTool).not.toContainText("export function hello");
+    await expect(writeDetails).toHaveCount(0);
     await expect(writeTool.locator(".tool-run-main code")).toHaveCount(0);
     // Wait for streaming to finish before reading computed styles: the live
     // message re-renders on stream completion and can detach the measured row,
@@ -284,6 +351,9 @@ test.describe("Jasmine message rendering", () => {
     expect(compactTypography.labelWeight).toBeGreaterThanOrEqual(600);
     expect(compactTypography.statusFontSize).toBe("12px");
     await writeTool.getByRole("button").click();
+    await expect(writeDetails).toBeVisible();
+    await expect(writeDetails).toContainText("Successfully wrote");
+    await expect(writeDetails).toContainText("export function hello");
     await expect(writeTool).toContainText("INPUT");
     await expect(writeTool).toContainText("OUTPUT");
     const toolDetailsLayout = await writeTool.locator(".tool-run-details").evaluate((element) => {
@@ -328,13 +398,15 @@ test.describe("Jasmine message rendering", () => {
     const bashMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
     await expandWorkDetails(bashMessage);
     const bashTool = bashMessage.locator(".tool-run-item", { hasText: "ls src/renderer/components/chat" });
+    const bashDetails = bashTool.locator(".tool-run-details");
     await expect(bashTool).toContainText("bash");
     await expect(bashTool).toContainText("done - 3 lines");
-    await expect(bashTool).not.toContainText("MessageTimeline.tsx");
+    await expect(bashDetails).toHaveCount(0);
     const bashToggle = bashTool.locator(".tool-run-toggle");
     await expect(bashToggle).toHaveAttribute("aria-expanded", "false");
     await bashToggle.click();
     await expect(bashToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(bashDetails).toBeVisible();
     await expect(bashTool).toContainText("COMMAND");
     await expect(bashTool).toContainText("MessageTimeline.tsx");
 
@@ -346,11 +418,16 @@ test.describe("Jasmine message rendering", () => {
     await expect(errorTool).toContainText("exit 1");
     await expect(errorTool).toContainText("Output encoding could not be decoded.");
     const errorToggle = errorTool.locator(".tool-run-toggle");
+    const errorDetails = errorTool.locator(".tool-run-details");
     await expect(errorToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(errorDetails).toBeVisible();
+    await expect(errorDetails).toContainText("Output encoding could not be decoded.");
+    await expect(errorDetails).not.toContainText("����");
     await errorToggle.click();
     await expect(errorToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(errorTool).not.toContainText("Output encoding could not be decoded.");
-    await expect(errorTool).not.toContainText("����");
+    await expect(errorDetails).toBeHidden();
+    await expect(errorDetails).toContainText("Output encoding could not be decoded.");
+    await expect(errorDetails).not.toContainText("����");
   });
 
   test("assistant markdown renders as structure instead of raw markdown text @smoke", async () => {
@@ -435,12 +512,115 @@ test.describe("Jasmine message rendering", () => {
 
   test("long assistant answers scroll without moving the composer", async () => {
     const { page } = harness;
-    await startEmptyThread(page);
+    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Smooth long answer fixture" }));
+    seedLargeThreadMessages(harness.userDataDir, thread.id, 158);
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: "Smooth long answer fixture" }).first().click();
+    await expect(page.locator("[data-message-id]")).toHaveCount(158);
+    await expect.poll(() => page.locator(".message-scroll").evaluate((node) => (
+      node.scrollHeight - node.scrollTop - node.clientHeight
+    ))).toBeLessThanOrEqual(2);
+    const settledIds = await page.locator("[data-message-id]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-message-id") ?? ""));
+    await page.evaluate(() => {
+      (window as Window & { __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number> }).__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ = {};
+    });
 
-    await page.locator(".rich-composer-editor").fill("return long answer");
+    await page.locator(".rich-composer-editor").fill("return long answer smooth stream");
     await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Long answer paragraph 42");
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    await expect(liveAssistant).toBeVisible();
+    await page.evaluate(() => {
+      const harnessWindow = window as Window & {
+        __JASMINE_LIVE_MESSAGE_NODE__?: Element;
+        __JASMINE_PENDING_MESSAGE_NODE__?: Element;
+        __JASMINE_STREAM_TAIL_OFFSETS__?: number[];
+        __JASMINE_STREAM_SCROLL_TOP_SAMPLES__?: number[];
+        __JASMINE_STOP_SCROLL_SAMPLING__?: boolean;
+      };
+      harnessWindow.__JASMINE_LIVE_MESSAGE_NODE__ = document.querySelector(".assistant-block.live-message:last-of-type") ?? undefined;
+      harnessWindow.__JASMINE_PENDING_MESSAGE_NODE__ = document.querySelector("[data-message-id^='pending-']") ?? undefined;
+      harnessWindow.__JASMINE_STREAM_TAIL_OFFSETS__ = [];
+      harnessWindow.__JASMINE_STREAM_SCROLL_TOP_SAMPLES__ = [];
+      harnessWindow.__JASMINE_STOP_SCROLL_SAMPLING__ = false;
+      const scroll = document.querySelector<HTMLElement>(".message-scroll");
+      const sample = () => {
+        if (!scroll || harnessWindow.__JASMINE_STOP_SCROLL_SAMPLING__) return;
+        const liveTail = document.querySelector(".assistant-block.live-message");
+        if (liveTail) {
+          harnessWindow.__JASMINE_STREAM_TAIL_OFFSETS__?.push(Math.max(0, liveTail.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom));
+          harnessWindow.__JASMINE_STREAM_SCROLL_TOP_SAMPLES__?.push(scroll.scrollTop);
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    const textLengthBeforeBlockedFrame = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
+    // Model a long Markdown/Shiki frame while main-process stream updates keep
+    // arriving. The first painted frame afterwards must not catch up in one
+    // large jump merely because several animation frames were missed.
+    await page.evaluate(() => {
+      const blockedUntil = performance.now() + 180;
+      let spin = 0;
+      while (performance.now() < blockedUntil) spin += 1;
+      void spin;
+    });
+    await expect.poll(() => liveAssistant.evaluate((node) => node.textContent?.length ?? 0)).toBeGreaterThan(textLengthBeforeBlockedFrame);
+    await expect.poll(() => liveAssistant.evaluate((node) => {
+      const scroll = document.querySelector<HTMLElement>(".message-scroll");
+      if (!scroll) return Number.POSITIVE_INFINITY;
+      return Math.max(0, node.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom);
+    })).toBeLessThanOrEqual(96);
+    // A renderer-blocked interval has no painted frames, so the amount of text
+    // queued by the independent main-process stream is scheduler/platform
+    // dependent. Keep the scroll samples (which cover the recovery frames), but
+    // begin the steady-state tail envelope after the follower has recovered.
+    await page.evaluate(() => {
+      (window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ = [];
+    });
+    // CI runners can paint substantially below 60fps while the main-process
+    // stream continues flushing. Model that steady low-frame-rate phase so the
+    // follower must stay inside the visual envelope without exceeding its
+    // per-painted-frame scroll budget.
+    const steadyFrameSession = await page.context().newCDPSession(page);
+    try {
+      await steadyFrameSession.send("Emulation.setCPUThrottlingRate", { rate: 2 });
+      await waitForStableAssistant(page, "Long answer paragraph 42");
+      await expect.poll(() => page.locator(".message-scroll").evaluate((node) => (
+        node.scrollHeight - node.scrollTop - node.clientHeight
+      ))).toBeLessThanOrEqual(2);
+    } finally {
+      await steadyFrameSession.send("Emulation.setCPUThrottlingRate", { rate: 1 }).catch(() => undefined);
+      await steadyFrameSession.detach().catch(() => undefined);
+    }
 
+    const streamingContinuity = await page.evaluate(() => {
+      const harnessWindow = window as Window & {
+        __JASMINE_LIVE_MESSAGE_NODE__?: Element;
+        __JASMINE_PENDING_MESSAGE_NODE__?: Element;
+        __JASMINE_STREAM_TAIL_OFFSETS__?: number[];
+        __JASMINE_STREAM_SCROLL_TOP_SAMPLES__?: number[];
+        __JASMINE_STOP_SCROLL_SAMPLING__?: boolean;
+      };
+      harnessWindow.__JASMINE_STOP_SCROLL_SAMPLING__ = true;
+      const lastAssistant = document.querySelector(".assistant-block:last-of-type");
+      const finalAnswer = lastAssistant?.querySelector(".final-answer");
+      const finalRect = finalAnswer?.getBoundingClientRect();
+      const scrollTops = harnessWindow.__JASMINE_STREAM_SCROLL_TOP_SAMPLES__ ?? [];
+      let maxPaintedFrameAdvance = 0;
+      for (let index = 1; index < scrollTops.length; index += 1) {
+        maxPaintedFrameAdvance = Math.max(maxPaintedFrameAdvance, scrollTops[index] - scrollTops[index - 1]);
+      }
+      return {
+        sameMessageNode: harnessWindow.__JASMINE_LIVE_MESSAGE_NODE__ === lastAssistant,
+        sameUserNode: harnessWindow.__JASMINE_PENDING_MESSAGE_NODE__ === Array.from(document.querySelectorAll(".user-message-wrap")).at(-1),
+        maxTailOffset: Math.max(0, ...(harnessWindow.__JASMINE_STREAM_TAIL_OFFSETS__ ?? [])),
+        maxPaintedFrameAdvance,
+        finalAnswerVisible: Boolean(finalRect && finalRect.bottom > 0 && finalRect.top < window.innerHeight),
+        settledRenders: Object.fromEntries(Object.entries(harnessWindow.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ ?? {})
+          .filter(([id]) => id.startsWith("large-")))
+      };
+    });
     await expect.poll(() => page.locator(".message-scroll").evaluate((node) => (
       node.scrollHeight > node.clientHeight + 100
     ))).toBe(true);
@@ -454,6 +634,13 @@ test.describe("Jasmine message rendering", () => {
     const viewportHeight = await page.evaluate(() => window.innerHeight);
 
     expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight + 100);
+    expect(streamingContinuity.sameMessageNode).toBe(true);
+    expect(streamingContinuity.sameUserNode).toBe(true);
+    expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(96);
+    expect(streamingContinuity.maxPaintedFrameAdvance).toBeLessThanOrEqual(17);
+    expect(streamingContinuity.finalAnswerVisible).toBe(true);
+    expect(streamingContinuity.settledRenders).toEqual({});
+    expect(settledIds).toHaveLength(158);
     expect(composerBox).not.toBeNull();
     expect((composerBox?.y ?? 0)).toBeGreaterThanOrEqual(scrollMetrics.bottom - 1);
     expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeLessThanOrEqual(viewportHeight);

@@ -77,15 +77,60 @@ test.describe("Jasmine integrations", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator(".skill-menu")).toBeHidden();
 
-    await textarea.fill("use skill for this answer");
+    await textarea.fill("slow response use skill for this answer");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Inline skill reply using technical-writer.");
-    await expect(page.locator(".user-bubble").last().getByLabel("Inline skills")).toContainText("technical-writer");
+    const inlineSkillUser = page.locator(".user-message-wrap").last();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticSkillState = await inlineSkillUser.evaluate((node) => {
+      (window as typeof window & { __JASMINE_INLINE_SKILL_USER_NODE__?: Element }).__JASMINE_INLINE_SKILL_USER_NODE__ = node;
+      return {
+        badgeText: node.querySelector('[aria-label="Inline skills"]')?.textContent ?? "",
+        finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+          .some((assistant) => assistant.textContent?.includes("Inline skill reply using technical-writer.")),
+        running: document.querySelector('button[aria-label="Stop response"]') !== null
+      };
+    });
+    expect(optimisticSkillState).toEqual({
+      badgeText: expect.stringContaining("technical-writer"),
+      finalReplyPresent: false,
+      running: true
+    });
+    await waitForStableAssistant(page, "Inline skill reply using technical-writer.");
+    expect(await page.evaluate(() => (
+      (window as typeof window & { __JASMINE_INLINE_SKILL_USER_NODE__?: Element }).__JASMINE_INLINE_SKILL_USER_NODE__
+      === Array.from(document.querySelectorAll(".user-message-wrap")).at(-1)
+    ))).toBe(true);
     await page.getByRole("button", { name: "Open Context taxonomy" }).click();
     const inlinePromptTaxonomy = page.locator(".taxonomy-item", { hasText: "Current user prompt" }).last();
     await expect(inlinePromptTaxonomy).toContainText("Explicit User Selected Skills");
     await expect(inlinePromptTaxonomy).toContainText("When this skill is active");
     await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
+    await inlineSkillUser.hover();
+    await inlineSkillUser.getByRole("button", { name: "Edit message" }).click();
+    await expect(page.locator(".edit-banner")).toContainText("Editing message");
+    await textarea.fill("$tech");
+    await page.locator(".skill-command-menu").getByRole("option", { name: /technical-writer/ }).click();
+    await textarea.fill("slow response use skill for edited answer");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticEditedSkillState = await inlineSkillUser.evaluate((node) => ({
+      badgeText: node.querySelector('[aria-label="Inline skills"]')?.textContent ?? "",
+      finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+        .some((assistant) => assistant.textContent?.includes("Inline skill reply using technical-writer.")),
+      running: document.querySelector('button[aria-label="Stop response"]') !== null,
+      sameUserNode: (window as typeof window & { __JASMINE_INLINE_SKILL_USER_NODE__?: Element }).__JASMINE_INLINE_SKILL_USER_NODE__ === node
+    }));
+    expect(optimisticEditedSkillState).toEqual({
+      badgeText: expect.stringContaining("technical-writer"),
+      finalReplyPresent: false,
+      running: true,
+      sameUserNode: true
+    });
+    await waitForStableAssistant(page, "Inline skill reply using technical-writer.");
+    expect(await page.evaluate(() => (
+      (window as typeof window & { __JASMINE_INLINE_SKILL_USER_NODE__?: Element }).__JASMINE_INLINE_SKILL_USER_NODE__
+      === Array.from(document.querySelectorAll(".user-message-wrap")).at(-1)
+    ))).toBe(true);
     await page.getByRole("button", { name: "Skills" }).click();
     await page.locator(".skill-menu").getByRole("button", { name: /technical-writer/ }).click();
     await expect(page.locator(".skill-tool")).toHaveClass(/active/);
@@ -225,6 +270,15 @@ test.describe("Jasmine integrations", () => {
   test("packages settings migrates the retired Chrome bundle and manages a local Pi package", async () => {
     let { page, userDataDir } = harness;
     const packageSource = await createPiPluginFixture(userDataDir);
+    const secondaryPackageSource = path.join(userDataDir, "plugin-fixtures", "zeta-e2e-plugin");
+    await mkdir(secondaryPackageSource, { recursive: true });
+    await writeFile(path.join(secondaryPackageSource, "package.json"), JSON.stringify({
+      name: "zeta-e2e-plugin",
+      version: "1.0.0",
+      type: "module",
+      pi: { extensions: ["./extension.js"] }
+    }, null, 2), "utf8");
+    await writeFile(path.join(secondaryPackageSource, "extension.js"), "export default function zetaE2ePlugin() {}\n", "utf8");
     const piWebAccessRoot = path.join(rootDir, "node_modules", "pi-web-access");
     const piWebAccessAgentDir = path.join(userDataDir, "pi-agent");
     await quitElectron(harness.app);
@@ -241,6 +295,7 @@ test.describe("Jasmine integrations", () => {
     await seedPiAgentPackageSettings(userDataDir, [
       { source: piWebAccessRoot, extensions: [], skills: [], prompts: [], themes: [] },
       path.relative(piWebAccessAgentDir, piWebAccessRoot),
+      secondaryPackageSource,
       "chrome"
     ]);
     harness = await launchJasmine("plugins-legacy-pi-web-access", userDataDir);
@@ -269,6 +324,10 @@ test.describe("Jasmine integrations", () => {
     await expect(row).toContainText("ext 1");
     await expect(row).toContainText("skills 1");
     await expect(row).toContainText("Enabled");
+    const selectedPackageOrder = (await page.locator(".plugin-row").evaluateAll((rows) => rows
+      .map((pluginRow) => pluginRow.querySelector(":scope > .ui-settings-list-main > strong")?.textContent?.trim() ?? "")
+      .filter((name) => name === "jasmine-e2e-plugin" || name === "zeta-e2e-plugin")));
+    expect(selectedPackageOrder).toHaveLength(2);
 
     await page.getByRole("button", { name: "Close settings" }).click();
     const textarea = page.locator(".rich-composer-editor");
@@ -278,34 +337,225 @@ test.describe("Jasmine integrations", () => {
     await page.locator(".skill-command-menu").getByRole("option", { name: /jasmine-e2e/ }).click();
     await expect(page.locator(".inline-skill-row")).toContainText("jasmine-e2e");
     await expectComposerEditorText(textarea, "");
-    await page.locator(".inline-skill-row").getByRole("button", { name: /jasmine-e2e/ }).click();
-    await expect(page.locator(".inline-skill-row")).toHaveCount(0);
+    await textarea.fill("$tech");
+    await page.locator(".skill-command-menu").getByRole("option", { name: /technical-writer/ }).click();
+    const canonicalMixedSkillOrder = ["technical-writer", "jasmine-e2e"];
+    expect(await page.locator(".inline-skill-row button span").allTextContents()).toEqual([...canonicalMixedSkillOrder].reverse());
+    await textarea.fill("slow response mixed skill reference ordering");
+    await page.getByRole("button", { name: "Send" }).click();
+    const mixedSkillUser = page.locator(".user-message-wrap").last();
+    const mixedSkillReply = "Inline skill reply using technical-writer, jasmine-e2e.";
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticMixedSkillState = await mixedSkillUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_MIXED_SKILL_USER_NODE__?: Element;
+        __JASMINE_MIXED_SKILL_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Inline skills"] > span'));
+      scope.__JASMINE_MIXED_SKILL_USER_NODE__ = node;
+      scope.__JASMINE_MIXED_SKILL_BADGE_NODES__ = badges;
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+          .some((assistant) => assistant.textContent?.includes("Inline skill reply using technical-writer, jasmine-e2e.")),
+        running: document.querySelector('button[aria-label="Stop response"]') !== null
+      };
+    });
+    expect(optimisticMixedSkillState).toEqual({
+      badgeNames: canonicalMixedSkillOrder,
+      finalReplyPresent: false,
+      running: true
+    });
+    await waitForStableAssistant(page, mixedSkillReply);
+    const settledMixedSkillState = await mixedSkillUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_MIXED_SKILL_USER_NODE__?: Element;
+        __JASMINE_MIXED_SKILL_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Inline skills"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_MIXED_SKILL_BADGE_NODES__?.[index] === badge),
+        sameUserNode: scope.__JASMINE_MIXED_SKILL_USER_NODE__ === node
+      };
+    });
+    expect(settledMixedSkillState).toEqual({
+      badgeNames: canonicalMixedSkillOrder,
+      sameBadgeNodes: true,
+      sameUserNode: true
+    });
+
+    await mixedSkillUser.hover();
+    await mixedSkillUser.getByRole("button", { name: "Edit message" }).click();
+    await expect(page.locator(".edit-banner")).toContainText("Editing message");
+    for (const skillName of canonicalMixedSkillOrder) {
+      await page.locator(".inline-skill-row").getByRole("button", { name: new RegExp(skillName, "i") }).click();
+    }
+    for (const skillQuery of ["$jasmine", "$tech"]) {
+      await textarea.fill(skillQuery);
+      await page.locator(".skill-command-menu").getByRole("option").filter({ hasText: skillQuery === "$jasmine" ? "jasmine-e2e" : "technical-writer" }).click();
+    }
+    expect(await page.locator(".inline-skill-row button span").allTextContents()).toEqual([...canonicalMixedSkillOrder].reverse());
+    await textarea.fill("slow response edited mixed skill reference ordering");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticEditedMixedSkillState = await mixedSkillUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_MIXED_SKILL_USER_NODE__?: Element;
+        __JASMINE_MIXED_SKILL_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Inline skills"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+          .some((assistant) => assistant.textContent?.includes("Inline skill reply using technical-writer, jasmine-e2e.")),
+        running: document.querySelector('button[aria-label="Stop response"]') !== null,
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_MIXED_SKILL_BADGE_NODES__?.[index] === badge),
+        sameUserNode: scope.__JASMINE_MIXED_SKILL_USER_NODE__ === node
+      };
+    });
+    expect(optimisticEditedMixedSkillState).toEqual({
+      badgeNames: canonicalMixedSkillOrder,
+      finalReplyPresent: false,
+      running: true,
+      sameBadgeNodes: true,
+      sameUserNode: true
+    });
+    await waitForStableAssistant(page, mixedSkillReply);
+    const settledEditedMixedSkillState = await mixedSkillUser.evaluate((node) => {
+      const scope = window as typeof window & { __JASMINE_MIXED_SKILL_BADGE_NODES__?: Element[] };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Inline skills"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_MIXED_SKILL_BADGE_NODES__?.[index] === badge)
+      };
+    });
+    expect(settledEditedMixedSkillState).toEqual({ badgeNames: canonicalMixedSkillOrder, sameBadgeNodes: true });
 
     await openSettings(page, "Packages");
     await row.getByRole("switch", { name: /Disable jasmine-e2e-plugin/ }).click();
     await expect(row).toContainText("Disabled");
 
     await page.getByRole("button", { name: "Close settings" }).click();
-    await textarea.fill("@jasmine");
-    await expect(page.locator(".mention-menu")).toBeVisible();
-    await expect(page.locator(".mention-menu")).toContainText("Packages");
-    await expect(page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" })).toContainText("Activate this package for this chat");
-    await expect(page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" })).toBeVisible();
-    await page.locator(".mention-row", { hasText: "@jasmine-e2e-plugin" }).click();
-    await expect(page.locator(".inline-plugin-row")).toContainText("jasmine-e2e-plugin");
-    await expectComposerEditorText(textarea, "");
-    await textarea.fill("use temporary plugin package");
+    // Select packages in the reverse of the main process's canonical package
+    // order. The optimistic sent row must already use canonical order so the
+    // settlement cannot visibly reorder its badges.
+    for (const packageName of [...selectedPackageOrder].reverse()) {
+      await textarea.fill(`@${packageName}`);
+      await expect(page.locator(".mention-menu")).toBeVisible();
+      const mentionRow = page.locator(".mention-row", { hasText: `@${packageName}` });
+      await expect(mentionRow).toBeVisible();
+      await mentionRow.click();
+      await expectComposerEditorText(textarea, "");
+    }
+    const composerPackageOrder = await page.locator(".inline-plugin-row button span").allTextContents();
+    expect(composerPackageOrder).toEqual([...selectedPackageOrder].reverse());
+    await textarea.fill("slow response use temporary plugin package");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
+    const inlinePluginUser = page.locator(".user-message-wrap").last();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticPluginState = await inlinePluginUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_INLINE_PLUGIN_USER_NODE__?: Element;
+        __JASMINE_INLINE_PLUGIN_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Active packages"] > span'));
+      scope.__JASMINE_INLINE_PLUGIN_USER_NODE__ = node;
+      scope.__JASMINE_INLINE_PLUGIN_BADGE_NODES__ = badges;
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+          .some((assistant) => assistant.textContent?.includes("Slow response complete.")),
+        running: document.querySelector('button[aria-label="Stop response"]') !== null
+      };
+    });
+    expect(optimisticPluginState).toEqual({
+      badgeNames: selectedPackageOrder,
+      finalReplyPresent: false,
+      running: true
+    });
+    await waitForStableAssistant(page, "Slow response complete.");
+    const settledPluginState = await inlinePluginUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_INLINE_PLUGIN_USER_NODE__?: Element;
+        __JASMINE_INLINE_PLUGIN_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Active packages"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_INLINE_PLUGIN_BADGE_NODES__?.[index] === badge),
+        sameUserNode: scope.__JASMINE_INLINE_PLUGIN_USER_NODE__ === node
+      };
+    });
+    expect(settledPluginState).toEqual({
+      badgeNames: selectedPackageOrder,
+      sameBadgeNodes: true,
+      sameUserNode: true
+    });
     await expect(page.locator(".inline-plugin-row")).toContainText("jasmine-e2e-plugin");
-    await expect(page.locator(".user-bubble").last().getByLabel("Active packages")).toContainText("jasmine-e2e-plugin");
     await expect(page.locator(".assistant-block").last().getByLabel("Packages used")).toContainText("jasmine-e2e-plugin");
+    await inlinePluginUser.hover();
+    await inlinePluginUser.getByRole("button", { name: "Edit message" }).click();
+    await expect(page.locator(".edit-banner")).toContainText("Editing message");
+    for (const packageName of selectedPackageOrder) {
+      await page.locator(".inline-plugin-row").getByRole("button", { name: new RegExp(packageName, "i") }).click();
+    }
+    for (const packageName of [...selectedPackageOrder].reverse()) {
+      await textarea.fill(`@${packageName}`);
+      await page.locator(".mention-row", { hasText: `@${packageName}` }).click();
+    }
+    expect(await page.locator(".inline-plugin-row button span").allTextContents()).toEqual([...selectedPackageOrder].reverse());
+    await textarea.fill("slow response edit temporary plugin package");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 500 });
+    const optimisticEditedPluginState = await inlinePluginUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_INLINE_PLUGIN_USER_NODE__?: Element;
+        __JASMINE_INLINE_PLUGIN_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Active packages"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        finalReplyPresent: Array.from(document.querySelectorAll(".assistant-block"))
+          .some((assistant) => assistant.textContent?.includes("Slow response complete.")),
+        running: document.querySelector('button[aria-label="Stop response"]') !== null,
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_INLINE_PLUGIN_BADGE_NODES__?.[index] === badge),
+        sameUserNode: scope.__JASMINE_INLINE_PLUGIN_USER_NODE__ === node
+      };
+    });
+    expect(optimisticEditedPluginState).toEqual({
+      badgeNames: selectedPackageOrder,
+      finalReplyPresent: false,
+      running: true,
+      sameBadgeNodes: true,
+      sameUserNode: true
+    });
+    await waitForStableAssistant(page, "Slow response complete.");
+    const settledEditedPluginState = await inlinePluginUser.evaluate((node) => {
+      const scope = window as typeof window & {
+        __JASMINE_INLINE_PLUGIN_USER_NODE__?: Element;
+        __JASMINE_INLINE_PLUGIN_BADGE_NODES__?: Element[];
+      };
+      const badges = Array.from(node.querySelectorAll('[aria-label="Active packages"] > span'));
+      return {
+        badgeNames: badges.map((badge) => badge.textContent?.trim() ?? ""),
+        sameBadgeNodes: badges.every((badge, index) => scope.__JASMINE_INLINE_PLUGIN_BADGE_NODES__?.[index] === badge),
+        sameUserNode: scope.__JASMINE_INLINE_PLUGIN_USER_NODE__ === node
+      };
+    });
+    expect(settledEditedPluginState).toEqual({
+      badgeNames: selectedPackageOrder,
+      sameBadgeNodes: true,
+      sameUserNode: true
+    });
     await textarea.fill("continue with active plugin package");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
     await expect(page.locator(".user-bubble").last().getByLabel("Active packages")).toContainText("jasmine-e2e-plugin");
     await expect(page.locator(".assistant-block").last().getByLabel("Packages used")).toContainText("jasmine-e2e-plugin");
-    await page.locator(".inline-plugin-row").getByRole("button", { name: /jasmine-e2e-plugin/ }).click();
+    for (const packageName of selectedPackageOrder) {
+      await page.locator(".inline-plugin-row").getByRole("button", { name: new RegExp(packageName, "i") }).click();
+    }
     await expect(page.locator(".inline-plugin-row")).toHaveCount(0);
     await textarea.fill("continue without active plugin package");
     await page.getByRole("button", { name: "Send" }).click();
