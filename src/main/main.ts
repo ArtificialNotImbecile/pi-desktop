@@ -8,7 +8,6 @@ import { DEFAULT_APPEARANCE } from "../shared/theme.js";
 import type { AppLanguage, SpotlightExecuteRequest, WorkingNavigationTarget } from "../shared/ipc.js";
 import type { JasmineDatabase } from "./db/database.js";
 import { attachWindowStateEvents } from "./ipc/window.js";
-import { stopChromeBridge } from "./services/chromeBridge.js";
 import { WorkingRegistry, type WorkingNotification } from "./services/workingRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -164,9 +163,6 @@ electronAutoUpdater.on("before-quit-for-update", () => {
 });
 
 app.on("will-quit", () => {
-  void stopChromeBridge().catch((error) => {
-    console.warn("Failed to clean up Chrome bridge:", error);
-  });
   // A launch that loses the single-instance lock quits before the app is ready,
   // and globalShortcut throws when it is touched that early -- which surfaces
   // as an "A JavaScript error occurred in the main process" dialog on what

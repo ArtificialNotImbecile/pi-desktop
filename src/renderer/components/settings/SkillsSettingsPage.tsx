@@ -153,8 +153,8 @@ function skillLabels(t: Translate): SkillRowLabels {
     selected: t("settings.skills.selected"),
     select: t("settings.skills.select"),
     open: t("settings.skills.open"),
-    enable: t("settings.mcp.enable"),
-    disable: t("settings.mcp.disable"),
+    enable: t("settings.skills.enable"),
+    disable: t("settings.skills.disable"),
     deleteAria: t("settings.skills.deleteAria", { name: "{name}" }),
     deleteTitle: t("settings.skills.deleteTitleAttr")
   };

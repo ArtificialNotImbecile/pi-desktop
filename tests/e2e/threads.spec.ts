@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -331,7 +330,7 @@ test.describe("Jasmine threads and projects", () => {
     await expect(access(piSession.sessionFile)).rejects.toThrow();
   });
 
-  test("seeded large threads render newest messages first and page older history on demand", async () => {
+  test("seeded large threads render newest messages first and page older history on demand @desktop-session", async () => {
     const { page, userDataDir } = harness;
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Large JSONL import" }));
     // Data seeding keeps this as a rendering/pagination E2E instead of a slow 220-turn chat workflow.

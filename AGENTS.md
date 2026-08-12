@@ -37,7 +37,18 @@ For a localized change, run:
 - `npm.cmd run harness:check` when test-contract docs or UI rules change
 - the smallest relevant Playwright spec or test-name grep
 
-Run the full `npm.cmd run test:e2e` when a change touches shared app shell, IPC contracts, persistence, provider/model behavior, chat runtime, or multiple workflows. Run `npm.cmd run harness:release` before a release.
+CI owns the full E2E suite. The `Full E2E` job runs `npm run test:e2e` on every push
+and pull request, so do not run the whole suite locally as routine verification: it
+takes minutes, and CI reruns it on the exact commit anyway. Locally, run the smallest
+spec or `--grep` that covers your change and let CI catch the rest.
+
+Run the full `npm.cmd run test:e2e` locally only when you have a specific reason —
+debugging a failure CI reported, or a change to the harness or Playwright config
+itself, where a broken suite would not report honestly from CI. Run
+`npm.cmd run harness:release` before a release.
+
+Never mark work finished on the strength of a local partial run alone. Say which
+checks you ran, and that the full suite is CI's to confirm.
 
 For app-level changes, launch Electron and confirm the page is nonblank. For persistence changes, restart Electron and verify restoration. For asynchronous refreshes, wait for the refreshed value rather than pre-existing DOM.
 

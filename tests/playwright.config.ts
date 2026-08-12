@@ -33,6 +33,17 @@ const startupTimingGrep = /Jasmine cold start/;
 // visibility transitions. The default off-screen mode does not need OS focus.
 const focusSensitiveGrep = /Spotlight quick launcher/;
 
+// A handful of specs assert real desktop-session behavior -- window maximize,
+// minimize, restore, window drags, and pointer-driven panel resizes -- which a
+// CI runner does not provide. They fail there on Linux and macOS alike, in
+// partly different sets, while passing on a developer machine, so CI skips them
+// via JASMINE_E2E_SKIP_DESKTOP_SESSION and a local run still covers them.
+// Project-level grepInvert wins over the CLI flag, so the skip has to be woven
+// in here rather than passed as --grep-invert.
+const desktopSessionGrep = /@desktop-session/;
+const skipDesktopSession = process.env.JASMINE_E2E_SKIP_DESKTOP_SESSION === "1";
+const invert = (...patterns: RegExp[]) => skipDesktopSession ? [...patterns, desktopSessionGrep] : patterns;
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "../test-results/playwright",
@@ -51,17 +62,19 @@ export default defineConfig({
   projects: [
     {
       name: "main",
-      grepInvert: [startupTimingGrep, focusSensitiveGrep]
+      grepInvert: invert(startupTimingGrep, focusSensitiveGrep)
     },
     {
       name: "focus-sensitive",
       grep: focusSensitiveGrep,
+      grepInvert: skipDesktopSession ? [desktopSessionGrep] : undefined,
       dependencies: ["main"],
       fullyParallel: false
     },
     {
       name: "startup-timing",
       grep: startupTimingGrep,
+      grepInvert: skipDesktopSession ? [desktopSessionGrep] : undefined,
       dependencies: ["main", "focus-sensitive"],
       fullyParallel: false
     }

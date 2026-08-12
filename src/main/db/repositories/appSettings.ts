@@ -19,8 +19,6 @@ type AppSettingsRow = {
   brand_main_title?: string | null;
   brand_subtitle?: string | null;
   language: AppLanguage;
-  chrome_takeover_enabled?: number | null;
-  chrome_takeover_extension_id?: string | null;
   working_notification_mode?: string | null;
   working_notification_include_details?: number | null;
   permission_mode?: string | null;
@@ -48,8 +46,6 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       brand_main_title,
       brand_subtitle,
       language,
-      chrome_takeover_enabled,
-      chrome_takeover_extension_id,
       working_notification_mode,
       working_notification_include_details,
       permission_mode,
@@ -57,7 +53,7 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       skill_editor_path,
       terminal_shell_path,
       updated_at
-    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 0, NULL, 'background', 1, 'ask', 'managed-tools-only', NULL, NULL, ?)`
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 'background', 1, 'ask', 'managed-tools-only', NULL, NULL, ?)`
   ).run(
     DEFAULT_APPEARANCE.accent,
     DEFAULT_APPEARANCE.surface,
@@ -87,8 +83,6 @@ export function getAppSettings(db: SqlDatabase): AppSettings | null {
         brand_main_title,
         brand_subtitle,
         language,
-        chrome_takeover_enabled,
-        chrome_takeover_extension_id,
         working_notification_mode,
         working_notification_include_details,
         permission_mode,
@@ -123,8 +117,6 @@ export function updateAppSettings(
     mainTitle: normalizeRequiredText(input.brand?.mainTitle, current.brand.mainTitle, DEFAULT_BRAND_SETTINGS.mainTitle),
     subtitle: normalizeOptionalText(input.brand?.subtitle, current.brand.subtitle, DEFAULT_BRAND_SETTINGS.subtitle),
     language: normalizeLanguage(input.language, current.language),
-    chromeTakeoverEnabled: input.chromeTakeover?.enabled ?? current.chromeTakeover.enabled,
-    chromeTakeoverExtensionId: normalizeChromeExtensionId(input.chromeTakeover?.extensionId, current.chromeTakeover.extensionId),
     workingNotificationMode: normalizeWorkingNotificationMode(input.workingNotifications?.mode, current.workingNotifications.mode),
     workingNotificationIncludeDetails: input.workingNotifications?.includeDetails ?? current.workingNotifications.includeDetails,
     permissionMode: normalizePermissionMode(input.permissionMode, current.permissionMode),
@@ -147,8 +139,6 @@ export function updateAppSettings(
         brand_main_title = ?,
         brand_subtitle = ?,
         language = ?,
-        chrome_takeover_enabled = ?,
-        chrome_takeover_extension_id = ?,
         working_notification_mode = ?,
         working_notification_include_details = ?,
         permission_mode = ?,
@@ -170,8 +160,6 @@ export function updateAppSettings(
     next.mainTitle,
     next.subtitle,
     next.language,
-    next.chromeTakeoverEnabled ? 1 : 0,
-    next.chromeTakeoverExtensionId,
     next.workingNotificationMode,
     next.workingNotificationIncludeDetails ? 1 : 0,
     next.permissionMode,
@@ -205,10 +193,6 @@ function mapAppSettings(row: AppSettingsRow): AppSettings {
       updatedAt: row.updated_at
     },
     language: normalizeLanguage(row.language, "en"),
-    chromeTakeover: {
-      enabled: Boolean(row.chrome_takeover_enabled),
-      extensionId: normalizeChromeExtensionId(row.chrome_takeover_extension_id, null)
-    },
     workingNotifications: {
       mode: normalizeWorkingNotificationMode(row.working_notification_mode, "background"),
       includeDetails: row.working_notification_include_details !== 0
@@ -252,13 +236,6 @@ function normalizeOptionalPath(value: string | null | undefined, fallback: strin
   if (value === undefined) return fallback;
   const candidate = value?.trim();
   return candidate || undefined;
-}
-
-function normalizeChromeExtensionId(value: string | null | undefined, fallback: string | null): string | null {
-  if (value === undefined) return fallback;
-  if (value === null) return null;
-  const candidate = value.trim().toLowerCase();
-  return /^[a-p]{32}$/.test(candidate) ? candidate : fallback;
 }
 
 function normalizeWorkingNotificationMode(

@@ -12,6 +12,10 @@ const dir = await mkdtemp(path.join(tmpdir(), "jasmine-db-smoke-"));
 const dbPath = path.join(dir, "jasmine.sqlite");
 let db;
 
+function legacyTableNames(target) {
+  return target.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name);
+}
+
 try {
   const threads = await import("../../dist/main/main/db/repositories/threads.js");
   const projects = await import("../../dist/main/main/db/repositories/projects.js");
@@ -22,7 +26,6 @@ try {
   const schemas = await import("../../dist/main/shared/schemas.js");
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
   const workingTasks = await import("../../dist/main/main/db/repositories/workingTasks.js");
-  const mcpServers = await import("../../dist/main/main/db/repositories/mcpServers.js");
   const skillFiles = await import("../../dist/main/main/services/skillFiles.js");
   const skillManifests = await import("../../dist/main/main/services/skillManifests.js");
   const skillRuntimeContext = await import("../../dist/main/main/services/skillRuntimeContext.js");
@@ -190,6 +193,18 @@ try {
         '一个想法、半句话、一段粘贴——剩下交给 Hiri One。',
         '${timestamp}'
       );
+      CREATE TABLE web_search_settings (
+        id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        provider TEXT NOT NULL DEFAULT 'pi-web-access',
+        max_results INTEGER NOT NULL DEFAULT 4,
+        timeout_ms INTEGER NOT NULL DEFAULT 7000,
+        last_run_at TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO web_search_settings (id, enabled, provider, max_results, timeout_ms, updated_at)
+      VALUES ('default', 1, 'duckduckgo', 8, 12000, '${timestamp}');
       CREATE TABLE remote_connections (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -313,35 +328,21 @@ try {
     assert.equal(legacyDb.prepare("SELECT message_count FROM chat_threads WHERE id = 'legacy-thread'").get().message_count, 2);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 22").get().exists_flag, 1);
     const legacyAppSettingsColumns = legacyDb.prepare("PRAGMA table_info(app_settings)").all().map((row) => row.name);
-    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_enabled"), true);
-    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_extension_id"), true);
+    // Migration 39 retires Chrome takeover, so a legacy database that had both
+    // columns must come out the other side without them.
+    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_enabled"), false);
+    assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_extension_id"), false);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 23").get().exists_flag, 1);
     const migratedBrand = legacyDb.prepare("SELECT brand_main_title, brand_subtitle FROM app_settings WHERE id = 'default'").get();
     assert.equal(migratedBrand.brand_main_title, "Talk to yourself.");
     assert.equal(migratedBrand.brand_subtitle, "Jasmine listens. Jasmine learns. Jasmine becomes yours.");
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 24").get().exists_flag, 1);
-    const legacyMcpColumns = legacyDb.prepare("PRAGMA table_info(mcp_servers)").all().map((row) => row.name);
-    for (const column of ["description", "transport", "url", "source", "marketplace_id", "package_name", "homepage", "category"]) {
-      assert.equal(legacyMcpColumns.includes(column), true, `legacy MCP table should gain ${column}`);
-    }
-    assert.deepEqual(mcpServers.listMcpServers(legacyDb), [{
-      id: "legacy-mcp",
-      name: "Legacy MCP",
-      description: "",
-      command: "legacy-command",
-      args: ["--stdio"],
-      envJson: "{}",
-      enabled: true,
-      transport: "stdio",
-      url: undefined,
-      source: "manual",
-      marketplaceId: undefined,
-      packageName: undefined,
-      homepage: undefined,
-      category: undefined,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    }]);
+    // The legacy fixture seeded an mcp_servers row above; migration 39 drops
+    // the whole table rather than leaving rows nothing can read.
+    assert.equal(legacyTableNames(legacyDb).includes("mcp_servers"), false);
+    // Migration 40 retires the whole web search setting: web access is an
+    // ordinary package now, enabled from Packages like any other.
+    assert.equal(legacyTableNames(legacyDb).includes("web_search_settings"), false);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 25").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 26").get().exists_flag, 1);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 27").get().exists_flag, 1);
@@ -514,7 +515,7 @@ try {
     assert.equal(repairedStale.content, "The provider returned a visible tool preamble.");
     assert.deepEqual(JSON.parse(repairedStale.timeline_json).map((item) => item.kind), ["assistant_text"]);
     migrations.migrateDatabase(legacyDb, () => timestamp);
-    assert.equal(mcpServers.listMcpServers(legacyDb).length, 1);
+    assert.equal(legacyTableNames(legacyDb).includes("mcp_servers"), false);
 
     legacyDb.prepare(`
       INSERT INTO chat_messages (id, thread_id, role, content, created_at, timeline_json)
@@ -929,10 +930,6 @@ try {
     updatedAt: timestamp
   });
   assert.equal(appSettings.getAppSettings(db).language, "en");
-  assert.deepEqual(appSettings.getAppSettings(db).chromeTakeover, {
-    enabled: false,
-    extensionId: null
-  });
   assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, {
     mode: "background",
     includeDetails: true
@@ -963,11 +960,6 @@ try {
   });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { language: "zh" }, timestamp);
   assert.equal(appSettings.getAppSettings(db).language, "zh");
-  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { chromeTakeover: { enabled: true, extensionId: "a".repeat(32) } }, timestamp);
-  assert.deepEqual(appSettings.getAppSettings(db).chromeTakeover, {
-    enabled: true,
-    extensionId: "a".repeat(32)
-  });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { workingNotifications: { mode: "never", includeDetails: false } }, timestamp);
   assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, { mode: "never", includeDetails: false });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { permissionMode: "full-access" }, timestamp);
@@ -1043,27 +1035,6 @@ try {
   ]), [inlineExternalSkill.id]);
   const inlineExternalManifests = await skillManifests.prepareSkillManifests(mergedRuntimeSkills, dir);
   assert.equal(inlineExternalManifests.at(-1).skillFilePath, inlineExternalSkill.skillFilePath);
-
-  const context7 = mcpServers.createMcpServer(db, {
-    name: "Context7",
-    description: "Versioned docs",
-    command: "npx",
-    args: ["-y", "@upstash/context7-mcp"],
-    envJson: "{}",
-    source: "marketplace",
-    marketplaceId: "jasmine:context7",
-    packageName: "@upstash/context7-mcp",
-    category: "documentation"
-  }, timestamp);
-  assert.equal(context7.enabled, true);
-  assert.equal(mcpServers.listMcpServers(db).length, 1);
-  assert.equal(mcpServers.createMcpServer(db, { ...context7, marketplaceId: "jasmine:context7" }, timestamp).id, context7.id);
-  mcpServers.updateMcpServer(db, context7, { id: context7.id, enabled: false, envJson: JSON.stringify({ CONTEXT7_TOKEN: "secret" }) }, timestamp);
-  const disabledContext7 = mcpServers.getMcpServer(db, context7.id);
-  assert.equal(disabledContext7.enabled, false);
-  assert.equal(disabledContext7.envJson, "{\"CONTEXT7_TOKEN\":\"secret\"}");
-  mcpServers.deleteMcpServer(db, context7.id);
-  assert.equal(mcpServers.listMcpServers(db).length, 0);
 
   db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'initial schema', ?), (2, 'metadata', ?), (3, 'drafts', ?)")
     .run(timestamp, timestamp, timestamp);

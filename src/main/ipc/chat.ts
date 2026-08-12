@@ -37,7 +37,6 @@ import { getRuntimeProvider } from "../services/providers.js";
 import { getJasminePiAgentDir } from "../services/piAgent.js";
 import { appendThreadSessionName, branchParentForMessage, prepareThreadPiSession } from "../services/piSessions.js";
 import {
-  bootstrapPiWebAccessPluginFromWebSearch,
   resolveEnabledPackageSkillPaths,
   resolvePluginPackageReferences,
   resolvePluginPackageRuntimeSources,
@@ -47,12 +46,10 @@ import { getPromptTemplatePaths } from "../services/promptTemplates.js";
 import { prepareEnabledSkillManifests, prepareSkillManifests } from "../services/skillManifests.js";
 import { mergeRuntimeSkills, pluginReferenceIds, skillReferenceIds } from "../services/skillRuntimeContext.js";
 import { generateTitleWithProviderResult } from "../services/threadTitles.js";
-import { bridgeInfoFilePath, getChromeBridge } from "../services/chromeBridge.js";
 import {
   buildRetryPlan,
   modelContentForMessage,
   nonSecretError,
-  runWebSearchForChat,
   summarizeInput,
   summarizeOutput,
   titleFromAttachments,
@@ -60,7 +57,6 @@ import {
   toModelHistoryMessage
 } from "./chatSupport.js";
 import type { IpcContext } from "./context.js";
-import { mergeWebSearchResults } from "../utils/webSearchResults.js";
 import type { WorkingRegistry } from "../services/workingRegistry.js";
 
 type ActiveRun = {
@@ -199,7 +195,7 @@ export function registerChatIpc(context: IpcContext): void {
         title: `${turn.runtimeProvider.providerName} chat completion`,
         providerId: turn.runtimeProvider.providerName,
         modelId: turn.runtimeProvider.modelId,
-        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length, turn.webSearchUsed.length)
+        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length)
       });
 
       const reply = await runTracedGeneration(db, {
@@ -233,7 +229,7 @@ export function registerChatIpc(context: IpcContext): void {
         memoryUsed: turn.memoryUsed,
         skillsUsed: turn.skillsUsed,
         pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+        webSearchUsed: reply.webSearchUsed,
         reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
@@ -302,7 +298,7 @@ export function registerChatIpc(context: IpcContext): void {
         title: `${turn.runtimeProvider.providerName} chat retry`,
         providerId: turn.runtimeProvider.providerName,
         modelId: turn.runtimeProvider.modelId,
-        inputSummary: summarizeInput(retryPlan.contextMessages.length, lastUserMessage.attachments?.length ?? 0, turn.memoryUsed.length, turn.skillsUsed.length + (lastUserMessage.skillsUsed?.length ?? 0) + (lastUserMessage.pluginsUsed?.length ?? 0), turn.webSearchUsed.length)
+        inputSummary: summarizeInput(retryPlan.contextMessages.length, lastUserMessage.attachments?.length ?? 0, turn.memoryUsed.length, turn.skillsUsed.length + (lastUserMessage.skillsUsed?.length ?? 0) + (lastUserMessage.pluginsUsed?.length ?? 0))
       });
 
       const reply = await runTracedGeneration(db, {
@@ -346,7 +342,7 @@ export function registerChatIpc(context: IpcContext): void {
           memoryUsed: turn.memoryUsed,
           skillsUsed: turn.skillsUsed,
           pluginsUsed: lastUserMessage.pluginsUsed ?? [],
-          webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+          webSearchUsed: reply.webSearchUsed,
           reasoningEffort: request.reasoningEffort
         });
       });
@@ -444,7 +440,7 @@ export function registerChatIpc(context: IpcContext): void {
         title: `${turn.runtimeProvider.providerName} chat edit`,
         providerId: turn.runtimeProvider.providerName,
         modelId: turn.runtimeProvider.modelId,
-        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length, turn.webSearchUsed.length)
+        inputSummary: summarizeInput(messages.length, attachments.length, turn.memoryUsed.length, turn.skillsUsed.length + inlineSkillsUsed.length + inlinePluginsUsed.length)
       });
 
       const reply = await runTracedGeneration(db, {
@@ -484,7 +480,7 @@ export function registerChatIpc(context: IpcContext): void {
         memoryUsed: turn.memoryUsed,
         skillsUsed: turn.skillsUsed,
         pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: mergeWebSearchResults(turn.webSearchUsed, reply.webSearchUsed),
+        webSearchUsed: reply.webSearchUsed,
         reasoningEffort: request.reasoningEffort
       });
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
@@ -850,10 +846,6 @@ function toExplicitSkillReferences(skills: SkillRecord[]): SkillReference[] {
   }));
 }
 
-function shouldPrefetchWebSearch(): boolean {
-  return process.env.JASMINE_E2E_MOCK_AI === "1";
-}
-
 type ChatTurnContext = Awaited<ReturnType<typeof buildChatTurnContext>>;
 
 // Shared context assembly for send/retry/edit: provider, settings, memory,
@@ -880,11 +872,7 @@ async function buildChatTurnContext(
   const selectedSkills = await db.getSkillsForPrompt(input.skillIds);
   const skillManifests = await prepareSkillManifests(mergeRuntimeSkills(selectedSkills, input.inlineSkills, input.inlinePluginSkills), userDataDir);
   const availableSkillManifests = await prepareEnabledSkillManifests(await db.listAllSkills(), userDataDir);
-  const webSearchSettings = db.getWebSearchSettings();
-  const effectiveWebSearchEnabled = Boolean(webSearchSettings.enabled);
-  await bootstrapPiWebAccessPluginFromWebSearch({ userDataDir }, webSearchSettings);
   const packageSkillPaths = await resolveEnabledPackageSkillPaths({ userDataDir });
-  const chromeTakeover = await resolveChromeTakeoverRuntime(appSettings.chromeTakeover, userDataDir);
   const promptTemplatePaths = getPromptTemplatePaths(db, userDataDir);
   const thread = db.getThread(input.threadId);
   if (!thread) throw new Error("Thread does not exist.");
@@ -894,10 +882,6 @@ async function buildChatTurnContext(
     name: skill.name,
     description: skill.description
   }));
-  const prefetchWebSearch = shouldPrefetchWebSearch();
-  const webSearchUsed = prefetchWebSearch
-    ? await runWebSearchForChat(db, input.threadId, input.queryText, effectiveWebSearchEnabled, input.signal)
-    : [];
   return {
     userDataDir,
     runtimeProvider,
@@ -905,15 +889,10 @@ async function buildChatTurnContext(
     memoryUsed,
     skillManifests,
     availableSkillPaths: availableSkillManifests.map((skill) => skill.skillFilePath),
-    webSearchSettings,
-    effectiveWebSearchEnabled,
     packageSkillPaths,
-    chromeTakeover,
     promptTemplatePaths,
     permissionProjectRoot,
-    skillsUsed,
-    prefetchWebSearch,
-    webSearchUsed
+    skillsUsed
   };
 }
 
@@ -931,15 +910,8 @@ function runtimeContextOptions(
     skillContext: turn.skillManifests,
     availableSkillPaths: turn.availableSkillPaths,
     packageSkillPaths: turn.packageSkillPaths,
-    chromeTakeover: turn.chromeTakeover,
     piAgentDir: getJasminePiAgentDir(turn.userDataDir),
     terminalShellPath: turn.appSettings.terminalShellPath,
-    webSearchContext: turn.webSearchUsed,
-    webSearchTool: {
-      enabled: turn.effectiveWebSearchEnabled && !turn.prefetchWebSearch,
-      provider: turn.webSearchSettings.provider,
-      search: (query: string, signal?: AbortSignal) => runWebSearchForChat(db, threadId, query, true, signal)
-    },
     askUserQuestion: async (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => {
       working.waitingForUser(requestId);
       const response = await askUserQuestionInRenderer(sender, prompt, signal);
@@ -958,8 +930,6 @@ function runtimeContextOptions(
           toolName: request.toolName,
           reason: request.reason,
           summary: sanitizePermissionDisplay(request.summary),
-          target: request.target,
-          ...(request.targetLabel ? { targetLabel: sanitizePermissionDisplay(request.targetLabel, 256) } : {}),
           cwd: sanitizePermissionDisplay(request.cwd, 4_000),
           projectRoot: request.projectRoot ? sanitizePermissionDisplay(request.projectRoot, 4_000) : null,
           ...(request.command ? { command: sanitizePermissionDisplay(request.command, 20_000) } : {}),
@@ -971,23 +941,6 @@ function runtimeContextOptions(
       }
     },
     promptTemplatePaths: turn.promptTemplatePaths
-  };
-}
-
-async function resolveChromeTakeoverRuntime(
-  settings: { enabled: boolean; extensionId: string | null },
-  userDataDir: string
-): Promise<{ enabled: boolean; bridgeFilePath?: string; extensionId?: string } | undefined> {
-  if (!settings.enabled || !settings.extensionId) return undefined;
-  const bridge = await getChromeBridge(userDataDir);
-  const status = await bridge.refreshExtensionHealth();
-  if (!status.extensionConnected || !status.extensionResponsive) {
-    return { enabled: false, extensionId: settings.extensionId };
-  }
-  return {
-    enabled: true,
-    bridgeFilePath: bridgeInfoFilePath(),
-    extensionId: settings.extensionId
   };
 }
 

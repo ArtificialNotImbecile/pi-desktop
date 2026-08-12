@@ -149,7 +149,7 @@ export function useChatMessages(options: {
     }));
   }
 
-  async function sendMessage(content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], webSearchEnabled?: boolean, reasoningEffort?: ReasoningEffort, inlineSkillIds: string[] = [], inlinePluginIds: string[] = [], targetThread?: ChatThread): Promise<boolean> {
+  async function sendMessage(content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds: string[] = [], inlinePluginIds: string[] = [], targetThread?: ChatThread): Promise<boolean> {
     const thread = options.activeThread ?? targetThread ?? null;
     if ((!content.trim() && attachments.length === 0) || !thread) return false;
 
@@ -192,7 +192,6 @@ export function useChatMessages(options: {
         skillIds,
         inlineSkillIds,
         inlinePluginIds,
-        webSearchEnabled,
         content: requestContent,
         attachments,
         // The main process rebuilds the full model history from the database
@@ -227,7 +226,7 @@ export function useChatMessages(options: {
     }
   }
 
-  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], webSearchEnabled?: boolean, reasoningEffort?: ReasoningEffort) {
+  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort) {
     const threadId = options.activeThread?.id;
     if (!threadId || isBusy(threadRunStates[threadId])) return;
     const requestId = crypto.randomUUID();
@@ -261,7 +260,6 @@ export function useChatMessages(options: {
         memoryEnabled,
         toolsEnabled,
         skillIds,
-        webSearchEnabled,
         messageId
       });
       setThreadRunState(threadId, "idle");
@@ -291,7 +289,7 @@ export function useChatMessages(options: {
     }
   }
 
-  async function editMessage(messageId: string, content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], webSearchEnabled?: boolean, reasoningEffort?: ReasoningEffort, inlineSkillIds?: string[], inlinePluginIds?: string[]): Promise<boolean> {
+  async function editMessage(messageId: string, content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds?: string[], inlinePluginIds?: string[]): Promise<boolean> {
     const threadId = options.activeThread?.id;
     if ((!content.trim() && attachments.length === 0) || !threadId || isBusy(threadRunStates[threadId])) return false;
     const requestId = crypto.randomUUID();
@@ -328,7 +326,6 @@ export function useChatMessages(options: {
         skillIds,
         inlineSkillIds,
         inlinePluginIds,
-        webSearchEnabled,
         content,
         attachments
       });

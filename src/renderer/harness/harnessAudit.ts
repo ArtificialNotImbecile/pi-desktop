@@ -13,7 +13,6 @@ export function collectSnapshot(input: HarnessBridgeInput): HarnessSnapshot {
       activeModelId: input.activeModelId,
       sidebarCollapsed: input.sidebarCollapsed,
       memoryEnabled: input.memoryEnabled,
-      webSearchEnabled: input.webSearchEnabled,
       toolsEnabled: input.toolsEnabled,
       voiceEnabled: input.voiceEnabled,
       selectedSkillCount: input.selectedSkillCount,

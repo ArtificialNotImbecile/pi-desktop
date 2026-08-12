@@ -19,7 +19,6 @@ import type {
   PromptTemplateRecord,
   ReasoningEffort,
   SkillRecord,
-  WebSearchSettings,
   WorkspaceProject
 } from "../../../shared/ipc";
 import type { RunState } from "../../types";
@@ -76,8 +75,6 @@ export function ChatPage(props: {
   memoryEnabled: boolean;
   permissionMode: PermissionMode;
   permissionModeSaving: boolean;
-  webSearchSettings: WebSearchSettings;
-  webSearchLoading: boolean;
   toolsEnabled: boolean;
   reasoningEffort: ReasoningEffort;
   skills: SkillRecord[];
@@ -131,7 +128,6 @@ export function ChatPage(props: {
   onSelectReasoningEffort(effort: ReasoningEffort): void;
   onOpenSettings(): void;
   onTestProvider(): void;
-  onToggleWebSearch(): void;
   onDraftChange(value: string): void;
   onClearError(): void;
   onSubmit(mode?: ChatQueueMode): void;
@@ -286,8 +282,6 @@ export function ChatPage(props: {
         activeProviderId={props.activeProviderId}
         modelMenuOpen={props.modelMenuOpen}
         skillMenuOpen={props.skillMenuOpen}
-        webSearchEnabled={props.webSearchSettings.enabled}
-        webSearchLoading={props.webSearchLoading}
         toolsEnabled={props.toolsEnabled}
         permissionMode={props.permissionMode}
         permissionModeSaving={props.permissionModeSaving}
@@ -335,7 +329,6 @@ export function ChatPage(props: {
         onSelectReasoningEffort={stable.onSelectReasoningEffort}
         onOpenSettings={stable.onOpenSettings}
         onTestProvider={stable.onTestProvider}
-        onToggleWebSearch={stable.onToggleWebSearch}
       />
     </section>
   );

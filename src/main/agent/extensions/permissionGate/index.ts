@@ -47,7 +47,6 @@ export type {
   PermissionMode,
   PermissionPathFlavor,
   PermissionScope,
-  PermissionTarget,
   PermissionToolName,
   ResolvedPermissionScope
 } from "./types.js";
@@ -102,8 +101,6 @@ export function registerPermissionGate(
         toolName: "bash",
         reason: "bash",
         summary: bashApprovalSummary(command),
-        target: scope.target,
-        targetLabel: scope.label,
         cwd: scope.cwd,
         projectRoot: scope.projectRoot,
         command
@@ -196,7 +193,7 @@ async function readScope(
   try {
     const supplied: PermissionScope = options.getScope
       ? await options.getScope(ctx)
-      : { projectRoot: ctx.cwd, cwd: ctx.cwd, pathFlavor: "native", target: "local" };
+      : { projectRoot: ctx.cwd, cwd: ctx.cwd, pathFlavor: "native" };
     if (!supplied || (supplied.projectRoot !== null && typeof supplied.projectRoot !== "string")) {
       throw new TypeError("Invalid projectRoot");
     }
@@ -209,22 +206,12 @@ async function readScope(
     if (supplied.pathFlavor !== undefined && supplied.pathFlavor !== "native" && supplied.pathFlavor !== "posix") {
       throw new TypeError("Invalid path flavor");
     }
-    if (supplied.target !== undefined && supplied.target !== "local" && supplied.target !== "ssh") {
-      throw new TypeError("Invalid target");
-    }
-    if (supplied.label !== undefined && typeof supplied.label !== "string") {
-      throw new TypeError("Invalid target label");
-    }
     return {
       ok: true,
       value: {
         projectRoot: supplied.projectRoot,
         cwd,
-        pathFlavor: supplied.pathFlavor ?? "native",
-        target: supplied.target ?? "local",
-        label: supplied.label === undefined
-          ? undefined
-          : sanitizePermissionDisplay(supplied.label, 256)
+        pathFlavor: supplied.pathFlavor ?? "native"
       }
     };
   } catch {
@@ -250,8 +237,6 @@ function requestFileDecision(
     toolName,
     reason,
     summary: fileApprovalSummary(toolName, rawPath, reason),
-    target: scope.target,
-    targetLabel: scope.label,
     cwd: scope.cwd,
     projectRoot: scope.projectRoot,
     path: rawPath,

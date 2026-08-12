@@ -11,7 +11,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -76,7 +75,7 @@ test.describe("Jasmine app shell", () => {
     await expect(page.locator(".app-shell")).not.toHaveClass(/sidebar-collapsed/);
   });
 
-  test("window controls maximize, restore, and minimize", async () => {
+  test("window controls maximize, restore, and minimize @desktop-session", async () => {
     const { app, page } = harness;
 
     // macOS draws native traffic lights instead of the in-page control strip,
@@ -392,7 +391,7 @@ test.describe("Jasmine app shell", () => {
     expect(Math.abs(layout.contentLeftGap - layout.contentRightGap)).toBeLessThanOrEqual(80);
   });
 
-  test("empty-chat model menu anchors to its trigger in maximized and restored windows", async () => {
+  test("empty-chat model menu anchors to its trigger in maximized and restored windows @desktop-session", async () => {
     const { app, page } = harness;
 
     await page.getByRole("button", { name: "New chat" }).first().click();

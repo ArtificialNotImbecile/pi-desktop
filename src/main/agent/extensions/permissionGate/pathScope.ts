@@ -99,7 +99,7 @@ export async function checkPathScope(input: PathScopeCheckInput): Promise<PathSc
   }
 
   const resolver = input.canonicalizePath ?? (
-    scope.pathFlavor === "native" && scope.target === "local"
+    scope.pathFlavor === "native"
       ? async ({ path: candidate }: { path: string }) => canonicalizeLocalPath(candidate)
       : undefined
   );

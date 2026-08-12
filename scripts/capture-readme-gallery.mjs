@@ -98,9 +98,7 @@ try {
     ["Skills", "settings-skills"],
     ["Packages", "settings-packages"],
     ["Prompt Templates", "settings-prompt-templates"],
-    ["MCP Servers", "settings-mcp"],
     ["Activity", "settings-activity"],
-    ["Web Search", "settings-web-search"],
     ["About", "settings-about"]
   ]) {
     await page.locator(".settings-nav").getByRole("button", { name: label, exact: true }).click();

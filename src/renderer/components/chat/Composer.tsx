@@ -59,8 +59,6 @@ export const Composer = memo(function Composer(props: {
   activeProviderId: string;
   modelMenuOpen: boolean;
   skillMenuOpen: boolean;
-  webSearchEnabled: boolean;
-  webSearchLoading: boolean;
   toolsEnabled: boolean;
   permissionMode: PermissionMode;
   permissionModeSaving: boolean;
@@ -108,7 +106,6 @@ export const Composer = memo(function Composer(props: {
   onSelectReasoningEffort(effort: ReasoningEffort): void;
   onOpenSettings(): void;
   onTestProvider(): void;
-  onToggleWebSearch(): void;
 }) {
   recordHarnessRender();
   const { t } = useI18n();

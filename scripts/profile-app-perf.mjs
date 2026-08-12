@@ -93,9 +93,6 @@ async function main() {
     ["listPlugins", "listPlugins"],
     ["listPluginSkills", "listPluginSkills"],
     ["listPromptTemplates", "listPromptTemplates"],
-    ["listMcpMarketplace", "listMcpMarketplace", undefined],
-    ["listMcpServers", "listMcpServers"],
-    ["getWebSearchSettings", "getWebSearchSettings"],
     ["getActivitySettings", "getActivitySettings"],
     ["execDiscovery(editor)", "listExecutableDiscovery", "editor"],
     ["execDiscovery(terminal)", "listExecutableDiscovery", "terminal"]

@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -161,25 +160,10 @@ test.describe("Jasmine panels and tools", () => {
     await page.locator(".memory-panel").getByRole("button", { name: "Close memory panel" }).click();
 
     await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("web");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-detail")).toContainText("Use web search");
-    await page.getByRole("button", { name: "Close settings" }).click();
-
-    await page.keyboard.press("Control+K");
     await page.getByRole("combobox", { name: "Command palette" }).fill("package");
     await page.keyboard.press("Enter");
     await expect(page.locator(".settings-panel")).toBeVisible();
     await expect(page.locator(".settings-nav").getByRole("button", { name: "Packages" })).toHaveClass(/active/);
-    await page.getByRole("button", { name: "Close settings" }).click();
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("mcp");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-nav").getByRole("button", { name: "MCP Servers" })).toHaveClass(/active/);
-    await expect(page.locator(".settings-detail")).toContainText("Marketplace");
     await page.getByRole("button", { name: "Close settings" }).click();
 
     await page.keyboard.press("Control+K");
@@ -223,7 +207,7 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.locator(".empty-state")).toBeVisible();
   });
 
-  test("right panel terminal resizes and preserves terminal session", async () => {
+  test("right panel terminal resizes and preserves terminal session @desktop-session", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 

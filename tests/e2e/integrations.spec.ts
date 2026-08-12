@@ -10,7 +10,6 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
-  enableWebSearchFallback,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -55,59 +54,6 @@ test.describe("Jasmine integrations", () => {
   test.afterEach(async () => {
     if (harness?.app) await quitElectron(harness.app);
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-  });
-
-  test("MCP marketplace installs and manages local server records", async () => {
-    const { page } = harness;
-
-    await openSettings(page, "MCP Servers");
-    await expect(page.locator(".settings-detail")).not.toContainText("Discover and manage Model Context Protocol servers");
-    const marketplaceTab = page.locator(".mcp-tabbar").getByRole("tab", { name: "Marketplace" });
-    const installedTab = page.locator(".mcp-tabbar").getByRole("tab", { name: /Installed/ });
-    await expect(marketplaceTab).toHaveAttribute("aria-selected", "true");
-    await marketplaceTab.focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(installedTab).toHaveAttribute("aria-selected", "true");
-    await page.keyboard.press("ArrowLeft");
-    await expect(marketplaceTab).toHaveAttribute("aria-selected", "true");
-
-    const context7Card = page.locator(".mcp-card", { hasText: "Context7" }).first();
-    await expect(context7Card).toBeVisible();
-    await context7Card.getByRole("button", { name: "Install" }).click();
-    await expect(context7Card.getByRole("button", { name: "Installed" })).toBeDisabled();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listMcpServers()).some((server) => server.marketplaceId === "jasmine:context7"))).toBe(true);
-
-    await page.locator(".mcp-tabbar").getByRole("tab", { name: /Installed/ }).click();
-    const installedContext7 = page.locator(".mcp-card.installed", { hasText: "Context7" }).first();
-    await expect(installedContext7).toBeVisible();
-    await expect(installedContext7).toContainText("npx -y @upstash/context7-mcp");
-    await installedContext7.getByRole("switch", { name: "Disable Context7" }).click();
-    await expect(installedContext7.getByRole("switch", { name: "Enable Context7" })).toHaveAttribute("aria-checked", "false");
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listMcpServers()).find((server) => server.marketplaceId === "jasmine:context7")?.enabled)).toBe(false);
-    await page.locator(".mcp-toolbar").getByRole("button", { name: "Refresh" }).click();
-    await expect(installedContext7.getByRole("switch", { name: "Enable Context7" })).toHaveAttribute("aria-checked", "false");
-    await installedContext7.getByRole("switch", { name: "Enable Context7" }).focus();
-    await page.keyboard.press("Space");
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listMcpServers()).find((server) => server.marketplaceId === "jasmine:context7")?.enabled)).toBe(true);
-
-    await page.locator(".mcp-toolbar").getByRole("button", { name: "Add Server" }).click();
-    const editor = page.locator(".mcp-editor");
-    await expect(editor).toBeVisible();
-    await editor.getByLabel("Name").fill("Local docs MCP");
-    await editor.getByLabel("Description").fill("Private docs through MCP");
-    await editor.getByLabel("Command", { exact: true }).fill("node");
-    await editor.getByLabel("Arguments", { exact: true }).fill('"server path.js" --port 3300');
-    await editor.getByLabel("Environment JSON", { exact: true }).fill(JSON.stringify({ DOCS_TOKEN: "secret-token" }));
-    await editor.getByRole("button", { name: "Save Server" }).click();
-
-    const manualRow = page.locator(".mcp-card.installed", { hasText: "Local docs MCP" }).first();
-    await expect(manualRow).toBeVisible();
-    await expect(manualRow).toContainText("node server path.js --port 3300");
-    await expect(manualRow).toContainText("DOCS_TOKEN=****");
-    await expect(manualRow).not.toContainText("secret-token");
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.listMcpServers()).some((server) => server.name === "Local docs MCP" && server.args.includes("server path.js")))).toBe(true);
-    await manualRow.getByRole("button", { name: "Remove" }).click();
-    await expect(manualRow).toHaveCount(0);
   });
 
   test("skills can be selected from chat commands and the Skills menu", async () => {

@@ -14,12 +14,12 @@ Jasmine is an independent, open-source desktop GUI for the Pi coding agent, brin
 
 - **Pi Sessions** — keep Pi-compatible JSONL as the canonical conversation record, with persistent local threads, drafts, projects, search, and session import.
 - **Desktop GUI for Pi** — use rich chat, attachments, Working tasks, memories, activity, and project context without leaving the desktop app.
-- **Pi Skills & Extensions** — work with reusable skills, prompt templates, Pi packages, MCP servers, and web access.
+- **Pi Skills & Extensions** — work with reusable skills, prompt templates, and Pi packages, including web access through `pi-web-access`.
 - **Integrated Terminal** — run project terminals alongside coding-agent conversations.
 - **Fast file-change artifacts** — inspect managed `write/edit` targets with unified text diffs and before/after image snapshots, or opt into an event-based filesystem watcher for broader shell visibility without crawling the workspace.
 - **Flexible models** — connect multiple OpenAI-compatible providers with model discovery and per-model options.
 
-Jasmine stores application data locally, but configured AI providers, web search tools, MCP servers, and browser automation can send data outside the computer. Review each integration before enabling it.
+Jasmine stores application data locally, but configured AI providers and any Pi packages you enable — including web access — can send data outside the computer. Review each integration before enabling it.
 
 Pi-compatible JSONL is the canonical model conversation record. SQLite remains the transactional projection for thread lists, search, UI paging, settings, traces, and links back to JSONL entry IDs. See [session storage](docs/session_storage.md) and [Pi session import](docs/pi_session_import.md).
 
@@ -62,10 +62,8 @@ The Artifacts panel stores each capture as a run-level observation ledger and la
 | ![Appearance settings](docs/assets/screenshots/settings-appearance.png) | ![Memory settings](docs/assets/screenshots/settings-memory.png) |
 | Skills | Packages |
 | ![Skill settings](docs/assets/screenshots/settings-skills.png) | ![Package settings](docs/assets/screenshots/settings-packages.png) |
-| Prompt Templates | MCP Servers |
-| ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![MCP server settings](docs/assets/screenshots/settings-mcp.png) |
-| Activity | Web Search |
-| ![Activity settings](docs/assets/screenshots/settings-activity.png) | ![Web Search settings](docs/assets/screenshots/settings-web-search.png) |
+| Prompt Templates | Activity |
+| ![Prompt template settings](docs/assets/screenshots/settings-prompt-templates.png) | ![Activity settings](docs/assets/screenshots/settings-activity.png) |
 | About | |
 | ![About Jasmine](docs/assets/screenshots/settings-about.png) | |
 
@@ -124,11 +122,9 @@ Environment-variable references are the recommended credential method. For examp
 
 Jasmine also supports entering a key directly. Direct keys are stored as plain text in the local SQLite database. They are masked in renderer-visible settings, but they are not protected by the operating system credential vault. Do not use direct storage on an untrusted or shared computer.
 
-The unreleased Chrome bridge and extension source remain in the repository for future package work, but Jasmine does not currently expose Chrome Control in Settings or ship a built-in Chrome package.
-
 ## Roadmap
 
-Remote development over SSH and Chrome browser control are built and validated as standalone Pi extensions or packages before the desktop app consumes them. See the [roadmap](docs/roadmap.md) for what each one has to do first.
+Remote development over SSH, Chrome browser control, and MCP servers are built and validated as standalone Pi extensions or packages before the desktop app consumes them. See the [roadmap](docs/roadmap.md) for what each one has to do first.
 
 ## Testing
 

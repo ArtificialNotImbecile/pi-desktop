@@ -14,12 +14,12 @@ Jasmine 是一个独立、开源的 Pi 编码智能体桌面 GUI，把 Pi 兼容
 
 - **Pi 会话** —— 以 Pi 兼容的 JSONL 作为对话的权威记录，同时提供持久化的本地会话列表、草稿、项目、搜索和会话导入。
 - **Pi 的桌面 GUI** —— 在桌面应用内使用富文本对话、附件、Working 任务、记忆、活动记录和项目上下文。
-- **Pi 技能与扩展** —— 使用可复用的技能、提示词模板、Pi 包、MCP 服务器和联网能力。
+- **Pi 技能与扩展** —— 使用可复用的技能、提示词模板和 Pi 包，联网能力由 `pi-web-access` 包提供。
 - **内置终端** —— 在与编码智能体对话的同时运行项目终端。
 - **快速的文件变更产物** —— 查看受管 `write/edit` 目标的统一文本 diff 和前后图片快照，也可以选择基于事件的文件系统监听模式，在不遍历工作区的前提下覆盖更多 shell 行为。
 - **灵活的模型** —— 接入多个 OpenAI 兼容供应商，支持模型发现和按模型配置。
 
-Jasmine 把应用数据保存在本地，但配置好的 AI 供应商、联网搜索工具、MCP 服务器和浏览器自动化都可能把数据发送到本机之外。启用每一项集成前请先自行评估。
+Jasmine 把应用数据保存在本地，但配置好的 AI 供应商，以及你启用的任何 Pi 包（包括联网访问）都可能把数据发送到本机之外。启用每一项集成前请先自行评估。
 
 Pi 兼容的 JSONL 是模型对话的权威记录；SQLite 只是事务性投影，服务于会话列表、搜索、界面分页、设置、追踪，以及回链到 JSONL 条目 ID。参见[会话存储](docs/session_storage.md)与 [Pi 会话导入](docs/pi_session_import.md)。
 
@@ -62,10 +62,8 @@ Artifacts 面板把每次捕获保存为运行级别的观测账本，并在存�
 | ![外观设置](docs/assets/screenshots/settings-appearance.png) | ![记忆设置](docs/assets/screenshots/settings-memory.png) |
 | 技能 | 包 |
 | ![技能设置](docs/assets/screenshots/settings-skills.png) | ![包设置](docs/assets/screenshots/settings-packages.png) |
-| 提示词模板 | MCP 服务器 |
-| ![提示词模板设置](docs/assets/screenshots/settings-prompt-templates.png) | ![MCP 服务器设置](docs/assets/screenshots/settings-mcp.png) |
-| 活动 | 联网搜索 |
-| ![活动设置](docs/assets/screenshots/settings-activity.png) | ![联网搜索设置](docs/assets/screenshots/settings-web-search.png) |
+| 提示词模板 | 活动 |
+| ![提示词模板设置](docs/assets/screenshots/settings-prompt-templates.png) | ![活动设置](docs/assets/screenshots/settings-activity.png) |
 | 关于 | |
 | ![关于 Jasmine](docs/assets/screenshots/settings-about.png) | |
 
@@ -124,11 +122,9 @@ Electron 把 Jasmine 的数据存放在操作系统的应用数据目录中。�
 
 Jasmine 也支持直接填写密钥。直接填写的密钥会以明文保存在本地 SQLite 数据库中：它们在渲染进程可见的设置界面里会被遮蔽，但并不受操作系统凭据保管库保护。请不要在不可信或共用的电脑上使用直接保存。
 
-未发布的 Chrome 桥接与扩展源码仍保留在仓库中以备后续做成独立包，但 Jasmine 目前不在设置中提供 Chrome Control，也不内置 Chrome 包。
-
 ## 路线图
 
-远程 SSH 开发、Chrome 浏览器控制等能力会先作为独立的 Pi 扩展/包开发和验证，成熟后再接入桌面应用。计划与验收标准见[路线图](docs/roadmap.md)。
+远程 SSH 开发、Chrome 浏览器控制、MCP 服务器等能力会先作为独立的 Pi 扩展/包开发和验证，成熟后再接入桌面应用。计划与验收标准见[路线图](docs/roadmap.md)。
 
 ## 测试
 

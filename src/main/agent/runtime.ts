@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, WebSearchProvider, WebSearchResult } from "../../shared/ipc.js";
+import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";
 import { providerPayloadToContextTaxonomy, taxonomyItem, withContextCacheMetrics } from "./extensions/contextCapture/classifier.js";
@@ -43,19 +43,8 @@ type RuntimeChatRequest = ChatSendRequest & {
   skillContext?: RuntimeSkillManifest[];
   packageSkillPaths?: string[];
   packageExtensionPaths?: string[];
-  chromeTakeover?: {
-    enabled: boolean;
-    bridgeFilePath?: string;
-    extensionId?: string;
-  };
   piAgentDir?: string;
-  webSearchContext?: WebSearchResult[];
   terminalShellPath?: string;
-  webSearchTool?: {
-    enabled: boolean;
-    provider: WebSearchProvider;
-    search(query: string, signal?: AbortSignal): Promise<WebSearchResult[]>;
-  };
   askUserQuestion?: (prompt: Omit<AskUserQuestionPrompt, "id">, signal?: AbortSignal) => Promise<AskUserQuestionResponse>;
   permissionMode?: PermissionMode;
   permissionProjectRoot?: string | null;
@@ -111,7 +100,6 @@ export type RuntimeOptions = {
 
 export async function generateAssistantReply(request: RuntimeChatRequest, provider: RuntimeProviderConfig, options: RuntimeOptions = {}): Promise<AssistantReply> {
   const parsed = chatSendRequestSchema.parse(request);
-  applyChromeTakeoverRuntimeEnv(request.chromeTakeover);
   const startedAt = Date.now();
   assertSupportedAttachments(parsed.messages, request.attachments ?? [], parsed.content, provider);
   const piShell = resolvePiShellRuntime(request.terminalShellPath);
@@ -129,7 +117,6 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     const inlineSkillNames = (request.skillContext ?? [])
       .filter((skill) => (parsed.inlineSkillIds ?? []).includes(skill.id))
       .map((skill) => skill.name);
-    let chromeTakeoverFlow: Awaited<ReturnType<typeof runMockChromeTakeoverFlow>> = null;
     let content = "";
     const latestUpdate: { current?: RuntimeUpdate } = {};
     const onUpdate = options.onUpdate
@@ -139,9 +126,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }
       : undefined;
     try {
-      chromeTakeoverFlow = await runMockChromeTakeoverFlow(request, lastUserText, options.signal);
       const permissionFlow = await runMockPermissionFlow(request, lastUserText, options.signal);
-      content = permissionFlow ?? (chromeTakeoverFlow?.content ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames, request.webSearchContext ?? []));
+      content = permissionFlow ?? mockContent(lastUserText, imageCount, request.toolsEnabled ?? true, request.memoryContext ?? [], request.skillContext ?? [], inlineSkillNames);
       if (lastUserText.toLowerCase().includes("working failure")) {
         throw new Error("Mock Working failure.");
       }
@@ -160,25 +146,17 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       }
       if (lastUserText.toLowerCase().includes("working long response")) await abortableDelay(6_000, options.signal);
       if (lastUserText.toLowerCase().includes("slow response")) await abortableDelay(750, options.signal);
-      if (chromeTakeoverFlow) {
-        onUpdate?.({
-          content,
-          timeline: chromeTakeoverFlow.timeline,
-          liveMessages: [{ role: "assistant", content, timeline: chromeTakeoverFlow.timeline }]
-        });
-      } else {
-        await streamMockReply(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
-          modelId: provider.modelId,
-          reasoningEffort: parsed.reasoningEffort,
-          ...options,
-          onUpdate
-        });
-      }
+      await streamMockReply(content, lastUserText, request.toolsEnabled ?? true, {
+        modelId: provider.modelId,
+        reasoningEffort: parsed.reasoningEffort,
+        ...options,
+        onUpdate
+      });
       const initialAssistantEntryId = appendMockAssistant(mockSession, provider, content);
       mockQueue.generatedMessages.push({
         role: "assistant",
         content,
-        timeline: chromeTakeoverFlow?.timeline ?? mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+        timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, {
           modelId: provider.modelId,
           reasoningEffort: parsed.reasoningEffort
         }),
@@ -199,7 +177,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         model: provider.modelId,
         elapsedMs: Date.now() - startedAt,
         timeline: stoppedTimeline,
-        webSearchUsed: request.webSearchContext ?? [],
+        webSearchUsed: [],
         contextTaxonomy: buildAssemblyTaxonomy({
           provider,
           systemPrompt: fallbackSystemPrompt,
@@ -234,11 +212,11 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       content,
       model: provider.modelId,
       elapsedMs: Date.now() - startedAt,
-      timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+      timeline: mockTimeline(content, lastUserText, request.toolsEnabled ?? true, {
         modelId: provider.modelId,
         reasoningEffort: parsed.reasoningEffort
       }),
-      webSearchUsed: request.webSearchContext ?? [],
+      webSearchUsed: [],
       contextTaxonomy: mockTaxonomies.at(-1),
       contextTaxonomies: mockTaxonomies,
       fileChangeCaptures,
@@ -260,14 +238,12 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     agentDir: request.piAgentDir,
     toolsEnabled: request.toolsEnabled ?? true,
     reasoningEffort: request.reasoningEffort,
-    webSearchTool: request.webSearchTool,
     askUserQuestion: request.askUserQuestion,
     permissionMode: request.permissionMode ?? "ask",
     permissionProjectRoot: request.permissionProjectRoot ?? null,
     requestPermissionApproval: request.requestPermissionApproval,
     skillContext: request.skillContext ?? [],
     memoryContext: request.memoryContext ?? [],
-    webSearchContext: request.webSearchContext ?? [],
     packageSkillPaths: request.packageSkillPaths ?? [],
     availableSkillPaths: request.availableSkillPaths ?? [],
     packageExtensionPaths: request.packageExtensionPaths ?? [],
@@ -316,7 +292,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     model: provider.modelId,
     elapsedMs: Date.now() - startedAt,
     timeline: normalizedResult.timeline,
-    webSearchUsed: mergeWebSearchResults(request.webSearchContext ?? [], result.webSearchUsed),
+    webSearchUsed: result.webSearchUsed,
     contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
     contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
     fileChangeCaptures: capturedFileChanges,
@@ -580,15 +556,6 @@ function mockFileChangeCaptures(lastUserText: string, cwd: string, startedAtMs: 
   }];
 }
 
-function applyChromeTakeoverRuntimeEnv(chromeTakeover: RuntimeChatRequest["chromeTakeover"]): void {
-  if (chromeTakeover?.enabled && chromeTakeover.bridgeFilePath) {
-    process.env.JASMINE_CHROME_TAKEOVER = "1";
-    process.env.JASMINE_CHROME_BRIDGE_FILE = chromeTakeover.bridgeFilePath;
-    return;
-  }
-  process.env.JASMINE_CHROME_TAKEOVER = "0";
-}
-
 function prepareMockSession(
   request: RuntimeChatRequest,
   provider: RuntimeProviderConfig,
@@ -728,7 +695,7 @@ async function drainMockQueue(
       {
         role: "assistant",
         content: initialContent,
-        timeline: mockTimeline(initialContent, initialUserText, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+        timeline: mockTimeline(initialContent, initialUserText, request.toolsEnabled ?? true, {
           modelId: provider.modelId,
           reasoningEffort: request.reasoningEffort
         })
@@ -747,7 +714,7 @@ async function drainMockQueue(
       timeline: [],
       liveMessages: [...liveMessagesPrefix, { role: "assistant", content: "", timeline: [] }]
     });
-    await streamMockReply(replyContent, submitted.content, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+    await streamMockReply(replyContent, submitted.content, request.toolsEnabled ?? true, {
       modelId: provider.modelId,
       reasoningEffort: request.reasoningEffort,
       ...options,
@@ -764,7 +731,7 @@ async function drainMockQueue(
     mockQueue.generatedMessages.push({
       role: "assistant",
       content: replyContent,
-      timeline: mockTimeline(replyContent, submitted.content, request.toolsEnabled ?? true, request.webSearchContext ?? [], {
+      timeline: mockTimeline(replyContent, submitted.content, request.toolsEnabled ?? true, {
         modelId: provider.modelId,
         reasoningEffort: request.reasoningEffort
       }),
@@ -840,75 +807,10 @@ type MockTimelineMeta = {
   thinkingProgress?: number;
 };
 
-type MockChromeToolResult = {
-  content?: Array<{ text?: string }>;
-};
-
-type MockChromeTool = {
-  name: string;
-  execute(toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<MockChromeToolResult>;
-};
-
-async function runMockChromeTakeoverFlow(
-  request: RuntimeChatRequest,
-  lastUserText: string,
-  signal?: AbortSignal
-): Promise<{ content: string; timeline: ChatTimelineItem[] } | null> {
-  if (process.env.JASMINE_E2E_CHROME_TAKEOVER_FLOW !== "1" || !lastUserText.toLowerCase().includes("e2e chrome takeover flow")) {
-    return null;
-  }
-  if (request.toolsEnabled === false) throw new Error("Chrome takeover E2E requires tools to be enabled.");
-  if (!request.chromeTakeover?.enabled) throw new Error("Chrome takeover E2E did not receive a healthy takeover runtime.");
-  const chromeSource = request.packageExtensionPaths?.find((source) => path.basename(source).toLowerCase() === "chrome");
-  if (!chromeSource) throw new Error("Chrome takeover E2E requires the @Chrome plugin to be active.");
-  const entryPath = path.extname(chromeSource) ? chromeSource : path.join(chromeSource, "index.js");
-  if (!existsSync(entryPath)) throw new Error(`Chrome takeover E2E package entry was not found: ${entryPath}`);
-
-  const loaded = await import(pathToFileURL(entryPath).href) as { default?: (pi: { registerTool(tool: MockChromeTool): void }) => void };
-  if (typeof loaded.default !== "function") throw new Error("Chrome takeover E2E package did not export a default extension function.");
-  const tools = new Map<string, MockChromeTool>();
-  loaded.default({ registerTool(tool) { tools.set(tool.name, tool); } });
-
-  const calls = [
-    { name: "chrome_status", params: {} },
-    { name: "chrome_list_tabs", params: {} },
-    { name: "chrome_open_url", params: { url: "https://e2e.example/opened" } }
-  ];
-  const timeline: ChatTimelineItem[] = [];
-  const output: string[] = [];
-  for (const [index, call] of calls.entries()) {
-    const tool = tools.get(call.name);
-    if (!tool) throw new Error(`Chrome takeover E2E tool was not registered: ${call.name}`);
-    const callId = `mock-chrome-${index + 1}`;
-    timeline.push({
-      id: `${callId}-call`,
-      kind: "tool_call",
-      toolName: call.name,
-      title: call.name,
-      argumentsJson: JSON.stringify(call.params, null, 2)
-    });
-    const result = await tool.execute(callId, call.params, signal);
-    const text = (result.content ?? []).map((item) => item.text ?? "").filter(Boolean).join("\n");
-    output.push(`${call.name}: ${text}`);
-    timeline.push({
-      id: `${callId}-result`,
-      kind: "tool_result",
-      toolName: call.name,
-      title: call.name,
-      content: text,
-      isError: false
-    });
-  }
-  const content = output.join("\n\n");
-  timeline.push({ id: "mock-chrome-output", kind: "assistant_text", text: content });
-  return { content, timeline };
-}
-
 async function streamMockReply(
   content: string,
   lastUserText: string,
   toolsEnabled: boolean,
-  webSearchContext: WebSearchResult[],
   options: RuntimeOptions & MockTimelineMeta & { liveMessagesPrefix?: RuntimeGeneratedMessage[] }
 ): Promise<void> {
   if (!options.onUpdate) return;
@@ -918,7 +820,7 @@ async function streamMockReply(
   for (let index = 1; index <= chunkCount; index += 1) {
     throwIfAborted(options.signal);
     const text = content.slice(0, Math.ceil((content.length * index) / chunkCount));
-    const timeline = mockTimeline(text, lastUserText, toolsEnabled, webSearchContext, {
+    const timeline = mockTimeline(text, lastUserText, toolsEnabled, {
       ...options,
       complete: index === chunkCount,
       thinkingProgress: index / chunkCount
@@ -1151,7 +1053,6 @@ async function runMockPermissionFlow(
     toolName: "write",
     reason: projectRoot ? "outside-project" : "no-project",
     summary: projectRoot ? "Write outside the current project: ../outside.txt" : "Write without an open project: fixture.txt",
-    target: "local",
     cwd,
     projectRoot,
     path: projectRoot ? "../outside.txt" : "fixture.txt",
@@ -1161,7 +1062,6 @@ async function runMockPermissionFlow(
     toolName: "bash",
     reason: "bash",
     summary: "Run shell command: echo jasmine-permission-fixture",
-    target: "local",
     cwd,
     projectRoot,
     command: "echo jasmine-permission-fixture"
@@ -1171,7 +1071,7 @@ async function runMockPermissionFlow(
     : "Permission denied for the fixture.";
 }
 
-function mockContent(lastUserText: string, imageCount: number, toolsEnabled: boolean, memoryContext: string[], skillContext: RuntimeSkillManifest[], inlineSkillNames: string[], webSearchContext: WebSearchResult[]): string {
+function mockContent(lastUserText: string, imageCount: number, toolsEnabled: boolean, memoryContext: string[], skillContext: RuntimeSkillManifest[], inlineSkillNames: string[]): string {
   if (imageCount > 0) return `Mock reply received ${imageCount} image attachment.`;
   if (lastUserText.toLowerCase().includes("tools state")) return toolsEnabled ? "Pi tools are on." : "Pi tools are off.";
   const explicitNames = inlineSkillNames.length > 0 ? inlineSkillNames : explicitSkillNames(lastUserText);
@@ -1180,9 +1080,6 @@ function mockContent(lastUserText: string, imageCount: number, toolsEnabled: boo
   }
   if (skillContext.length > 0 && lastUserText.toLowerCase().includes("skill")) {
     return `Skill-aware reply using ${skillContext.map((skill) => skill.name).join(", ")}.`;
-  }
-  if (webSearchContext.length > 0) {
-    return `Web search used: ${webSearchContext[0].title} (${webSearchContext[0].url}).`;
   }
   if (memoryContext.length > 0 && lastUserText.toLowerCase().includes("memory")) {
     return `Memory-aware reply: ${memoryContext[0]}`;
@@ -1230,7 +1127,6 @@ function mockTimeline(
   content: string,
   lastUserText: string,
   toolsEnabled: boolean,
-  webSearchContext: WebSearchResult[],
   meta: MockTimelineMeta = {}
 ): ChatTimelineItem[] {
   const items: ChatTimelineItem[] = [];
@@ -1252,11 +1148,11 @@ function mockTimeline(
       });
     }
   }
-  if (lastUserText.toLowerCase().includes("timeline") || webSearchContext.length > 0) {
+  if (lastUserText.toLowerCase().includes("timeline")) {
     items.push({
       id: "mock-thinking",
       kind: "thinking",
-      text: partialText(thinkingMockText(lastUserText, webSearchContext), meta.thinkingProgress ?? 1)
+      text: partialText(thinkingMockText(lastUserText), meta.thinkingProgress ?? 1)
     });
   }
   if (lastUserText.toLowerCase().includes("timeline") && toolsEnabled) {
@@ -1421,8 +1317,7 @@ function mockTimeline(
   return items;
 }
 
-function thinkingMockText(lastUserText: string, webSearchContext: WebSearchResult[]): string {
-  if (webSearchContext.length > 0) return "Need to incorporate the current web result before answering.";
+function thinkingMockText(lastUserText: string): string {
   if (lastUserText.toLowerCase().includes("rich thinking")) {
     return [
       "I need to inspect why the rendered reasoning content appears centered instead of reading as one left-aligned flow.",
@@ -1498,10 +1393,3 @@ function buildFallbackSystemPrompt(jasminePromptAppend: string, runtimePromptApp
   ].filter(Boolean).join("\n\n");
 }
 
-function mergeWebSearchResults(first: WebSearchResult[], second: WebSearchResult[]): WebSearchResult[] {
-  const merged: WebSearchResult[] = [];
-  for (const result of [...first, ...second]) {
-    if (!merged.some((candidate) => candidate.url === result.url)) merged.push(result);
-  }
-  return merged;
-}

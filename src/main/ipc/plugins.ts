@@ -13,7 +13,6 @@ import {
   pluginPackageOperationSchema
 } from "../../shared/schemas.js";
 import {
-  bootstrapPiWebAccessPluginFromWebSearch,
   installPluginPackage,
   listPluginPackages,
   listPluginSkills,
@@ -22,26 +21,16 @@ import {
   setPluginPackageEnabled,
   updatePluginPackage
 } from "../services/plugins.js";
-import type { IpcContext } from "./context.js";
-
-export function registerPluginIpc(context: IpcContext): void {
+export function registerPluginIpc(): void {
   ipcMain.handle("plugins:list", async (): Promise<PluginPackageRecord[]> => {
-    const userDataDir = app.getPath("userData");
-    await bootstrapPiWebAccessPluginFromWebSearch({
-      userDataDir
-    }, context.getDatabase().getWebSearchSettings());
     return listPluginPackages({
-      userDataDir
+      userDataDir: app.getPath("userData")
     });
   });
 
   ipcMain.handle("plugins:listSkills", async (): Promise<SkillRecord[]> => {
-    const userDataDir = app.getPath("userData");
-    await bootstrapPiWebAccessPluginFromWebSearch({
-      userDataDir
-    }, context.getDatabase().getWebSearchSettings());
     return listPluginSkills({
-      userDataDir
+      userDataDir: app.getPath("userData")
     });
   });
 

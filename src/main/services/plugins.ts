@@ -10,8 +10,7 @@ import type {
   PluginReference,
   PluginPackageScope,
   PluginResourceCounts,
-  SkillRecord,
-  WebSearchSettings
+  SkillRecord
 } from "../../shared/ipc.js";
 import { getJasminePiAgentDir } from "./piAgent.js";
 
@@ -196,14 +195,6 @@ export async function resolvePluginResources(options: PluginServiceOptions): Pro
   return { packages: await listPluginPackages(options) };
 }
 
-export async function bootstrapPiWebAccessPluginFromWebSearch(options: PluginServiceOptions, settings: WebSearchSettings): Promise<void> {
-  if (!settings.enabled || settings.provider !== "pi-web-access" || process.env.JASMINE_E2E_MOCK_AI === "1") return;
-  const source = resolvePiWebAccessPackageRoot();
-  if (!source) return;
-  const service = await createPluginPackageService(options);
-  await service.enableBuiltinSource(source);
-}
-
 // Pre-stream sends resolve enabled package skill paths on every request, and
 // the app mount + settings surfaces list packages/skills repeatedly. All of
 // these results only change when plugin settings or installed packages change
@@ -307,10 +298,6 @@ class PluginPackageService {
     this.normalizeBuiltinPackageSources(builtinPluginSources);
     this.ensureBuiltinPluginConfigured(builtinPluginSources);
     await this.flush();
-  }
-
-  async enableBuiltinSource(source: string): Promise<void> {
-    await this.setEnabled(canonicalPluginSource(source), true, "user");
   }
 
   async list(): Promise<PluginPackageRecord[]> {

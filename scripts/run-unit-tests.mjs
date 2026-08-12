@@ -23,8 +23,6 @@ const tasks = [
   { name: "pi-context-usage", steps: [["node", "--no-warnings", "tests/unit/pi-context-usage.mjs"]] },
   { name: "pi-session-import", steps: [["node", "--no-warnings", "tests/unit/pi-session-import.mjs"]] },
   { name: "plugin-packages", steps: [["node", "--no-warnings", "tests/unit/plugin-packages.mjs"]] },
-  { name: "chrome-bridge", steps: [["node", "--no-warnings", "tests/unit/chrome-bridge.mjs"]] },
-  { name: "chrome-extension-id", steps: [["node", "--no-warnings", "tests/unit/chrome-extension-id.mjs"]] },
   { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
   { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
   { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },

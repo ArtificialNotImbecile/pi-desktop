@@ -6,8 +6,6 @@ export type PermissionMode = "ask" | "full-access";
 
 export type PermissionPathFlavor = "native" | "posix";
 
-export type PermissionTarget = "local" | "ssh";
-
 export type PermissionToolName = "bash" | "write" | "edit";
 
 export type PermissionApprovalDecision = "allow-once" | "deny";
@@ -27,16 +25,12 @@ export interface PermissionScope {
   projectRoot: string | null;
   cwd?: string;
   pathFlavor?: PermissionPathFlavor;
-  target?: PermissionTarget;
-  label?: string;
 }
 
 export interface ResolvedPermissionScope {
   projectRoot: string | null;
   cwd: string;
   pathFlavor: PermissionPathFlavor;
-  target: PermissionTarget;
-  label?: string;
 }
 
 export interface CanonicalPathRequest {
@@ -56,9 +50,6 @@ export interface PermissionApprovalRequest {
   reason: PermissionApprovalReason;
   /** Control-character-safe, length-bounded text intended for UI display. */
   summary: string;
-  target: PermissionTarget;
-  /** Control-character-safe host label for display, when supplied. */
-  targetLabel?: string;
   /** Raw trusted host paths for policy/audit code; prefer summary for display. */
   cwd: string;
   projectRoot: string | null;

@@ -27,13 +27,7 @@ import type {
   SkillRecord,
   SkillSource,
   SkillReference,
-  McpMarketplaceServer,
-  McpServerCreateRequest,
-  McpServerRecord,
-  McpServerUpdateRequest,
   WebSearchResult,
-  WebSearchSettings,
-  WebSearchSettingsUpdateRequest,
   WorkingSnapshot,
   WorkingTaskStatus,
   ThreadActivePluginsUpdateRequest,
@@ -119,25 +113,12 @@ import {
   listPromptTemplateSources as listPromptTemplateSourceRows
 } from "./repositories/promptTemplates.js";
 import {
-  createMcpServer as createMcpServerRow,
-  deleteMcpServer as deleteMcpServerRow,
-  getMcpServer as getMcpServerRow,
-  listMcpServers as listMcpServerRows,
-  updateMcpServer as updateMcpServerRow
-} from "./repositories/mcpServers.js";
-import {
   createToolRun as createToolRunRow,
   finishToolRun as finishToolRunRow,
   getToolRun as getToolRunRow,
   listToolRunsForMessage as listToolRunsForMessageRows,
   listToolRunsForThread as listToolRunsForThreadRows
 } from "./repositories/toolRuns.js";
-import {
-  ensureWebSearchSettings as ensureWebSearchSettingsRow,
-  getWebSearchSettings as getWebSearchSettingsRow,
-  updateWebSearchRun as updateWebSearchRunRow,
-  updateWebSearchSettings as updateWebSearchSettingsRow
-} from "./repositories/webSearch.js";
 import type { SqlDatabase } from "./repositories/types.js";
 import {
   addContextCapture as addContextCaptureRow,
@@ -449,25 +430,6 @@ export class JasmineDatabase {
     return createToolRunRow(this.db, input, now());
   }
 
-  getWebSearchSettings(): WebSearchSettings {
-    this.ensureWebSearchSettings();
-    const settings = getWebSearchSettingsRow(this.db);
-    if (!settings) throw new Error("Web search settings do not exist.");
-    return settings;
-  }
-
-  updateWebSearchSettings(input: WebSearchSettingsUpdateRequest): WebSearchSettings {
-    const current = this.getWebSearchSettings();
-    updateWebSearchSettingsRow(this.db, current, input, now());
-    return this.getWebSearchSettings();
-  }
-
-  updateWebSearchRun(input: { lastError?: string | null }): WebSearchSettings {
-    this.ensureWebSearchSettings();
-    updateWebSearchRunRow(this.db, input, now());
-    return this.getWebSearchSettings();
-  }
-
   getAppSettings(): AppSettings {
     this.ensureAppSettings();
     const settings = getAppSettingsRow(this.db);
@@ -716,44 +678,6 @@ export class JasmineDatabase {
     deletePromptTemplateSourceRow(this.db, sourceId);
   }
 
-  listMcpServers(): McpServerRecord[] {
-    return listMcpServerRows(this.db);
-  }
-
-  createMcpServer(input: McpServerCreateRequest): McpServerRecord {
-    return createMcpServerRow(this.db, input, now());
-  }
-
-  installMcpServer(input: McpMarketplaceServer): McpServerRecord {
-    return createMcpServerRow(this.db, {
-      name: input.name,
-      description: input.description,
-      command: input.command,
-      args: input.args,
-      envJson: input.envJson,
-      enabled: true,
-      transport: input.transport,
-      source: "marketplace",
-      marketplaceId: input.id,
-      packageName: input.packageName,
-      homepage: input.homepage,
-      category: input.category
-    }, now());
-  }
-
-  updateMcpServer(input: McpServerUpdateRequest): McpServerRecord {
-    const existing = getMcpServerRow(this.db, input.id);
-    if (!existing) throw new Error("MCP server does not exist.");
-    updateMcpServerRow(this.db, existing, input, now());
-    const updated = getMcpServerRow(this.db, input.id);
-    if (!updated) throw new Error("MCP server does not exist.");
-    return updated;
-  }
-
-  deleteMcpServer(id: string): void {
-    deleteMcpServerRow(this.db, id);
-  }
-
   async getSkillsForPrompt(skillIds: string[] = []): Promise<SkillRecord[]> {
     const uniqueIds = Array.from(new Set(skillIds)).slice(0, 12);
     if (uniqueIds.length === 0) return [];
@@ -862,7 +786,6 @@ export class JasmineDatabase {
 
   private seed(): void {
     this.ensureActivitySettings();
-    this.ensureWebSearchSettings();
     this.ensureAppSettings();
     const row = this.db.prepare("SELECT COUNT(*) AS count FROM chat_threads").get() as { count?: number };
     if (Number(row?.count ?? 0) > 0) {
@@ -895,10 +818,6 @@ export class JasmineDatabase {
     const timestamp = now();
     seedDefaultProviders(this.db, timestamp);
     seedDefaultSkills(this.db, timestamp);
-  }
-
-  private ensureWebSearchSettings(): void {
-    ensureWebSearchSettingsRow(this.db, now());
   }
 
   private ensureAppSettings(): void {

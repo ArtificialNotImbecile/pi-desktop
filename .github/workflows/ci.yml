@@ -86,3 +86,54 @@ jobs:
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
+
+  # The smoke tag covers 12 of the ~111 E2E tests, so the platform matrix above
+  # cannot be the only automated E2E signal.
+  #
+  # macOS, though Linux is the cheaper runner. Under JASMINE_E2E_OFFSCREEN the
+  # window is created focusable: false, which on X11 leaves it unmanaged, so
+  # maximize and minimize are dropped and isMaximized() never turns true. Five
+  # specs fail there for that reason alone -- window controls, model-menu
+  # anchoring, message paging, and the Working notification -- identically at
+  # one worker and at two, and identically with openbox running, so neither
+  # parallelism nor a missing window manager was the cause. None of the five is
+  # tagged @smoke, so they had never run on Linux before this job existed.
+  # macOS is the configuration with a green full run behind it. Making the suite
+  # pass under X11 is its own change, and belongs with the offscreen harness.
+  e2e:
+    name: Full E2E
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      # One worker. Two finished in 3.6m against 5.4m on Linux but failed the
+      # same specs either way, and the Playwright config documents parallel
+      # Electron starving the heavier specs on macOS specifically.
+      - name: Run full E2E suite
+        run: npm run test:e2e
+        env:
+          JASMINE_E2E_OFFSCREEN: "1"
+          JASMINE_E2E_WORKERS: "1"
+          # 105 of 111. The six @desktop-session specs need a real desktop
+          # session; see tests/playwright.config.ts. A local run covers them.
+          JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failures
+          path: test-results/
+          retention-days: 7

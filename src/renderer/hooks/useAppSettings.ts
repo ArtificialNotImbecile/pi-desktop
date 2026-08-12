@@ -23,10 +23,6 @@ export const defaultAppSettings: AppSettings = {
     updatedAt: ""
   },
   language: "en",
-  chromeTakeover: {
-    enabled: false,
-    extensionId: null
-  },
   workingNotifications: {
     mode: "background",
     includeDetails: true
@@ -101,9 +97,6 @@ export function readStartupSettingsCache(): AppSettings | null {
       (parsed.brand.logoDataUrl !== null && (typeof parsed.brand.logoDataUrl !== "string" || !isSupportedBrandLogoDataUrl(parsed.brand.logoDataUrl))) ||
       typeof parsed.brand.mainTitle !== "string" ||
       typeof parsed.brand.subtitle !== "string" ||
-      !parsed.chromeTakeover ||
-      typeof parsed.chromeTakeover.enabled !== "boolean" ||
-      (parsed.chromeTakeover.extensionId !== null && typeof parsed.chromeTakeover.extensionId !== "string") ||
       !parsed.workingNotifications ||
       !["background", "always", "never"].includes(parsed.workingNotifications.mode) ||
       typeof parsed.workingNotifications.includeDetails !== "boolean" ||

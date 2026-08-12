@@ -11,7 +11,6 @@ export function PermissionApprovalDialog(props: {
   if (!prompt) return null;
 
   const sensitiveValue = prompt.command ?? prompt.path ?? prompt.resolvedPath ?? "";
-  const targetLabel = prompt.targetLabel || (prompt.target === "ssh" ? t("permission.remoteTarget") : t("permission.localTarget"));
   const promptId = prompt.id;
 
   function answer(decision: PermissionApprovalResponse["decision"]) {
@@ -41,7 +40,6 @@ export function PermissionApprovalDialog(props: {
         </div>
         {sensitiveValue ? <pre className="permission-approval-command"><code>{sensitiveValue}</code></pre> : null}
         <dl className="permission-approval-meta">
-          <div><dt>{t("permission.target")}</dt><dd>{targetLabel}</dd></div>
           <div><dt>{t("permission.cwd")}</dt><dd>{prompt.cwd}</dd></div>
           {prompt.projectRoot ? <div><dt>{t("permission.project")}</dt><dd>{prompt.projectRoot}</dd></div> : null}
           {prompt.resolvedPath && prompt.resolvedPath !== prompt.path ? <div><dt>{t("permission.resolvedPath")}</dt><dd>{prompt.resolvedPath}</dd></div> : null}
