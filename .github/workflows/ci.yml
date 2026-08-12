@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# A new push supersedes the run already in flight for the same pull request,
+# so review fixes do not leave three platform jobs grinding on a dead commit.
+# Pushes to main keep every run, so each released commit has its own result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   static:
     name: Repository rules
