@@ -9,6 +9,7 @@ import type {
   AskUserQuestionResponse,
   ChatEditRequest,
   ChatEditResponse,
+  ChatContextTaxonomyCaptureUpdateRequest,
   ChatQueueDeleteRequest,
   ChatQueueRequest,
   ChatQueueResponse,
@@ -162,6 +163,9 @@ const api: JasmineApi = {
   },
   steerQueuedChatMessage(request: ChatQueueSteerRequest): Promise<ChatQueueResponse> {
     return ipcRenderer.invoke("chat:queue:steer", request);
+  },
+  updateChatContextTaxonomyCapture(request: ChatContextTaxonomyCaptureUpdateRequest): Promise<boolean> {
+    return ipcRenderer.invoke("chat:contextTaxonomyCapture:update", request);
   },
   cancelChatMessage(requestId: string): Promise<boolean> {
     return ipcRenderer.invoke("chat:cancel", requestId);

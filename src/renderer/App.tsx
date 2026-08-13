@@ -148,6 +148,14 @@ function App(props: { initialAppSettings: AppSettings }) {
   );
   const activeRightPanelMode = activeRightPanelTab?.mode ?? null;
   const captureContextTaxonomy = activeRightPanelMode === "context" && !rightPanelCollapsed;
+  useEffect(() => {
+    const threadId = threads.activeThreadId;
+    if (!threadId) return;
+    void getBridge().updateChatContextTaxonomyCapture({ threadId, enabled: captureContextTaxonomy }).catch(() => undefined);
+    return () => {
+      void getBridge().updateChatContextTaxonomyCapture({ threadId, enabled: false }).catch(() => undefined);
+    };
+  }, [captureContextTaxonomy, threads.activeThreadId]);
   const activeScopeProjectId = threads.activeThread?.projectId ?? activeProjectId;
   const activeProject = useMemo(
     () => projects.projects.find((project) => project.id === activeScopeProjectId) ?? null,

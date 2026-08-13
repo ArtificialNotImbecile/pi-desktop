@@ -651,6 +651,53 @@ test.describe("Jasmine panels and tools", () => {
     })).toBe(0);
   });
 
+  test("opening taxonomy mid-run captures a later queued provider request", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("slow response taxonomy starts closed");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await expect(page.locator(".panel-empty")).toContainText("No captured context taxonomy yet");
+    await page.locator(".rich-composer-editor").fill("queued taxonomy captured after opening");
+    await page.getByRole("button", { name: "Queue message" }).click();
+    await expect(page.locator(".assistant-block").last()).toContainText("Queued follow-up complete: queued taxonomy captured after opening", { timeout: 10_000 });
+
+    const capture = await page.evaluate(async () => {
+      const threadId = (await window.jasmine.listThreads())[0]?.id;
+      return threadId ? (await window.jasmine.listThreadContextTaxonomy(threadId)).captures.at(-1) : undefined;
+    });
+    expect(capture?.taskIndex).toBe(2);
+  });
+
+  test("closing taxonomy mid-run skips a later queued provider request", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await page.locator(".rich-composer-editor").fill("slow response taxonomy starts open");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
+    await page.locator(".rich-composer-editor").fill("queued taxonomy skipped after closing");
+    await page.getByRole("button", { name: "Queue message" }).click();
+    await expect(page.locator(".assistant-block").last()).toContainText("Queued follow-up complete: queued taxonomy skipped after closing", { timeout: 10_000 });
+
+    const capture = await page.evaluate(async () => {
+      const threadId = (await window.jasmine.listThreads())[0]?.id;
+      if (!threadId) throw new Error("Dynamic taxonomy thread is missing.");
+      const summary = (await window.jasmine.listThreadContextTaxonomy(threadId)).captures.at(-1);
+      if (!summary) return null;
+      const detail = await window.jasmine.getContextTaxonomy(summary.id);
+      return {
+        taskIndex: summary.taskIndex,
+        currentPrompt: detail.taxonomy.items.find((item) => item.kind === "current_user_prompt")?.text ?? ""
+      };
+    });
+    expect(capture?.taskIndex).toBe(1);
+    expect(capture?.currentPrompt).toContain("slow response taxonomy starts open");
+    expect(capture?.currentPrompt).not.toContain("queued taxonomy skipped after closing");
+  });
+
   test("file change artifacts and lazy details restore after restart", async ({}, testInfo) => {
     let { page } = harness;
     const userDataDir = harness.userDataDir;

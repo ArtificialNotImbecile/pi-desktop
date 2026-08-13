@@ -207,6 +207,11 @@ export const chatQueueDeleteRequestSchema = z.object({
 
 export const chatQueueSteerRequestSchema = chatQueueDeleteRequestSchema;
 
+export const chatContextTaxonomyCaptureUpdateRequestSchema = z.object({
+  threadId: z.string().min(1),
+  enabled: z.boolean()
+});
+
 export const askUserQuestionResponseSchema = z.object({
   id: z.string().min(1),
   answers: z.array(z.object({

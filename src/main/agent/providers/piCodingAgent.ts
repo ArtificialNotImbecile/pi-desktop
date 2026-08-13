@@ -40,6 +40,7 @@ type PiCodingAgentChatInput = {
   onUpdate?(update: { content: string; timeline: ChatTimelineItem[]; liveMessages?: RuntimeGeneratedMessage[] }): void;
   onQueueReady?(controls: RuntimeQueueControls): void;
   onQueueUpdate?(queue: ChatQueueState): void;
+  shouldCaptureContextTaxonomy?(): boolean;
   onContextTaxonomy?(taxonomy: ContextTaxonomy): void;
   fileChangeTrackingMode?: FileChangeTrackingMode;
   fileChangeWatchRoot?: string;
@@ -213,6 +214,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const additionalSkillPaths = runtimeSkillPaths(input.skillContext, input.packageSkillPaths, input.availableSkillPaths);
   const currentPromptText = promptText(input.content, input.attachments);
   const currentPromptAnchorText = promptAnchorText(input.content, input.attachments);
+  let activePromptAnchorText = currentPromptAnchorText;
+  let activeTaskIndex = 1;
   const promptAppends = [
     input.jasminePromptAppend,
     input.localRuntimePromptAppend
@@ -225,7 +228,10 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       provider: input.provider.providerName,
       model: input.provider.modelId,
       currentUserPromptText: currentPromptAnchorText,
+      getCurrentUserPromptText: () => activePromptAnchorText,
       getCanonicalMessages: () => sessionManager.buildSessionContext().messages,
+      shouldCapture: input.shouldCaptureContextTaxonomy,
+      getTaskIndex: () => activeTaskIndex,
       onCapture: input.onContextTaxonomy
     }));
   }
@@ -371,6 +377,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     pendingDeliveredMessages.set(queued.id, { role: "user", content: queued.content, attachments: queued.attachments });
     emitLiveUpdate();
     inFlightFollowsDeliveredId = queued.id;
+    activeTaskIndex += 1;
+    activePromptAnchorText = promptAnchorText(queued.content, queued.attachments ?? []);
     await session.prompt(queued.piText, {
       images: await imageContent(queuedImages),
       streamingBehavior: mode

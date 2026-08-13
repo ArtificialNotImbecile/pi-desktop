@@ -104,6 +104,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   steerQueuedChatMessage(request) {
     return ipcRenderer.invoke("chat:queue:steer", request);
   },
+  updateChatContextTaxonomyCapture(request) {
+    return ipcRenderer.invoke("chat:contextTaxonomyCapture:update", request);
+  },
   cancelChatMessage(requestId) {
     return ipcRenderer.invoke("chat:cancel", requestId);
   },
