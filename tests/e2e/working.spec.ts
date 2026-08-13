@@ -180,6 +180,10 @@ test.describe("Working task center", () => {
     const failedRow = page.locator(".working-task.status-failed");
     await expect(failedRow).toContainText("耗时");
     await expect(failedRow).not.toContainText("Failed");
+    // A run that has not reached nameable work yet reports one of the registry's
+    // stock English lines, which the page has to translate rather than print.
+    await expect(page.locator(".working-task.status-running").first()).toContainText("正在准备回复");
+    await expect(page.locator(".working-groups")).not.toContainText("Preparing response");
     const attentionPalette = await page.evaluate(() => {
       const styles = getComputedStyle(document.documentElement);
       return {

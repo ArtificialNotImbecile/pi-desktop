@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc";
 import { StopIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { Button, EmptyState } from "../ui";
-import { useI18n } from "../../i18n";
+import { useI18n, type I18nKey } from "../../i18n";
 
 const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stopping"];
 const ATTENTION_STATUSES: WorkingTaskStatus[] = ["waiting_user", "failed"];
@@ -12,6 +12,15 @@ const TERMINAL_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelle
 // language is, so recognizing "this only repeats the status" has to compare
 // against them rather than against the translated label.
 const GENERIC_TERMINAL_ACTIVITY = new Set(["completed", "failed", "cancelled"]);
+// The stock lines a run passes through before it does anything nameable. They
+// come from the registry in English too, so the page translates them rather
+// than leaking them into a Chinese UI.
+const STOCK_ACTIVITY_KEYS: Record<string, I18nKey> = {
+  "preparing response": "working.activity.preparing",
+  "resuming response": "working.activity.resuming",
+  "waiting for your answer": "working.activity.waiting",
+  "stopping": "working.activity.stopping"
+};
 // Finished runs are history: they stay one click away instead of pushing the
 // tasks that still need a decision off the first screen.
 const DONE_PREVIEW_COUNT = 5;
@@ -269,9 +278,13 @@ function terminalLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>[
 
 // The status is carried by the glyph and the label above, so this line spends
 // itself on what the run is actually doing -- or, once it is over, how long it
-// took. Activity text that only repeats the status is dropped.
+// took. The registry writes activity in English whatever the UI language is, so
+// its stock lines are translated here and only real work (a path, a tool name)
+// is passed through as written.
 function detailText(task: WorkingTask, t: ReturnType<typeof useI18n>["t"]): string {
   const activity = task.activity.trim();
+  const stockKey = STOCK_ACTIVITY_KEYS[activity.toLowerCase()];
+  if (stockKey) return t(stockKey);
   if (!TERMINAL_STATUSES.includes(task.status)) return activity;
   if (activity && !GENERIC_TERMINAL_ACTIVITY.has(activity.toLowerCase())) return activity;
   const duration = taskDuration(task);
