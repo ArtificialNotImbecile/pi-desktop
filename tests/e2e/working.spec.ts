@@ -212,6 +212,16 @@ test.describe("Working task center", () => {
     let { page } = harness;
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Interrupted Working chat" }));
     await page.getByRole("button", { name: /^Working/ }).click();
+
+    // Nothing is running yet, so the page shows its empty state. Its call to
+    // action has to leave the Working route: the route-sync effect skips this
+    // route, so a chat started here strands the user on an unchanged screen.
+    await expect(page.locator(".ui-empty-state")).toBeVisible();
+    await page.getByRole("button", { name: "Start a chat" }).click();
+    await expect.poll(() => navigationPath(page)).not.toContain("/working");
+    await expect(page.locator(".working-page")).toHaveCount(0);
+    await page.getByRole("button", { name: /^Working/ }).click();
+
     await page.evaluate((threadId) => {
       void window.jasmine.sendChatMessage({
         requestId: "working-interrupted-e2e",
