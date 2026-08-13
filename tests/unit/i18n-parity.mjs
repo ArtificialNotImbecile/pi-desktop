@@ -110,12 +110,22 @@ for (const file of componentFiles) {
     }
     if (ts.isJsxAttribute(node) && copyAttributes.has(node.name.text) && !literalAllowlist.has(relative)) {
       const initializer = node.initializer;
+      const interpolated = [];
+      if (initializer && ts.isJsxExpression(initializer) && initializer.expression) {
+        const collectInterpolatedCopy = (expression) => {
+          if (ts.isTemplateExpression(expression)) {
+            interpolated.push([expression.head.text, ...expression.templateSpans.map((span) => span.literal.text)].join("{…}"));
+          }
+          ts.forEachChild(expression, collectInterpolatedCopy);
+        };
+        collectInterpolatedCopy(initializer.expression);
+      }
       const literal = initializer && ts.isStringLiteral(initializer)
         ? initializer.text
         : initializer && ts.isJsxExpression(initializer) && initializer.expression
           && (ts.isStringLiteral(initializer.expression) || ts.isNoSubstitutionTemplateLiteral(initializer.expression))
           ? initializer.expression.text
-          : null;
+          : interpolated.join(" ");
       if (literal && /[A-Za-z]{2}/.test(literal)) {
         literalAttributes.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${node.name.text}=${JSON.stringify(literal)}`);
       }

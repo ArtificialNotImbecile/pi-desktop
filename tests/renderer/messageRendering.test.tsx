@@ -19,14 +19,14 @@ function assistantMessage(id: string, timeline: ChatTimelineItem[]): ChatMessage
   };
 }
 
-function mountMessages(messages: ChatMessage[]) {
+function mountMessages(messages: ChatMessage[], language: "en" | "zh" = "en") {
   const onCopy = vi.fn();
   const onRetry = vi.fn();
   const onEdit = vi.fn();
   const onRemember = vi.fn();
   const onCopyCode = vi.fn();
   const view = render(
-    <I18nProvider language="en">
+    <I18nProvider language={language}>
       {messages.map((message) => (
         <MessageView
           key={message.id}
@@ -218,5 +218,34 @@ describe("message rendering", () => {
     expect(within(dialog).getByRole("img", { name: "red-square.png" }).getAttribute("src")).toBe(previewDataUrl);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "red-square.png" })).toBeNull();
+  });
+
+  test("interpolated tool and attachment accessible names follow the interface language", () => {
+    const toolMessage = assistantMessage("localized-tool", toolTimeline(
+      "localized",
+      "edit",
+      { path: "src/example.ts", oldText: "old", newText: "new" },
+      { content: "- old\n+ new" }
+    ));
+    const imageMessage: ChatMessage = {
+      id: "localized-image",
+      threadId: "renderer-message-thread",
+      role: "user",
+      content: "看图",
+      createdAt,
+      attachments: [{
+        name: "red-square.png",
+        path: "C:\\private\\red-square.png",
+        kind: "file",
+        mediaType: "image/png",
+        isImage: true,
+        previewDataUrl: "data:image/png;base64,iVBORw0KGgo="
+      }]
+    };
+
+    const harness = mountMessages([toolMessage, imageMessage], "zh");
+    expect(harness.container.querySelector('[data-message-id="localized-tool"] .tool-run-item')?.getAttribute("aria-label"))
+      .toBe("工具 edit src/example.ts");
+    expect(screen.getByRole("button", { name: "预览 red-square.png" })).toBeDefined();
   });
 });

@@ -404,6 +404,7 @@ function toToolDisplayItem(
 }
 
 function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { kind: "tool" }>; expanded: boolean; hidden?: boolean; onToggle(): void }) {
+  const { t } = useI18n();
   const { item } = props;
   const summary = item.summary;
   // Large tool outputs can be expensive even while hidden: mounting a
@@ -419,7 +420,7 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
       data-timeline-item-id={item.id}
       hidden={props.hidden}
       className={`timeline-item tool-run-item ${summary.state} ${props.expanded ? "" : "collapsed"}`}
-      aria-label={`Tool ${summary.action} ${summary.target}`.trim()}
+      aria-label={t("message.toolSummary", { action: summary.action, target: summary.target }).trim()}
     >
       <button type="button" className="timeline-label timeline-toggle tool-run-toggle" aria-expanded={props.expanded} onClick={props.onToggle}>
         {toolIcon(item.toolName)}
