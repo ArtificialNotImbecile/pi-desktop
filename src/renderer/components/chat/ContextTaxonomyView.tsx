@@ -430,11 +430,13 @@ function TaxonomyItemView(props: {
                 ))}
               </div>
             )
-            : <RenderedBody
-                text={resolved.item.text ?? resolved.item.preview}
-                format={looksLikeJson(resolved.item.text ?? "") ? "json" : "markdown"}
-                title={resolved.title}
-              />}
+            : resolved.foldedCount > 0
+              ? null
+              : <RenderedBody
+                  text={resolved.item.text ?? resolved.item.preview}
+                  format={looksLikeJson(resolved.item.text ?? "") ? "json" : "markdown"}
+                  title={resolved.title}
+                />}
       </div>
     </details>
   );

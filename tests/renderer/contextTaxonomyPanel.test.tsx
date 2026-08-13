@@ -278,6 +278,11 @@ describe("context taxonomy panel", () => {
     expect(metadata?.textContent).toContain("19");
     fireEvent.click(metadata!);
     expect(panel.text(".taxonomy-item-title")).toEqual(["Assistant turn"]);
+
+    const emptyMessage = panel.container.querySelector<HTMLElement>(".taxonomy-item");
+    fireEvent.click(emptyMessage!.querySelector<HTMLElement>(".taxonomy-item-head")!);
+    expect(emptyMessage?.querySelector(".taxonomy-item-meta")?.textContent).toContain("assistant");
+    expect(emptyMessage?.querySelector(".taxonomy-body")).toBeNull();
   });
 
   test("an instruction message keeps the wire fields its segments do not cover", () => {
