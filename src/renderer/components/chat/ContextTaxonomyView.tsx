@@ -704,7 +704,7 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
   if (foldedCount > 0) meta.push(`+${foldedCount} envelope ${foldedCount === 1 ? "field" : "fields"}`);
   const path = single?.payloadPath ?? item.payloadPath ?? item.source;
 
-  const buckets = new Set(attributedBucketTokens(itemBucket, resolvedParts, tokenEstimate).keys());
+  const buckets = new Set(attributedBucketTokens(itemBucket, resolvedParts, tokenEstimate, foldedCount > 0).keys());
   const title = itemTitle(item, kind);
 
   return {
@@ -750,7 +750,8 @@ function allocateTokenBudget(weights: number[], budget: number): number[] {
 function attributedBucketTokens(
   itemBucket: ContextBucket,
   parts: ResolvedPart[],
-  tokenEstimate: number
+  tokenEstimate: number,
+  hasFoldedMetadata: boolean
 ): Map<ContextBucket, number> {
   const values = new Map<ContextBucket, number>();
   const add = (bucket: ContextBucket, tokens: number) => {
@@ -759,14 +760,14 @@ function attributedBucketTokens(
   };
 
   if (parts.length === 0) {
-    add(itemBucket, tokenEstimate);
+    add(hasFoldedMetadata ? "options" : itemBucket, tokenEstimate);
     return values;
   }
 
   const partTokens = parts.reduce((total, part) => total + part.tokenEstimate, 0);
   for (const part of parts) add(part.bucket, part.tokenEstimate);
   // Envelope fields are folded out of the tree but still sent to the provider.
-  if (tokenEstimate > partTokens) add("options", tokenEstimate - partTokens);
+  if (tokenEstimate > partTokens) add(hasFoldedMetadata ? "options" : itemBucket, tokenEstimate - partTokens);
   return values;
 }
 
@@ -776,7 +777,12 @@ export function buildComposition(groups: ResolvedGroup[], total: number): Compos
 
   for (const group of groups) {
     for (const resolved of group.items) {
-      for (const [bucket, tokens] of attributedBucketTokens(resolved.bucket, resolved.parts, resolved.tokenEstimate)) {
+      for (const [bucket, tokens] of attributedBucketTokens(
+        resolved.bucket,
+        resolved.parts,
+        resolved.tokenEstimate,
+        resolved.foldedCount > 0
+      )) {
         add(bucket, tokens);
       }
     }

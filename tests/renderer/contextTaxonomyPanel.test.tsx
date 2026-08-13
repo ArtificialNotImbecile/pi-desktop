@@ -248,6 +248,38 @@ describe("context taxonomy panel", () => {
     expect(panel.text(".taxonomy-item-title")).toContain("Assistant turn");
   });
 
+  test("attributes an empty message's folded envelope fields to metadata", () => {
+    const items = fixtureItems();
+    items.push({
+      order: 8,
+      role: "assistant",
+      source: "provider.payload.messages",
+      label: "Provider message 5",
+      kind: "conversation_history",
+      payloadPath: "$.messages[4]",
+      tokenEstimate: 1,
+      preview: "",
+      text: "",
+      parts: [part({
+        kind: "metadata",
+        title: "Role",
+        tokenEstimate: 1,
+        payloadPath: "$.messages[4].role"
+      })]
+    });
+    const panel = renderPanel(fixture({ items }));
+    const filter = panel.container.querySelector<HTMLInputElement>(".taxonomy-filter");
+    if (!filter) throw new Error("Filter input did not render.");
+    fireEvent.change(filter, { target: { value: "$.messages[4]" } });
+    expect(panel.text(".taxonomy-item-title")).toEqual(["Assistant turn"]);
+
+    const metadata = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-legend button"))
+      .find((node) => node.textContent?.startsWith("Options & metadata"));
+    expect(metadata?.textContent).toContain("19");
+    fireEvent.click(metadata!);
+    expect(panel.text(".taxonomy-item-title")).toEqual(["Assistant turn"]);
+  });
+
   test("an instruction message keeps the wire fields its segments do not cover", () => {
     const panel = renderPanel();
     fireEvent.click(panel.button("Expand all"));
