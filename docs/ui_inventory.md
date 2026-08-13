@@ -2,6 +2,14 @@
 
 Checked rows have reproducible automated evidence. Add a new row for a new major surface and link incomplete rows to the current issue register.
 
+Cross-cutting language contract: static accessible copy on chat-panel
+shortcuts, tabs, controls, tooltips, and fields follows the selected interface
+language; renderer-owned dates, times, and numeric counts use that language's
+locale. The English dictionary preserves the accessible names used by
+cross-process E2E selectors. `tests/unit/i18n-parity.mjs` rejects literal
+accessible copy and OS-locale formatting in renderer components, while
+`tests/e2e/settings.spec.ts` verifies the live Chinese panel wiring.
+
 | Status | ID | Surface | Expected behavior | Evidence |
 | --- | --- | --- | --- | --- |
 | [x] | SHELL-001 | Main shell and sidebar | Navigation, window controls, overlays, safe per-thread deletion, About access, tray behavior, and responsive shell remain usable; bulk Clear History is not exposed. Window controls are platform-specific: Windows/Linux draw the in-page minimize/restore/maximize/close strip, while macOS shows no such strip and relies on native traffic lights, whose maximize/restore/fullscreen changes still reach the renderer through `window:state-changed`; top-row chrome reserves title-bar space on whichever side the platform's controls occupy. The tray icon is platform-specific too: Windows and Linux open the window on a left click and keep the menu on the right button, while a macOS status item gives its single click to the menu, so the window opens from Open Jasmine there. | `tests/e2e/shell.spec.ts`, `tests/e2e/threads.spec.ts` |

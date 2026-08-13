@@ -1,7 +1,7 @@
 import { useState } from "react";
-import type { ActivityObservation, ActivitySettings, ActivityStatus } from "../../../shared/ipc";
+import type { ActivityObservation, ActivitySettings, ActivityStatus, AppLanguage } from "../../../shared/ipc";
 import { ActivityIcon, RefreshIcon } from "../icons/Icons";
-import { useI18n } from "../../i18n";
+import { localeTag, useI18n } from "../../i18n";
 
 export function ActivityPanel(props: {
   open: boolean;
@@ -16,7 +16,7 @@ export function ActivityPanel(props: {
   onCreateManual(note: string): void;
   onUpdateSettings(update: Partial<ActivitySettings>): void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [draft, setDraft] = useState("");
 
   if (!props.open) return null;
@@ -130,7 +130,7 @@ export function ActivityPanel(props: {
               <div>
                 <ActivityIcon />
                 <strong>{t("activity.manual")}</strong>
-                <span>{formatTime(observation.createdAt)}</span>
+                <span>{formatTime(observation.createdAt, language)}</span>
               </div>
               <p>{observation.note}</p>
             </article>
@@ -147,8 +147,8 @@ function statusCopy(status: ActivityStatus, t: ReturnType<typeof useI18n>["t"]):
   return t("activity.off");
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, language: AppLanguage): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(localeTag(language), { hour: "2-digit", minute: "2-digit" });
 }

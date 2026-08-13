@@ -9,18 +9,20 @@
 //   3. an activity label main persists that the renderer never translates
 //   4. user-visible copy built in main from string literals, where the
 //      dictionary used to be out of reach
-//   5. a clock formatted with the machine's locale instead of the app's
+//   5. a clock or count formatted with the machine's locale instead of the app's
+//   6. renderer-owned accessibility copy written as a JSX literal
 //
-// A sixth -- a call site persisting an activity string that is not in the
+// A seventh -- a call site persisting an activity string that is not in the
 // shared list -- is a compile error rather than a check here: the persistence
 // API takes WorkingActivity, not string.
 //
 // It reads the sources rather than rendering anything, so it fails on the drift
 // itself instead of needing a run to reach that state.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { dictionaries, localeTag, translate } from "../../dist/main/shared/i18n.js";
 import { WORKING_ACTIVITY } from "../../dist/main/shared/workingActivity.js";
 
@@ -77,13 +79,54 @@ for (const key of [...mapped.values(), "working.activity.usingNamedTool"]) {
   assert.ok(key in dictionaries.en, `Unknown i18n key ${key}`);
 }
 
-// A clock or date formatted with undefined takes the locale of the machine,
-// not the language the app is set to, which is how a Chinese UI ends up
-// printing "03:45 PM". The Working page has to pass the tag explicitly.
+// A clock, date or number formatted without a locale takes the locale of the
+// machine, not the language the app is set to. Check the whole component tree
+// so fixing one panel cannot leave the same defect in the next one.
 assert.equal(localeTag("zh"), "zh-CN");
 assert.equal(localeTag("en"), "en-US");
-const osLocale = [...page.matchAll(/toLocale\w*\(\s*(undefined|\[\])/g)].map((match) => match[0]);
-assert.deepEqual(osLocale, [], "WorkingPage must format times with localeTag(language), not the OS locale");
+const componentDir = path.join(rootDir, "src/renderer/components");
+const componentFiles = await collectFiles(componentDir, (file) => file.endsWith(".tsx"));
+const osLocale = [];
+const literalAttributes = [];
+const copyAttributes = new Set(["aria-label", "title", "placeholder"]);
+const literalAllowlist = new Set([
+  // The catalogue deliberately presents its primitive samples in one fixed
+  // language so it can double as a visual/test fixture rather than app copy.
+  "src/renderer/components/ui/UiCatalog.tsx"
+]);
+
+for (const file of componentFiles) {
+  const sourceText = await readFile(file, "utf8");
+  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const relative = path.relative(rootDir, file).replaceAll("\\", "/");
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && /^toLocale(?:String|DateString|TimeString)$/.test(node.expression.name.text)) {
+      const locale = node.arguments[0];
+      if (!locale || locale.kind === ts.SyntaxKind.UndefinedKeyword
+        || (ts.isArrayLiteralExpression(locale) && locale.elements.length === 0)) {
+        osLocale.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
+      }
+    }
+    if (ts.isJsxAttribute(node) && copyAttributes.has(node.name.text) && !literalAllowlist.has(relative)) {
+      const initializer = node.initializer;
+      const literal = initializer && ts.isStringLiteral(initializer)
+        ? initializer.text
+        : initializer && ts.isJsxExpression(initializer) && initializer.expression
+          && (ts.isStringLiteral(initializer.expression) || ts.isNoSubstitutionTemplateLiteral(initializer.expression))
+          ? initializer.expression.text
+          : null;
+      if (literal && /[A-Za-z]{2}/.test(literal)) {
+        literalAttributes.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${node.name.text}=${JSON.stringify(literal)}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+}
+
+assert.deepEqual(osLocale, [], "Renderer components must format with localeTag(language), not the OS locale");
+assert.deepEqual(literalAttributes, [], "Renderer accessibility copy must come from i18n, not JSX literals");
 
 // 3. The copy main puts in front of the user goes through the dictionary.
 const registry = await readFile(path.join(rootDir, "src/main/services/workingRegistry.ts"), "utf8");
@@ -107,3 +150,13 @@ assert.notEqual(
 assert.ok(zhTranslate("working.notification.title", { state: "X" }).includes("X"), "Notification title dropped its state operand");
 
 console.log(`i18n-parity: ${en.length} keys in en and zh, ${mapped.size} activity labels translated`);
+
+async function collectFiles(directory, accept) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) return collectFiles(target, accept);
+    return accept(target) ? [target] : [];
+  }));
+  return nested.flat();
+}

@@ -79,6 +79,10 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `test-infrastructure.mjs`: portable, collision-resistant E2E user-data
   directory names and Vite's fixed strict development-server port. These are
   pure Node/config checks and do not belong in the Playwright project count.
+- `i18n-parity.mjs`: shared English/Chinese dictionary parity, translated
+  activity labels, explicit renderer locales for dates/numbers, and a source
+  guard that rejects literal accessible copy outside the fixed-language UI
+  catalogue fixture.
 
 ## Renderer test map
 

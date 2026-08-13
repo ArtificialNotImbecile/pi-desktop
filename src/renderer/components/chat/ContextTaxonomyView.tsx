@@ -1,5 +1,6 @@
 import { useMemo, useState, type SyntheticEvent } from "react";
 import type {
+  AppLanguage,
   ContextReasoningValidation,
   ContextTaxonomy,
   ContextTaxonomyItem,
@@ -8,6 +9,7 @@ import type {
   ContextTaxonomyPartKind
 } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
+import { localeTag, useI18n } from "../../i18n";
 import { looksLikeJson, ShikiCodeBlock } from "../code";
 import { ChevronRightIcon } from "../icons/Icons";
 import { Button } from "../ui";
@@ -92,6 +94,7 @@ export function TaxonomyView(props: {
   captures?: CaptureOption[];
   onSelectCapture?(captureId: string): void;
 }) {
+  const { t } = useI18n();
   const taxonomy = props.taxonomy;
   const validation = taxonomy.reasoningValidation;
   const reasoningFailed = validation?.status === "fail";
@@ -150,8 +153,8 @@ export function TaxonomyView(props: {
           className="taxonomy-filter"
           type="search"
           value={query}
-          placeholder="Filter items and paths"
-          aria-label="Filter context items and payload paths"
+          placeholder={t("taxonomy.filterPlaceholder")}
+          aria-label={t("taxonomy.filterAria")}
           onChange={(event) => setQuery(event.target.value)}
         />
         <button type="button" className="taxonomy-toolbar-button" onClick={toggleAll}>
@@ -159,7 +162,7 @@ export function TaxonomyView(props: {
         </button>
       </div>
 
-      <div className="taxonomy-tree" aria-label="Derived context taxonomy">
+      <div className="taxonomy-tree" aria-label={t("taxonomy.treeAria")}>
         {visibleGroups.map((group) => (
           <section key={group.id} className="taxonomy-group" aria-label={group.label}>
             <div className="taxonomy-group-head">
@@ -196,6 +199,7 @@ function TaxonomyHeader(props: {
   captureId: string;
   onSelectCapture?(captureId: string): void;
 }) {
+  const { language, t } = useI18n();
   const taxonomy = props.taxonomy;
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -221,13 +225,13 @@ function TaxonomyHeader(props: {
         <strong title={`${taxonomy.provider}/${taxonomy.model}`}>{taxonomy.provider}/{taxonomy.model}</strong>
         {approximate && <span className="taxonomy-head-approximate">approximate</span>}
         {captures.length > 1 && props.onSelectCapture && (
-          <div className="taxonomy-request-switcher" role="group" aria-label="Provider request">
+          <div className="taxonomy-request-switcher" role="group" aria-label={t("taxonomy.providerRequest")}>
             {captures.map((capture) => (
               <button
                 key={capture.id}
                 type="button"
                 aria-pressed={capture.id === props.captureId}
-                aria-label={`Request ${capture.requestIndex} of ${capture.requestCount}`}
+                aria-label={t("taxonomy.requestPosition", { index: capture.requestIndex, count: capture.requestCount })}
                 onClick={() => props.onSelectCapture?.(capture.id)}
               >
                 {capture.requestIndex}
@@ -241,14 +245,14 @@ function TaxonomyHeader(props: {
         <span className="taxonomy-head-dot">·</span>
         <span>v{taxonomy.payloadSchemaVersion ?? 1}</span>
         <span className="taxonomy-head-dot">·</span>
-        <span>{formatCapturedAt(taxonomy.capturedAt)}</span>
+        <span>{formatCapturedAt(taxonomy.capturedAt, language)}</span>
         {taxonomy.payloadHash && (
           <>
             <span className="taxonomy-head-dot">·</span>
             <button
               type="button"
               className="taxonomy-head-hash"
-              title={copyError ?? "Copy the full sha256 of the sanitized payload"}
+              title={copyError ?? t("taxonomy.copyHash")}
               aria-live="polite"
               onClick={() => void copyHash()}
             >
@@ -269,6 +273,7 @@ function TaxonomyBudget(props: {
   bucketFilter: ContextBucket | null;
   onBucketFilter(bucket: ContextBucket | null): void;
 }) {
+  const { language, t } = useI18n();
   const taxonomy = props.taxonomy;
   const metrics = taxonomy.cacheMetrics;
   const validation = taxonomy.reasoningValidation;
@@ -285,13 +290,13 @@ function TaxonomyBudget(props: {
   });
 
   return (
-    <section className="taxonomy-budget" aria-label="Context budget">
+    <section className="taxonomy-budget" aria-label={t("taxonomy.budgetAria")}>
       <div className="taxonomy-total">
-        <b className="taxonomy-total-value">{primary.toLocaleString()}</b>
+        <b className="taxonomy-total-value">{primary.toLocaleString(localeTag(language))}</b>
         <span className="taxonomy-total-label">{actualInput === undefined ? "estimated input tokens" : "actual input tokens"}</span>
         {actualInput !== undefined && (
           <em className="taxonomy-total-estimate">
-            est. {props.estimatedTotal.toLocaleString()}
+            est. {props.estimatedTotal.toLocaleString(localeTag(language))}
             {actualInput > 0 && ` · ${formatDelta(props.estimatedTotal, actualInput)}`}
           </em>
         )}
@@ -308,7 +313,7 @@ function TaxonomyBudget(props: {
               />
             ))}
           </div>
-          <ul className="taxonomy-legend" aria-label="Estimated context composition">
+          <ul className="taxonomy-legend" aria-label={t("taxonomy.compositionAria")}>
             {props.composition.map((entry) => (
               <li key={entry.bucket}>
                 <button
@@ -318,7 +323,7 @@ function TaxonomyBudget(props: {
                 >
                   <i style={{ background: bucketColor(entry.bucket) }} aria-hidden="true" />
                   <span className="taxonomy-legend-label">{entry.label}</span>
-                  <span className="taxonomy-legend-value">{entry.tokens.toLocaleString()}</span>
+                  <span className="taxonomy-legend-value">{entry.tokens.toLocaleString(localeTag(language))}</span>
                   <span className="taxonomy-legend-percent">{Math.round(entry.percent)}%</span>
                 </button>
               </li>
@@ -349,23 +354,23 @@ function TaxonomyBudget(props: {
       </div>
 
       {openChips.has("assembly") && (
-        <div className="taxonomy-status-detail" aria-label="Reconstructed context taxonomy warning">
+        <div className="taxonomy-status-detail" aria-label={t("taxonomy.reconstructedWarning")}>
           <strong>The exact provider payload was unavailable</strong>
           <span>This taxonomy was reassembled from what Jasmine sent, so some context parts may be missing.</span>
           {taxonomy.assemblyReason && <code>reason: {taxonomy.assemblyReason}</code>}
         </div>
       )}
       {openChips.has("cache") && metrics && (
-        <div className="taxonomy-status-detail" aria-label="Provider cache evidence">
-          <div className="taxonomy-kv"><span>Cache hit</span><b>{metrics.cacheHitTokens.toLocaleString()}</b></div>
-          <div className="taxonomy-kv"><span>Cache miss</span><b>{metrics.cacheMissTokens.toLocaleString()}</b></div>
-          <div className="taxonomy-kv"><span>Cache write</span><b>{metrics.cacheWriteTokens.toLocaleString()}</b></div>
-          <div className="taxonomy-kv"><span>Output</span><b>{metrics.outputTokens.toLocaleString()}</b></div>
+        <div className="taxonomy-status-detail" aria-label={t("taxonomy.cacheEvidence")}>
+          <div className="taxonomy-kv"><span>Cache hit</span><b>{metrics.cacheHitTokens.toLocaleString(localeTag(language))}</b></div>
+          <div className="taxonomy-kv"><span>Cache miss</span><b>{metrics.cacheMissTokens.toLocaleString(localeTag(language))}</b></div>
+          <div className="taxonomy-kv"><span>Cache write</span><b>{metrics.cacheWriteTokens.toLocaleString(localeTag(language))}</b></div>
+          <div className="taxonomy-kv"><span>Output</span><b>{metrics.outputTokens.toLocaleString(localeTag(language))}</b></div>
           <span>{metrics.note}</span>
         </div>
       )}
       {openChips.has("reasoning") && validation && (
-        <div className="taxonomy-status-detail" aria-label="Reasoning retention validation">
+        <div className="taxonomy-status-detail" aria-label={t("taxonomy.reasoningValidation")}>
           <strong>{policyLabel(validation.policyId)}</strong>
           <span>{validation.summary}</span>
           {validation.requiredCount > 0 && (
@@ -375,7 +380,7 @@ function TaxonomyBudget(props: {
         </div>
       )}
       {openChips.has("unclassified") && (
-        <div className="taxonomy-status-detail" aria-label="Unclassified provider payload warning">
+        <div className="taxonomy-status-detail" aria-label={t("taxonomy.unclassifiedWarning")}>
           <strong>No classifier rule matched these fields</strong>
           <span>They are kept with exact JSONPaths and source-relative order. Add a classifier rule if they carry model context.</span>
           <code>
@@ -395,6 +400,7 @@ function TaxonomyItemView(props: {
   onToggle(open: boolean): void;
   onTogglePart(partKey: string, open: boolean): void;
 }) {
+  const { language } = useI18n();
   const resolved = props.resolved;
   const single = resolved.single;
 
@@ -408,7 +414,7 @@ function TaxonomyItemView(props: {
       <summary className="taxonomy-item-head">
         <span className="taxonomy-chevron" aria-hidden="true"><ChevronRightIcon /></span>
         <span className="taxonomy-item-title" title={resolved.title}>{resolved.title}</span>
-        <span className="taxonomy-item-tokens">{resolved.tokenEstimate.toLocaleString()}</span>
+        <span className="taxonomy-item-tokens">{resolved.tokenEstimate.toLocaleString(localeTag(language))}</span>
       </summary>
       <div className="taxonomy-item-body">
         <div className="taxonomy-item-meta">
@@ -443,6 +449,7 @@ function TaxonomyItemView(props: {
 }
 
 function TaxonomyPartView(props: { part: ResolvedPart; open: boolean; onToggle(open: boolean): void }) {
+  const { language } = useI18n();
   const part = props.part;
   return (
     <details
@@ -455,7 +462,7 @@ function TaxonomyPartView(props: { part: ResolvedPart; open: boolean; onToggle(o
         <span className="taxonomy-chevron" aria-hidden="true"><ChevronRightIcon /></span>
         <code className="taxonomy-tag">{part.tag}</code>
         <span className="taxonomy-part-title" title={part.title}>{part.toolName ?? part.title}</span>
-        <span className="taxonomy-part-tokens">{part.tokenEstimate.toLocaleString()}</span>
+        <span className="taxonomy-part-tokens">{part.tokenEstimate.toLocaleString(localeTag(language))}</span>
       </summary>
       <div className="taxonomy-part-body">
         {(part.payloadPath || part.toolCallId) && (
@@ -491,6 +498,7 @@ function RenderedBody(props: { text: string; format: "text" | "markdown" | "json
 }
 
 function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
+  const { language, t } = useI18n();
   const [text, setText] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -547,7 +555,7 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
         <span className="taxonomy-raw-label">
           <strong>Sanitized raw payload</strong>
           <small>
-            {rawStateLabel(props.taxonomy.rawState)} · {(props.taxonomy.rawByteCount ?? 0).toLocaleString()} bytes
+            {rawStateLabel(props.taxonomy.rawState)} · {(props.taxonomy.rawByteCount ?? 0).toLocaleString(localeTag(language))} bytes
             {shape && shape.topLevelOrder.length > 0 ? ` · ${shape.topLevelOrder.join(" → ")}` : ""}
           </small>
         </span>
@@ -572,7 +580,7 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
           </div>
         )}
         {error && <p className="taxonomy-raw-error">{error}</p>}
-        {text && <ShikiCodeBlock code={text} language="json" kind="json" title="sanitized provider payload" />}
+        {text && <ShikiCodeBlock code={text} language="json" kind="json" title={t("taxonomy.sanitizedPayload")} />}
         {!done && props.taxonomy.rawState !== "unavailable" && (
           <Button className="taxonomy-load-more" size="sm" variant="quiet" loading={loading} onClick={() => void loadMore()}>
             {loading ? "Loading…" : "Load next 64 KiB"}
@@ -947,10 +955,10 @@ function formatDelta(estimate: number, actual: number): string {
   return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""}${Math.abs(rounded).toFixed(1)}%`;
 }
 
-function formatCapturedAt(value: string): string {
+function formatCapturedAt(value: string, language: AppLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return parsed.toLocaleTimeString(localeTag(language), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function validationStatusLabel(status: ContextReasoningValidation["status"]): string {

@@ -232,7 +232,7 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
       data-timeline-item-id={item.id}
       hidden={props.hidden}
       className={`timeline-output ${props.finalAnswer ? "final-answer" : ""}`}
-      aria-label="Assistant output"
+      aria-label={t("message.assistantOutput")}
     >
       <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
     </section>
