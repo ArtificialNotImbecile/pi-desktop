@@ -133,6 +133,14 @@
       {
         "from": "resources",
         "to": "jasmine-resources"
+      },
+      {
+        "from": "third_party",
+        "to": "third-party"
+      },
+      {
+        "from": "THIRD_PARTY_LICENSES.md",
+        "to": "THIRD_PARTY_LICENSES.md"
       }
     ],
     "win": {

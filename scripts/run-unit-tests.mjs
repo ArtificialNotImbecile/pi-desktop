@@ -55,6 +55,7 @@ const tasks = [
   { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
   { name: "unit-runner", steps: [["node", "--no-warnings", "tests/unit/unit-runner.mjs"]] },
   { name: "test-infrastructure", steps: [["node", "--no-warnings", "tests/unit/test-infrastructure.mjs"]] },
+  { name: "renderer-font-assets", steps: [["node", "--no-warnings", "tests/unit/renderer-font-assets.mjs"]] },
   { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
   {
     name: "context-capture",

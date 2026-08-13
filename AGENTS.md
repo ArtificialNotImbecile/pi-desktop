@@ -90,7 +90,9 @@ Land every change through a pull request; do not commit to `main` directly.
 1. Open the PR, then request a review by commenting `@codex review`.
 2. Fix what the review finds, push, and request another review.
 3. Repeat until a review reports no findings on the current head commit.
-4. Merge only when that clean review and every CI check are green.
+4. Once a review reports no findings on the current head commit and every CI check is green, report that the PR is ready to merge and leave the merge to the user by default.
+
+Do not merge a pull request unless the user explicitly asks the agent to merge that specific PR. When the user does explicitly request a merge, merge only after the clean review and every CI check are green.
 
 ### Reading Codex review results
 

@@ -349,9 +349,78 @@ test.describe("Jasmine message rendering", () => {
     await page.locator(".rich-composer-editor").fill("return markdown sample");
     await page.getByRole("button", { name: "Send" }).click();
 
-    const message = page.locator(".assistant-block").last();
-    await expect(message.locator(".markdown-heading")).toContainText("Markdown sample");
-    await expect(message.locator(".markdown-message p strong")).toContainText("bold");
+    const latestMessage = page.locator(".assistant-block").last();
+    await expect(latestMessage.locator(".markdown-heading")).toContainText("Markdown sample");
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
+    const message = page.locator(".assistant-block:not(.live-message)").last();
+    await expect(message.locator(".markdown-message p strong", { hasText: "bold" })).toHaveText("bold");
+    const fontSample = message.locator(".markdown-message p", { hasText: "33632" });
+    const boldNumber = fontSample.locator("strong", { hasText: "33632" });
+    await expect(fontSample).toContainText("中文回退保持正常");
+    await expect(boldNumber).toHaveText("33632");
+    const fontEvidence = await boldNumber.evaluate(async (node) => {
+      await document.fonts.ready;
+      const loadedFaces = await document.fonts.load('700 15px "Jasmine Inter"', "33632");
+      const style = getComputedStyle(node);
+      return {
+        family: style.fontFamily,
+        weight: style.fontWeight,
+        size: style.fontSize,
+        synthesis: style.fontSynthesis,
+        loadedFaces: loadedFaces.map((face) => ({
+          family: face.family,
+          style: face.style,
+          weight: face.weight,
+          status: face.status
+        }))
+      };
+    });
+    expect(fontEvidence.family).toMatch(/^"Jasmine Inter", ui-sans-serif, system-ui/);
+    expect(fontEvidence.family).toContain('"Segoe UI"');
+    expect(fontEvidence.weight).toBe("700");
+    expect(fontEvidence.size).toBe("15px");
+    expect(fontEvidence.synthesis.split(/\s+/)).not.toContain("weight");
+    expect(fontEvidence.loadedFaces).toContainEqual({
+      family: "Jasmine Inter",
+      style: "normal",
+      weight: "100 900",
+      status: "loaded"
+    });
+
+    let platformFontEvidence: Array<{ familyName: string; isCustomFont: boolean; glyphCount: number }> = [];
+    const cdp = await app.context().newCDPSession(page);
+    try {
+      await cdp.send("DOM.enable");
+      await cdp.send("CSS.enable");
+      await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+      const remote = await cdp.send("Runtime.evaluate", {
+        expression: `Array.from(document.querySelectorAll(".assistant-block .markdown-message p")).find((node) => node.textContent?.includes("33632"))`,
+        objectGroup: "jasmine-inter-proof"
+      });
+      expect(remote.exceptionDetails).toBeUndefined();
+      if (!remote.result.objectId) throw new Error("Bold-number font sample was not available to CDP.");
+      const { nodeId } = await cdp.send("DOM.requestNode", { objectId: remote.result.objectId });
+      const platformFonts = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+      platformFontEvidence = platformFonts.fonts.map((font) => ({
+        familyName: font.familyName,
+        isCustomFont: font.isCustomFont,
+        glyphCount: font.glyphCount
+      }));
+      expect(platformFonts.fonts.some((font) => font.isCustomFont && /Inter/i.test(font.familyName))).toBe(true);
+      expect(platformFonts.fonts.some((font) => !font.isCustomFont && font.glyphCount > 0)).toBe(true);
+      await cdp.send("Runtime.releaseObjectGroup", { objectGroup: "jasmine-inter-proof" });
+    } finally {
+      await cdp.detach();
+    }
+
+    const fontEvidenceDir = path.join(rootDir, "test-results", "ui-harness", "font");
+    await mkdir(fontEvidenceDir, { recursive: true });
+    await fontSample.screenshot({ path: path.join(fontEvidenceDir, "inter-bold-33632.png") });
+    await writeFile(
+      path.join(fontEvidenceDir, "inter-bold-33632.json"),
+      `${JSON.stringify({ computed: fontEvidence, platformFonts: platformFontEvidence }, null, 2)}\n`,
+      "utf8"
+    );
     await expect(message.locator(".markdown-message a")).toHaveAttribute("href", "https://example.com");
     await expect(message.locator(".markdown-message li")).toHaveCount(2);
     await expect(message.locator(".markdown-message li code")).toContainText("inline code");
