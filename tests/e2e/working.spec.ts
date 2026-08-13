@@ -97,6 +97,20 @@ test.describe("Working task center", () => {
         expect(box.bottom).toBeLessThanOrEqual(task.card.bottom + 1);
       }
     }
+    // A task that stops to ask a question keeps whatever was queued behind it,
+    // but the Running filter cannot show that task, so its tile must not
+    // advertise the queue.
+    await page.evaluate((threadId) => window.jasmine.queueChatMessage({
+      requestId: "working-e2e-3",
+      threadId,
+      mode: "followUp",
+      content: "queued behind the question",
+      attachments: []
+    }), setup.threads[2].id);
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items
+      .find((item) => item.requestId === "working-e2e-3")?.queueCount)).toBe(1);
+    await expect(page.locator(".working-tile").filter({ hasText: "Running" })).toContainText("No queued messages");
+
     const waitingDialog = page.getByRole("dialog").filter({ hasText: "Should this Working task continue?" });
     await expect(waitingDialog).toBeVisible();
     await waitingDialog.getByRole("radio", { name: /Continue/ }).click();

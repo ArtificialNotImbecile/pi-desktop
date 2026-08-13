@@ -46,7 +46,9 @@ export function WorkingPage(props: {
   const clearableCount = props.snapshot.items.filter((task) => TERMINAL_STATUSES.includes(task.status)).length;
   const waitingCount = groups.attention.filter((task) => task.status === "waiting_user").length;
   const failedCount = groups.attention.length - waitingCount;
-  const queuedCount = props.snapshot.items.reduce((total, task) => total + task.queueCount, 0);
+  // A waiting task keeps its queue, but the Running filter cannot show it, so
+  // counting it here would advertise work that pressing the tile hides.
+  const queuedCount = groups.progress.reduce((total, task) => total + task.queueCount, 0);
   const lastFinishedAt = groups.done.reduce<string | null>((latest, task) => (
     task.finishedAt && (!latest || task.finishedAt > latest) ? task.finishedAt : latest
   ), null);
