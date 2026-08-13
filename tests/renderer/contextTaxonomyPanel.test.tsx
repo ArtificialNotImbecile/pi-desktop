@@ -45,7 +45,11 @@ function fixtureItems(): ContextTaxonomyItem[] {
       preview: "You are Jasmine",
       text: "You are Jasmine",
       segments: [segment("System prompt", "system_prompt", 300), segment("Project context", "project_context", 200)],
-      parts: [part({ kind: "metadata", title: "Role", tokenEstimate: 1 }), part({ kind: "text", title: "Text", tokenEstimate: 499 })]
+      parts: [
+        part({ kind: "metadata", title: "Role", tokenEstimate: 1 }),
+        part({ kind: "text", title: "Text", tokenEstimate: 499 }),
+        part({ kind: "unclassified", title: "Unclassified: cache_control", tokenEstimate: 7, payloadPath: "$.messages[0].cache_control" })
+      ]
     },
     {
       order: 2,
@@ -219,7 +223,42 @@ describe("context taxonomy panel", () => {
 
     // Every bucket still adds up to the whole payload.
     const total = panel.text(".taxonomy-legend-value").reduce((sum, value) => sum + Number(value.replace(/,/g, "")), 0);
-    expect(total).toBe(1719);
+    expect(total).toBe(1727);
+  });
+
+  test("an instruction message keeps the wire fields its segments do not cover", () => {
+    const panel = renderPanel();
+    fireEvent.click(panel.button("Expand all"));
+
+    // Segments re-split the message's own text, so the `text` part is already
+    // represented -- but its siblings are not. Dropping them let the unknown
+    // chip name a path that selecting the Unknown legend could not reveal.
+    const system = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-item"))
+      .find((node) => node.querySelector(".taxonomy-item-title")?.textContent === "System prompt");
+    if (!system) throw new Error("System prompt item did not render.");
+
+    expect(Array.from(system.querySelectorAll(".taxonomy-tag")).map((node) => node.textContent))
+      .toEqual(["system_prompt", "project_context", "unclassified"]);
+    expect(system.querySelector(".taxonomy-part[open] .taxonomy-part-meta")?.textContent).toContain("$.messages[0].cache_control");
+    expect(system.querySelector(".taxonomy-item-meta")?.textContent).toContain("+1 envelope field");
+    // 300 + 200 segments, 7 unknown field, 1 folded role.
+    expect(system.querySelector(".taxonomy-item-tokens")?.textContent).toBe("508");
+
+    const unknownLegend = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-legend button"))
+      .find((node) => node.textContent?.includes("Unknown"));
+    fireEvent.click(unknownLegend!);
+    expect(panel.text(".taxonomy-item-title")).toEqual(["System prompt", "Other payload fields"]);
+  });
+
+  test("the filter reaches JSONPaths that only exist on a part", () => {
+    const panel = renderPanel();
+    const filter = panel.container.querySelector<HTMLInputElement>(".taxonomy-filter");
+    if (!filter) throw new Error("Filter input did not render.");
+
+    // The control says it filters paths, and a nested path is not visible while
+    // its item is collapsed, so it has to be in the index rather than the DOM.
+    fireEvent.change(filter, { target: { value: "$.messages[0].cache_control" } });
+    expect(panel.text(".taxonomy-item-title")).toEqual(["System prompt"]);
   });
 
   test("shows the actual input total against the estimate", () => {
@@ -227,14 +266,14 @@ describe("context taxonomy panel", () => {
 
     expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,800");
     expect(panel.container.querySelector(".taxonomy-total-label")?.textContent).toBe("actual input tokens");
-    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("est. 1,719");
-    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("4.5%");
+    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("est. 1,727");
+    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("4.1%");
   });
 
   test("falls back to the estimate when the provider reported no usage", () => {
     const panel = renderPanel(fixture({ cacheMetrics: undefined }));
 
-    expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,719");
+    expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,727");
     expect(panel.container.querySelector(".taxonomy-total-label")?.textContent).toBe("estimated input tokens");
     expect(panel.container.querySelector(".taxonomy-total-estimate")).toBeNull();
   });
@@ -341,10 +380,12 @@ describe("context taxonomy panel", () => {
       .find((node) => node.textContent?.includes("unknown field"));
     if (!chip) throw new Error("Unknown-field chip did not render.");
 
-    expect(chip.textContent).toBe("1 unknown field");
+    expect(chip.textContent).toBe("2 unknown fields");
     expect(chip.dataset.tone).toBe("bad");
     fireEvent.click(chip);
-    expect(panel.container.querySelector(".taxonomy-status-detail")?.textContent).toContain("$.stream_options");
+    const detail = panel.container.querySelector(".taxonomy-status-detail")?.textContent ?? "";
+    expect(detail).toContain("$.stream_options");
+    expect(detail).toContain("$.messages[0].cache_control");
   });
 
   test("a failed reasoning check opens the reasoning it is about", () => {

@@ -614,46 +614,61 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
   // a system prompt still breaks down into project context, skills and memory.
   const useSegments = (item.role === "system" || item.role === "developer") && segments.length > 1;
 
-  let resolvedParts: ResolvedPart[] = [];
+  const resolvedParts: ResolvedPart[] = [];
   let foldedTokens = 0;
   let foldedCount = 0;
 
+  const message = MESSAGE_KINDS.has(kind);
+  const resolvePart = (part: ContextTaxonomyPart): ResolvedPart => ({
+    key: `${key}:p${part.order}-${part.payloadPath ?? part.title}`,
+    // Sections that are not messages -- tool definitions, request options,
+    // unknown fields -- describe themselves with `metadata` parts. Reading
+    // those by part kind filed a whole tool catalogue under "Metadata", so
+    // their parts inherit the section's own bucket instead.
+    bucket: message ? bucketForPartKind(part.kind, kind) : bucketForKind(kind),
+    tag: part.kind,
+    title: part.title,
+    text: part.text,
+    format: part.format,
+    tokenEstimate: part.tokenEstimate,
+    payloadPath: part.payloadPath,
+    toolName: part.toolName,
+    toolCallId: part.toolCallId,
+    isReasoning: part.kind === "reasoning"
+  });
+
   if (useSegments) {
-    resolvedParts = segments.map((segment, index) => ({
-      key: `${key}:s${index}`,
-      bucket: bucketForKind(segment.kind),
-      tag: segment.kind,
-      title: segment.title,
-      text: segment.text,
-      format: looksLikeJson(segment.text) ? "json" : "markdown",
-      tokenEstimate: segment.tokenEstimate,
-      isReasoning: false
-    }));
-  } else if (parts.length > 0) {
-    const message = MESSAGE_KINDS.has(kind);
+    for (const [index, segment] of segments.entries()) {
+      resolvedParts.push({
+        key: `${key}:s${index}`,
+        bucket: bucketForKind(segment.kind),
+        tag: segment.kind,
+        title: segment.title,
+        text: segment.text,
+        format: looksLikeJson(segment.text) ? "json" : "markdown",
+        tokenEstimate: segment.tokenEstimate,
+        isReasoning: false
+      });
+    }
+    // The segments re-split this message's own text, so its `text` part is
+    // already on screen. Its sibling wire fields are not, and dropping them
+    // would let the unknown-field chip name a path the tree cannot show.
+    for (const part of parts) {
+      if (part.kind === "metadata") {
+        foldedTokens += part.tokenEstimate;
+        foldedCount += 1;
+      } else if (part.kind === "unclassified") {
+        resolvedParts.push(resolvePart(part));
+      }
+    }
+  } else {
     for (const part of parts) {
       if (message && part.kind === "metadata") {
         foldedTokens += part.tokenEstimate;
         foldedCount += 1;
         continue;
       }
-      resolvedParts.push({
-        key: `${key}:p${part.order}-${part.payloadPath ?? part.title}`,
-        // Sections that are not messages -- tool definitions, request options,
-        // unknown fields -- describe themselves with `metadata` parts. Reading
-        // those by part kind filed a whole tool catalogue under "Metadata", so
-        // their parts inherit the section's own bucket instead.
-        bucket: message ? bucketForPartKind(part.kind, kind) : bucketForKind(kind),
-        tag: part.kind,
-        title: part.title,
-        text: part.text,
-        format: part.format,
-        tokenEstimate: part.tokenEstimate,
-        payloadPath: part.payloadPath,
-        toolName: part.toolName,
-        toolCallId: part.toolCallId,
-        isReasoning: part.kind === "reasoning"
-      });
+      resolvedParts.push(resolvePart(part));
     }
   }
 
@@ -682,7 +697,11 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
     meta,
     path,
     buckets,
-    searchText: [title, item.label, item.role, item.payloadPath ?? item.source, kind, ...resolvedParts.map((part) => `${part.tag} ${part.title} ${part.toolName ?? ""}`)]
+    // The filter is labelled for items *and paths*, so a nested part path such
+    // as $.messages[0].content[1] has to match even though only the item's own
+    // path is on screen while the item is collapsed.
+    searchText: [title, item.label, item.role, item.payloadPath ?? item.source, kind, path,
+      ...resolvedParts.map((part) => `${part.tag} ${part.title} ${part.toolName ?? ""} ${part.payloadPath ?? ""}`)]
       .join(" ")
       .toLowerCase()
   };
