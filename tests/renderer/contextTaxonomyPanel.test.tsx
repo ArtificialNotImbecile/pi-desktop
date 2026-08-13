@@ -275,6 +275,44 @@ describe("context taxonomy panel", () => {
     expect(panel.text(".taxonomy-item-title")).toEqual(["System prompt", "Other payload fields"]);
   });
 
+  test("instruction segments replace only text and preserve classified non-text wire parts", () => {
+    const items = fixtureItems();
+    const instruction = items[0];
+    items[0] = {
+      ...instruction,
+      tokenEstimate: 520,
+      segments: [segment("System prompt", "system_prompt", 312), segment("Project context", "project_context", 208)],
+      parts: [
+        ...(instruction.parts ?? []),
+        part({
+          order: 4,
+          kind: "attachment",
+          title: "Attachment: requirements.md",
+          tokenEstimate: 20,
+          payloadPath: "$.messages[0].content[1]"
+        })
+      ]
+    };
+
+    const panel = renderPanel(fixture({ items }));
+    fireEvent.click(panel.button("Expand all"));
+
+    const system = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-item"))
+      .find((node) => node.querySelector(".taxonomy-item-title")?.textContent === "System prompt");
+    if (!system) throw new Error("System prompt item did not render.");
+
+    expect(Array.from(system.querySelectorAll(".taxonomy-tag")).map((node) => node.textContent))
+      .toEqual(["system_prompt", "project_context", "unclassified", "attachment"]);
+    expect(system.textContent).toContain("$.messages[0].content[1]");
+    expect(system.querySelector(".taxonomy-item-tokens")?.textContent).toBe("520");
+
+    const attachments = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-legend button"))
+      .find((node) => node.textContent?.startsWith("Attachments"));
+    expect(attachments?.textContent).toContain("20");
+    fireEvent.click(attachments!);
+    expect(panel.text(".taxonomy-item-title")).toEqual(["System prompt"]);
+  });
+
   test("the filter reaches JSONPaths that only exist on a part", () => {
     const panel = renderPanel();
     const filter = panel.container.querySelector<HTMLInputElement>(".taxonomy-filter");

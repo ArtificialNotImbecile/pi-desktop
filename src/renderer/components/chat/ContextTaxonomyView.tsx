@@ -647,12 +647,13 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
 
   if (useSegments) {
     // The classifier creates segments from `item.text`, and provider-message
-    // extraction builds that text from every wire part. Metadata and unknown
-    // sibling fields therefore already consume part of the segment estimate.
-    // Reserve their tokens before rendering semantic segments so keeping the
-    // wire rows does not inflate either the item total or the composition.
+    // extraction builds that text from every wire part. Semantic segments
+    // replace only the message's `text` part; metadata and every classified
+    // non-text sibling still need their exact wire row. Reserve all of those
+    // tokens before rendering the segments so preserving the rows does not
+    // inflate either the item total or the composition.
     const preservedWireTokens = parts
-      .filter((part) => part.kind === "metadata" || part.kind === "unclassified")
+      .filter((part) => part.kind !== "text")
       .reduce((total, part) => total + part.tokenEstimate, 0);
     const segmentTokens = allocateTokenBudget(
       segments.map((segment) => segment.tokenEstimate),
@@ -671,13 +672,13 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
       });
     }
     // The segments re-split this message's own text, so its `text` part is
-    // already on screen. Its sibling wire fields are not, and dropping them
-    // would let the unknown-field chip name a path the tree cannot show.
+    // already on screen. Every non-text sibling remains a distinct provider
+    // field whose kind and exact path would otherwise disappear from the tree.
     for (const part of parts) {
       if (part.kind === "metadata") {
         foldedTokens += part.tokenEstimate;
         foldedCount += 1;
-      } else if (part.kind === "unclassified") {
+      } else if (part.kind !== "text") {
         resolvedParts.push(resolvePart(part));
       }
     }
