@@ -198,14 +198,21 @@ function TaxonomyHeader(props: {
 }) {
   const taxonomy = props.taxonomy;
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const captures = props.captures ?? [];
   const approximate = taxonomy.source === "jasmine-assembly";
 
   const copyHash = async () => {
     if (!taxonomy.payloadHash) return;
-    await getBridge().writeClipboardText(taxonomy.payloadHash).catch(() => undefined);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
+    setCopyError(null);
+    try {
+      await getBridge().writeClipboardText(taxonomy.payloadHash);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch (cause) {
+      setCopied(false);
+      setCopyError(cause instanceof Error ? cause.message : String(cause));
+    }
   };
 
   return (
@@ -241,10 +248,11 @@ function TaxonomyHeader(props: {
             <button
               type="button"
               className="taxonomy-head-hash"
-              title="Copy the full sha256 of the sanitized payload"
+              title={copyError ?? "Copy the full sha256 of the sanitized payload"}
+              aria-live="polite"
               onClick={() => void copyHash()}
             >
-              {copied ? "copied" : taxonomy.payloadHash.slice(0, 12)}
+              {copied ? "copied" : copyError ? "copy failed" : taxonomy.payloadHash.slice(0, 12)}
             </button>
           </>
         )}
@@ -687,21 +695,22 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
   const partTokens = resolvedParts.reduce((total, part) => total + part.tokenEstimate, 0);
   const tokenEstimate = resolvedParts.length > 0 || foldedCount > 0 ? partTokens + foldedTokens : item.tokenEstimate;
 
+  const itemBucket = bucketForKind(kind);
   const only = resolvedParts.length === 1 ? resolvedParts[0] : null;
-  const single = only && only.bucket === bucketForKind(kind) && !only.toolName && !only.toolCallId ? only : null;
+  const single = only && only.bucket === itemBucket && !only.toolName && !only.toolCallId ? only : null;
 
   const meta: string[] = [item.role];
   if (foldedCount > 0) meta.push(`+${foldedCount} envelope ${foldedCount === 1 ? "field" : "fields"}`);
   const path = single?.payloadPath ?? item.payloadPath ?? item.source;
 
-  const buckets = new Set<ContextBucket>([bucketForKind(kind), ...resolvedParts.map((part) => part.bucket)]);
+  const buckets = new Set(attributedBucketTokens(itemBucket, resolvedParts, tokenEstimate).keys());
   const title = itemTitle(item, kind);
 
   return {
     key,
     item,
     title,
-    bucket: bucketForKind(kind),
+    bucket: itemBucket,
     parts: resolvedParts,
     single,
     foldedCount,
@@ -737,21 +746,38 @@ function allocateTokenBudget(weights: number[], budget: number): number[] {
   return allocated;
 }
 
+function attributedBucketTokens(
+  itemBucket: ContextBucket,
+  parts: ResolvedPart[],
+  tokenEstimate: number
+): Map<ContextBucket, number> {
+  const values = new Map<ContextBucket, number>();
+  const add = (bucket: ContextBucket, tokens: number) => {
+    if (tokens <= 0) return;
+    values.set(bucket, (values.get(bucket) ?? 0) + tokens);
+  };
+
+  if (parts.length === 0) {
+    add(itemBucket, tokenEstimate);
+    return values;
+  }
+
+  const partTokens = parts.reduce((total, part) => total + part.tokenEstimate, 0);
+  for (const part of parts) add(part.bucket, part.tokenEstimate);
+  // Envelope fields are folded out of the tree but still sent to the provider.
+  if (tokenEstimate > partTokens) add("options", tokenEstimate - partTokens);
+  return values;
+}
+
 export function buildComposition(groups: ResolvedGroup[], total: number): CompositionItem[] {
   const values = new Map<ContextBucket, number>();
   const add = (bucket: ContextBucket, tokens: number) => values.set(bucket, (values.get(bucket) ?? 0) + tokens);
 
   for (const group of groups) {
     for (const resolved of group.items) {
-      if (resolved.parts.length === 0) {
-        add(resolved.bucket, resolved.tokenEstimate);
-        continue;
+      for (const [bucket, tokens] of attributedBucketTokens(resolved.bucket, resolved.parts, resolved.tokenEstimate)) {
+        add(bucket, tokens);
       }
-      const partTokens = resolved.parts.reduce((sum, part) => sum + part.tokenEstimate, 0);
-      for (const part of resolved.parts) add(part.bucket, part.tokenEstimate);
-      // Envelope fields are folded out of the tree but still sent to the
-      // provider, so the buckets have to keep adding up to the whole payload.
-      if (resolved.tokenEstimate > partTokens) add("options", resolved.tokenEstimate - partTokens);
     }
   }
 

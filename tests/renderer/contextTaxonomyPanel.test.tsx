@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyPart, ContextTaxonomySegment } from "../../src/shared/ipc";
 import { TaxonomyView } from "../../src/renderer/components/chat/ContextTaxonomyView";
 import { installFakeBridge } from "./fakeBridge";
@@ -226,6 +226,28 @@ describe("context taxonomy panel", () => {
     expect(total).toBe(1719);
   });
 
+  test("legend filters reveal the items that contributed each composition bucket", () => {
+    const panel = renderPanel();
+    const legendButton = (label: string) => {
+      const match = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-legend button"))
+        .find((node) => node.textContent?.startsWith(label));
+      if (!match) throw new Error(`No legend button starting with "${label}".`);
+      return match;
+    };
+
+    // The assistant item contains reasoning and a tool call, but no text
+    // tokens. Its base message kind must not make it appear under Text.
+    fireEvent.click(legendButton("Text"));
+    expect(panel.text(".taxonomy-item-title")).not.toContain("Assistant turn");
+    expect(panel.text(".taxonomy-item-title")).toContain("Current user prompt");
+
+    fireEvent.click(legendButton("Text"));
+    fireEvent.click(legendButton("Options & metadata"));
+    // Its folded role token is attributed to Options & metadata, so this
+    // filter must reveal the same item that contributed that token.
+    expect(panel.text(".taxonomy-item-title")).toContain("Assistant turn");
+  });
+
   test("an instruction message keeps the wire fields its segments do not cover", () => {
     const panel = renderPanel();
     fireEvent.click(panel.button("Expand all"));
@@ -438,6 +460,18 @@ describe("context taxonomy panel", () => {
 
     fireEvent.click(switcher[0]);
     expect(onSelectCapture).toHaveBeenCalledWith("c1");
+  });
+
+  test("reports a payload-hash clipboard failure instead of claiming success", async () => {
+    const panel = renderPanel();
+    const hash = panel.container.querySelector<HTMLElement>(".taxonomy-head-hash");
+    if (!hash) throw new Error("Payload hash button did not render.");
+
+    // The strict renderer bridge intentionally has no clipboard method, so the
+    // real click exercises the user-visible rejection path.
+    fireEvent.click(hash);
+    await waitFor(() => expect(hash.textContent).toBe("copy failed"));
+    expect(hash.getAttribute("title")).toContain("Fake desktop bridge has no");
   });
 
   test("a single capture shows no switcher", () => {
