@@ -90,7 +90,7 @@ const osLocale = [];
 const literalAttributes = [];
 const literalControlNames = [];
 const copyAttributes = new Set(["aria-label", "title", "placeholder"]);
-const namedControlElements = new Set(["button", "Button", "MenuItem"]);
+const namedControlElements = new Set(["a", "button", "label", "option", "Button", "MenuItem", "summary"]);
 const literalAllowlist = new Set([
   // The catalogue deliberately presents its primitive samples in one fixed
   // language so it can double as a visual/test fixture rather than app copy.
@@ -138,27 +138,27 @@ assert.deepEqual(literalControlNames, [], "Renderer control names must come from
 // the three AST shapes that prior review rounds showed could silently escape.
 const guardFixture = ts.createSourceFile(
   "i18n-guard-fixture.tsx",
-  "const control = <button aria-label={`Preview ${name}`}>{active ? 'Stop' : 'Start'}</button>; new Date().toLocaleString(undefined);",
+  "const control = <button aria-label={`Preview ${name}`}>{active ? 'Stop' : 'Start'}</button>; const detail = <details><summary>Raw payload</summary></details>; new Date().toLocaleString(undefined);",
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TSX
 );
-const fixtureSignals = { attribute: "", control: "", locale: false };
+const fixtureSignals = { attribute: "", controls: [], locale: false };
 const inspectFixture = (node) => {
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
     && node.expression.name.text === "toLocaleString") {
     fixtureSignals.locale = usesImplicitLocale(node.arguments[0]);
   }
   if (ts.isJsxAttribute(node) && node.name.text === "aria-label") fixtureSignals.attribute = staticAttributeCopy(node.initializer);
-  if (ts.isJsxElement(node) && node.openingElement.tagName.getText(guardFixture) === "button") {
+  if (ts.isJsxElement(node) && namedControlElements.has(node.openingElement.tagName.getText(guardFixture))) {
     const copy = [];
     for (const child of node.children) collectControlCopy(child, copy, guardFixture, namedControlElements);
-    fixtureSignals.control = copy.join(" ").replace(/\s+/g, " ").trim();
+    fixtureSignals.controls.push(copy.join(" ").replace(/\s+/g, " ").trim());
   }
   ts.forEachChild(node, inspectFixture);
 };
 inspectFixture(guardFixture);
-assert.deepEqual(fixtureSignals, { attribute: "Preview {…}", control: "Stop Start", locale: true });
+assert.deepEqual(fixtureSignals, { attribute: "Preview {…}", controls: ["Stop Start", "Raw payload"], locale: true });
 
 // 3. The copy main puts in front of the user goes through the dictionary.
 const registry = await readFile(path.join(rootDir, "src/main/services/workingRegistry.ts"), "utf8");

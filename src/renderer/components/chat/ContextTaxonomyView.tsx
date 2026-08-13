@@ -9,7 +9,7 @@ import type {
   ContextTaxonomyPartKind
 } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
-import { localeTag, useI18n } from "../../i18n";
+import { localeTag, translate, useI18n } from "../../i18n";
 import { looksLikeJson, ShikiCodeBlock } from "../code";
 import { ChevronRightIcon } from "../icons/Icons";
 import { Button } from "../ui";
@@ -99,9 +99,9 @@ export function TaxonomyView(props: {
   const validation = taxonomy.reasoningValidation;
   const reasoningFailed = validation?.status === "fail";
 
-  const groups = useMemo(() => buildGroups(taxonomy), [taxonomy]);
+  const groups = useMemo(() => buildGroups(taxonomy, t), [taxonomy, t]);
   const estimatedTotal = useMemo(() => groups.reduce((total, group) => total + group.tokenEstimate, 0), [groups]);
-  const composition = useMemo(() => buildComposition(groups, estimatedTotal), [groups, estimatedTotal]);
+  const composition = useMemo(() => buildComposition(groups, estimatedTotal, t), [groups, estimatedTotal, t]);
   const unclassifiedPaths = useMemo(() => collectUnclassifiedPaths(taxonomy), [taxonomy]);
 
   const [query, setQuery] = useState("");
@@ -376,7 +376,7 @@ function TaxonomyBudget(props: {
           {validation.requiredCount > 0 && (
             <div className="taxonomy-kv"><span>Required blocks present</span><b>{validation.sentCount}/{validation.requiredCount}</b></div>
           )}
-          {validation.policySource && <a href={validation.policySource} target="_blank" rel="noreferrer">Provider policy</a>}
+          {validation.policySource && <a href={validation.policySource} target="_blank" rel="noreferrer">{t("taxonomy.providerPolicy")}</a>}
         </div>
       )}
       {openChips.has("unclassified") && (
@@ -553,9 +553,12 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
       <summary className="taxonomy-raw-head">
         <span className="taxonomy-chevron" aria-hidden="true"><ChevronRightIcon /></span>
         <span className="taxonomy-raw-label">
-          <strong>Sanitized raw payload</strong>
+          <strong>{t("taxonomy.rawPayload")}</strong>
           <small>
-            {rawStateLabel(props.taxonomy.rawState)} · {(props.taxonomy.rawByteCount ?? 0).toLocaleString(localeTag(language))} bytes
+            {t("taxonomy.rawSummary", {
+              state: rawStateLabel(props.taxonomy.rawState, t),
+              bytes: (props.taxonomy.rawByteCount ?? 0).toLocaleString(localeTag(language))
+            })}
             {shape && shape.topLevelOrder.length > 0 ? ` · ${shape.topLevelOrder.join(" → ")}` : ""}
           </small>
         </span>
@@ -596,13 +599,13 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
 
 /* ---------------------------------------------------------------- model --- */
 
-const GROUP_ORDER: Array<{ id: string; label: string; kinds: ContextTaxonomyKind[] }> = [
-  { id: "instructions", label: "Instructions", kinds: ["system_prompt", "developer_instructions", "project_context", "skill_manifest", "skill_instructions", "prompt_template", "memory"] },
-  { id: "conversation", label: "Conversation", kinds: ["conversation_history", "provider_message", "attachment"] },
-  { id: "prompt", label: "Current prompt", kinds: ["current_user_prompt"] },
-  { id: "tools", label: "Tools", kinds: ["tool_definition"] },
-  { id: "options", label: "Request options", kinds: ["provider_options"] },
-  { id: "unknown", label: "Unknown fields", kinds: ["unclassified", "unknown", "raw_payload"] }
+const GROUP_ORDER: Array<{ id: "instructions" | "conversation" | "prompt" | "tools" | "options" | "unknown"; kinds: ContextTaxonomyKind[] }> = [
+  { id: "instructions", kinds: ["system_prompt", "developer_instructions", "project_context", "skill_manifest", "skill_instructions", "prompt_template", "memory"] },
+  { id: "conversation", kinds: ["conversation_history", "provider_message", "attachment"] },
+  { id: "prompt", kinds: ["current_user_prompt"] },
+  { id: "tools", kinds: ["tool_definition"] },
+  { id: "options", kinds: ["provider_options"] },
+  { id: "unknown", kinds: ["unclassified", "unknown", "raw_payload"] }
 ];
 
 /** Kinds whose parts describe message content rather than a payload section. */
@@ -610,20 +613,20 @@ const MESSAGE_KINDS = new Set<ContextTaxonomyKind>([
   "system_prompt", "developer_instructions", "conversation_history", "current_user_prompt", "attachment", "provider_message"
 ]);
 
-export function buildGroups(taxonomy: ContextTaxonomy): ResolvedGroup[] {
-  const resolved = taxonomy.items.map((item) => resolveItem(item));
+export function buildGroups(taxonomy: ContextTaxonomy, t: ReturnType<typeof useI18n>["t"] = translate("en")): ResolvedGroup[] {
+  const resolved = taxonomy.items.map((item) => resolveItem(item, t));
   return GROUP_ORDER.map((group) => {
     const items = resolved.filter((entry) => group.kinds.includes(entry.item.kind ?? fallbackKind(entry.item.role)));
     return {
       id: group.id,
-      label: group.label,
+      label: t(`taxonomy.group.${group.id}`),
       items,
       tokenEstimate: items.reduce((total, entry) => total + entry.tokenEstimate, 0)
     };
   }).filter((group) => group.items.length > 0);
 }
 
-function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
+function resolveItem(item: ContextTaxonomyItem, t: ReturnType<typeof useI18n>["t"]): ResolvedItem {
   const kind = item.kind ?? fallbackKind(item.role);
   const key = `${item.order}-${item.payloadPath ?? item.source}`;
   const segments = item.segments ?? [];
@@ -715,7 +718,7 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
   const path = single?.payloadPath ?? item.payloadPath ?? item.source;
 
   const buckets = new Set(attributedBucketTokens(itemBucket, resolvedParts, tokenEstimate, foldedCount > 0).keys());
-  const title = itemTitle(item, kind);
+  const title = itemTitle(item, kind, t);
 
   return {
     key,
@@ -781,7 +784,11 @@ function attributedBucketTokens(
   return values;
 }
 
-export function buildComposition(groups: ResolvedGroup[], total: number): CompositionItem[] {
+export function buildComposition(
+  groups: ResolvedGroup[],
+  total: number,
+  t: ReturnType<typeof useI18n>["t"] = translate("en")
+): CompositionItem[] {
   const values = new Map<ContextBucket, number>();
   const add = (bucket: ContextBucket, tokens: number) => values.set(bucket, (values.get(bucket) ?? 0) + tokens);
 
@@ -800,7 +807,7 @@ export function buildComposition(groups: ResolvedGroup[], total: number): Compos
 
   return Array.from(values.entries())
     .filter(([, tokens]) => tokens > 0)
-    .map(([bucket, tokens]) => ({ bucket, label: bucketLabel(bucket), tokens, percent: total ? tokens / total * 100 : 0 }))
+    .map(([bucket, tokens]) => ({ bucket, label: bucketLabel(bucket, t), tokens, percent: total ? tokens / total * 100 : 0 }))
     .sort((left, right) => right.tokens - left.tokens);
 }
 
@@ -863,19 +870,15 @@ function collectUnclassifiedPaths(taxonomy: ContextTaxonomy): string[] {
 
 /* ---------------------------------------------------------------- labels --- */
 
-function itemTitle(item: ContextTaxonomyItem, kind: ContextTaxonomyKind): string {
+function itemTitle(item: ContextTaxonomyItem, kind: ContextTaxonomyKind, t: ReturnType<typeof useI18n>["t"]): string {
   if (kind === "tool_definition") return item.label.replace(/^Tool definitions?:?\s*/i, "");
-  if (kind === "provider_options") return "Request options";
-  if (kind === "unclassified" && item.role === "unclassified" && item.payloadPath === "$") return "Other payload fields";
-  if (kind === "current_user_prompt") return "Current user prompt";
-  if (kind === "system_prompt") return "System prompt";
-  if (kind === "developer_instructions") return "Developer instructions";
-  if (kind === "conversation_history" || kind === "provider_message") return `${capitalize(item.role)} turn`;
+  if (kind === "provider_options") return t("taxonomy.item.requestOptions");
+  if (kind === "unclassified" && item.role === "unclassified" && item.payloadPath === "$") return t("taxonomy.item.otherPayloadFields");
+  if (kind === "current_user_prompt") return t("taxonomy.item.currentUserPrompt");
+  if (kind === "system_prompt") return t("taxonomy.item.systemPrompt");
+  if (kind === "developer_instructions") return t("taxonomy.item.developerInstructions");
+  if (kind === "conversation_history" || kind === "provider_message") return t("taxonomy.item.turn", { role: roleLabel(item.role, t) });
   return item.label || item.role;
-}
-
-function capitalize(value: string): string {
-  return value.length > 0 ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }
 
 function fallbackKind(role: string): ContextTaxonomyKind {
@@ -926,19 +929,18 @@ function bucketForPartKind(kind: ContextTaxonomyPartKind, itemKind: ContextTaxon
   }
 }
 
-function bucketLabel(bucket: ContextBucket): string {
-  const labels: Record<ContextBucket, string> = {
-    instructions: "Instructions",
-    text: "Text",
-    reasoning: "Reasoning",
-    tool_call: "Tool calls",
-    tool_definition: "Tool definitions",
-    tool_result: "Tool results",
-    attachment: "Attachments",
-    options: "Options & metadata",
-    unknown: "Unknown"
-  };
-  return labels[bucket];
+function roleLabel(role: string, t: ReturnType<typeof useI18n>["t"]): string {
+  if (role === "user" || role === "assistant" || role === "tool" || role === "system" || role === "developer") {
+    return t(`taxonomy.role.${role}`);
+  }
+  return role;
+}
+
+function bucketLabel(bucket: ContextBucket, t: ReturnType<typeof useI18n>["t"]): string {
+  if (bucket === "tool_call") return t("taxonomy.bucket.toolCall");
+  if (bucket === "tool_definition") return t("taxonomy.bucket.toolDefinition");
+  if (bucket === "tool_result") return t("taxonomy.bucket.toolResult");
+  return t(`taxonomy.bucket.${bucket}`);
 }
 
 function bucketColor(bucket: ContextBucket): string {
@@ -985,8 +987,8 @@ function policyLabel(policy: ContextReasoningValidation["policyId"]): string {
   } as const)[policy];
 }
 
-function rawStateLabel(state: ContextTaxonomy["rawState"]): string {
-  if (state === "legacy_truncated") return "truncated";
-  if (state === "unavailable") return "unavailable";
-  return "complete";
+function rawStateLabel(state: ContextTaxonomy["rawState"], t: ReturnType<typeof useI18n>["t"]): string {
+  if (state === "legacy_truncated") return t("taxonomy.rawState.truncated");
+  if (state === "unavailable") return t("taxonomy.rawState.unavailable");
+  return t("taxonomy.rawState.complete");
 }

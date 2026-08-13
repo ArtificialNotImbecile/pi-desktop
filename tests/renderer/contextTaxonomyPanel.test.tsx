@@ -538,6 +538,11 @@ describe("context taxonomy panel", () => {
     expect(panel.button("推理 已丢弃")).toBeDefined();
     expect(panel.button("2 个未知字段")).toBeDefined();
     expect(panel.button("复制全部")).toBeDefined();
+    expect(panel.text(".taxonomy-group-name")).toEqual(["说明", "对话", "当前提示", "工具", "请求选项", "未知字段"]);
+    expect(panel.text(".taxonomy-legend-label")).toContain("工具调用");
+    expect(panel.text(".taxonomy-item-title")).toContain("当前用户提示");
+    expect(panel.container.querySelector(".taxonomy-raw-head")?.textContent).toContain("脱敏后的原始载荷");
+    expect(panel.container.querySelector(".taxonomy-raw-head")?.textContent).toContain("完整 · 4,096 字节");
 
     const hash = panel.container.querySelector<HTMLElement>(".taxonomy-head-hash");
     if (!hash) throw new Error("Payload hash button did not render.");

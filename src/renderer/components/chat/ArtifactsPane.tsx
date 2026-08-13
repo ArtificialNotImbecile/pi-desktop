@@ -184,7 +184,7 @@ function CaptureGroup(props: {
   const { language, t } = useI18n();
   const capture = props.capture;
   const counts = statusCounts(capture.changes.map((change) => change.status));
-  const alert = captureAlert(capture);
+  const alert = captureAlert(capture, t);
   const absoluteTime = formatTimestamp(capture.completedAt, language);
   return (
     <section className="artifact-capture" aria-label={t("artifacts.capturedAt", { time: absoluteTime })}>
@@ -537,13 +537,18 @@ function byteWeight(change: FileChangeSummary): ReactNode {
   return <span className={delta > 0 ? "added" : "deleted"}>{delta > 0 ? "+" : "−"}{formatBytes(Math.abs(delta))}</span>;
 }
 
-function captureAlert(capture: FileChangeCaptureSummary): CaptureAlert | null {
+export function captureAlert(capture: FileChangeCaptureSummary, t: ReturnType<typeof useI18n>["t"]): CaptureAlert | null {
   const coverage = capture.coverage;
-  if (coverage.status === "unsupported") return { tone: "danger", label: "Tracking unavailable" };
-  if (coverage.status === "failed") return { tone: "danger", label: "Tracking failed" };
-  if (coverage.status === "partial") return { tone: "warning", label: "Partial coverage" };
-  if (coverage.trackingMode === "managed-tools-only" && coverage.bashInvoked) return { tone: "warning", label: "Shell not tracked" };
-  if (capture.warnings.length > 0) return { tone: "warning", label: `${capture.warnings.length} ${capture.warnings.length === 1 ? "warning" : "warnings"}` };
+  if (coverage.status === "unsupported") return { tone: "danger", label: t("artifacts.coverage.unavailable") };
+  if (coverage.status === "failed") return { tone: "danger", label: t("artifacts.coverage.failed") };
+  if (coverage.status === "partial") return { tone: "warning", label: t("artifacts.coverage.partial") };
+  if (coverage.trackingMode === "managed-tools-only" && coverage.bashInvoked) return { tone: "warning", label: t("artifacts.coverage.shellNotTracked") };
+  if (capture.warnings.length > 0) {
+    return {
+      tone: "warning",
+      label: t(capture.warnings.length === 1 ? "artifacts.coverage.warning" : "artifacts.coverage.warnings", { count: capture.warnings.length })
+    };
+  }
   return null;
 }
 
