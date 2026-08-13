@@ -100,6 +100,7 @@ export type RuntimeOptions = {
 
 export async function generateAssistantReply(request: RuntimeChatRequest, provider: RuntimeProviderConfig, options: RuntimeOptions = {}): Promise<AssistantReply> {
   const parsed = chatSendRequestSchema.parse(request);
+  const captureContextTaxonomy = parsed.captureContextTaxonomy === true;
   const startedAt = Date.now();
   assertSupportedAttachments(parsed.messages, request.attachments ?? [], parsed.content, provider);
   const piShell = resolvePiShellRuntime(request.terminalShellPath);
@@ -178,14 +179,16 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         elapsedMs: Date.now() - startedAt,
         timeline: stoppedTimeline,
         webSearchUsed: [],
-        contextTaxonomy: buildAssemblyTaxonomy({
-          provider,
-          systemPrompt: fallbackSystemPrompt,
-          messages: request.messages,
-          content: parsed.content,
-          attachments: request.attachments ?? [],
-          reason: "mock"
-        }),
+        ...(captureContextTaxonomy ? {
+          contextTaxonomy: buildAssemblyTaxonomy({
+            provider,
+            systemPrompt: fallbackSystemPrompt,
+            messages: request.messages,
+            content: parsed.content,
+            attachments: request.attachments ?? [],
+            reason: "mock"
+          })
+        } : {}),
         generatedMessages: [{
           role: "assistant",
           content: stoppedContent,
@@ -194,20 +197,19 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }]
       };
     }
-    const structuredTaxonomy = lastUserText.toLowerCase().includes("structured taxonomy")
+    const structuredTaxonomy = captureContextTaxonomy && lastUserText.toLowerCase().includes("structured taxonomy")
       ? mockStructuredTaxonomy(provider, lastUserText.toLowerCase().includes("unclassified taxonomy"))
       : null;
-    const mockTaxonomy = structuredTaxonomy ?? buildAssemblyTaxonomy({
-      provider,
-      systemPrompt: fallbackSystemPrompt,
-      messages: request.messages,
-      content: parsed.content,
-      attachments: request.attachments ?? [],
-      reason: "mock"
-    });
-    const mockTaxonomies = structuredTaxonomy
-      ? [1, 2].map((index) => ({ ...structuredTaxonomy, providerRequest: { index, count: 2, taskIndex: 1, policy: "task-capture" as const } }))
-      : [mockTaxonomy];
+    const mockTaxonomy = captureContextTaxonomy
+      ? structuredTaxonomy ?? buildAssemblyTaxonomy({
+          provider,
+          systemPrompt: fallbackSystemPrompt,
+          messages: request.messages,
+          content: parsed.content,
+          attachments: request.attachments ?? [],
+          reason: "mock"
+        })
+      : null;
     return {
       content,
       model: provider.modelId,
@@ -217,8 +219,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         reasoningEffort: parsed.reasoningEffort
       }),
       webSearchUsed: [],
-      contextTaxonomy: mockTaxonomies.at(-1),
-      contextTaxonomies: mockTaxonomies,
+      ...(mockTaxonomy ? { contextTaxonomy: mockTaxonomy, contextTaxonomies: [mockTaxonomy] } : {}),
       fileChangeCaptures,
       generatedMessages: mockQueue.generatedMessages
     };
@@ -258,9 +259,14 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     currentMessageId: request.currentMessageId,
     branchBeforePromptEntryId: request.branchBeforePromptEntryId,
     onSessionEntriesLinked: request.onSessionEntriesLinked,
-    onContextTaxonomy: (taxonomy) => {
-      capturedTaxonomies.push(taxonomy);
-    },
+    onContextTaxonomy: captureContextTaxonomy
+      ? (taxonomy) => {
+          // Taxonomy is a live debug probe. A tool loop can issue many provider
+          // requests, but only the newest payload is useful once the loop moves
+          // on; retaining every intermediate payload caused unbounded growth.
+          capturedTaxonomies[0] = taxonomy;
+        }
+      : undefined,
     fileChangeTrackingMode: request.fileChangeTrackingMode ?? "managed-tools-only",
     fileChangeWatchRoot: request.permissionProjectRoot ?? cwd,
     onFileChanges: (capture) => {
@@ -271,12 +277,12 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   });
 
   const normalizedResult = normalizeEmptyAssistantResult(result, provider, request.reasoningEffort);
-  if (capturedTaxonomies.length === 0) {
+  if (captureContextTaxonomy && capturedTaxonomies.length === 0) {
     console.warn("[context-taxonomy] Falling back to Jasmine assembly taxonomy because no Pi provider payload capture was emitted.");
   }
 
-  const scopedTaxonomies = groupProviderRequestCaptures(capturedTaxonomies);
-  const fallbackTaxonomy = capturedTaxonomies.length === 0
+  const scopedTaxonomies = captureContextTaxonomy ? groupProviderRequestCaptures(capturedTaxonomies) : [];
+  const fallbackTaxonomy = captureContextTaxonomy && capturedTaxonomies.length === 0
     ? buildAssemblyTaxonomy({
         provider,
         systemPrompt: fallbackSystemPrompt,
@@ -293,8 +299,10 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     elapsedMs: Date.now() - startedAt,
     timeline: normalizedResult.timeline,
     webSearchUsed: result.webSearchUsed,
-    contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
-    contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : [],
+    ...(captureContextTaxonomy ? {
+      contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
+      contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : []
+    } : {}),
     fileChangeCaptures: capturedFileChanges,
     generatedMessages: result.generatedMessages
   };

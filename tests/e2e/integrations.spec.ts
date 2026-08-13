@@ -77,6 +77,8 @@ test.describe("Jasmine integrations", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator(".skill-menu")).toBeHidden();
 
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await expect(page.locator(".panel-empty")).toContainText("No captured context taxonomy yet");
     await textarea.fill("slow response use skill for this answer");
     await page.getByRole("button", { name: "Send" }).click();
     const inlineSkillUser = page.locator(".user-message-wrap").last();
@@ -100,7 +102,6 @@ test.describe("Jasmine integrations", () => {
       (window as typeof window & { __JASMINE_INLINE_SKILL_USER_NODE__?: Element }).__JASMINE_INLINE_SKILL_USER_NODE__
       === Array.from(document.querySelectorAll(".user-message-wrap")).at(-1)
     ))).toBe(true);
-    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
     const inlinePromptTaxonomy = page.locator(".taxonomy-item", { hasText: "Current user prompt" }).last();
     await expect(inlinePromptTaxonomy).toContainText("Explicit User Selected Skills");
     await expect(inlinePromptTaxonomy).toContainText("When this skill is active");

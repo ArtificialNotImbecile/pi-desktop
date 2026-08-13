@@ -151,9 +151,9 @@ export function ChatRightPanel(props: {
                 />
               ) : tab.mode === "artifacts" ? (
                 <ArtifactsPane threadId={props.activeThread?.id ?? null} messages={props.messages} />
-              ) : (
+              ) : props.activeTabId === tab.id && !props.collapsed ? (
                 <ContextTaxonomyPane threadId={props.activeThread?.id ?? null} messages={props.messages} />
-              )}
+              ) : null}
             </section>
           ))}
         </aside>

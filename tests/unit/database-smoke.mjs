@@ -545,8 +545,30 @@ try {
     assert.deepEqual(contextCaptures.listLatestTaskContextCaptures(legacyDb, "legacy-thread").map((capture) => capture.id), [completeCaptureId]);
     const compressedBytes = legacyDb.prepare("SELECT length(raw_payload_gzip) AS bytes FROM context_captures WHERE id = ?").get(completeCaptureId).bytes;
     assert.ok(compressedBytes < Buffer.byteLength(completeRaw, "utf8") / 4, "repeated raw payload should be gzip compressed");
-    legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'complete-capture-message'").run();
-    assert.equal(contextCaptures.getContextCapture(legacyDb, completeCaptureId), null, "capture should cascade with its message");
+    legacyDb.prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, created_at, timeline_json)
+      VALUES ('latest-capture-message', 'legacy-thread', 'assistant', 'new answer', ?, '[]')
+    `).run(timestamp);
+    const latestCaptureId = contextCaptures.addContextCapture(legacyDb, {
+      threadId: "legacy-thread",
+      messageId: "latest-capture-message",
+      runId: "latest-capture-run",
+      taxonomy: {
+        capturedAt: "2026-02-15T10:11:13.000Z",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        source: "provider-payload",
+        providerRequest: { index: 1, count: 1, taskIndex: 1, policy: "task-capture" },
+        rawPayload: JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "latest" }] }),
+        payloadSchemaVersion: 7,
+        items: []
+      }
+    });
+    assert.equal(contextCaptures.getContextCapture(legacyDb, completeCaptureId), null, "older debug capture should be replaced");
+    assert.deepEqual(contextCaptures.listLatestTaskContextCaptures(legacyDb, "legacy-thread").map((capture) => capture.id), [latestCaptureId]);
+    assert.equal(legacyDb.prepare("SELECT COUNT(*) AS count FROM context_captures WHERE thread_id = 'legacy-thread'").get().count, 1);
+    legacyDb.prepare("DELETE FROM chat_messages WHERE id = 'latest-capture-message'").run();
+    assert.equal(contextCaptures.getContextCapture(legacyDb, latestCaptureId), null, "capture should cascade with its message");
 
     legacyDb.prepare(`
       INSERT INTO chat_messages (id, thread_id, run_id, role, content, created_at, timeline_json)

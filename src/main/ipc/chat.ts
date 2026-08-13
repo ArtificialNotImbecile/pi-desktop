@@ -900,16 +900,11 @@ function persistRuntimeGeneratedMessages(
       assistantMessages.push(lastAssistantMessage);
       persistedMessages.push(lastAssistantMessage);
     }
-    const captures = input.reply.contextTaxonomies?.length
-      ? input.reply.contextTaxonomies
-      : input.reply.contextTaxonomy
-        ? [input.reply.contextTaxonomy]
-        : [];
-    for (const taxonomy of captures) {
+    const taxonomy = input.reply.contextTaxonomies?.at(-1) ?? input.reply.contextTaxonomy;
+    if (taxonomy) {
       const taskIndex = taxonomy.providerRequest?.taskIndex ?? 1;
       const message = assistantMessages[Math.min(Math.max(0, taskIndex - 1), assistantMessages.length - 1)] ?? lastAssistantMessage;
-      if (!message) continue;
-      db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
+      if (message) db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
     }
     persistFileChangeCaptures(db, {
       threadId: input.threadId,

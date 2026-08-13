@@ -839,6 +839,7 @@ export type ChatSendRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
@@ -863,6 +864,7 @@ export type ChatRetryRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   messageId?: string;
 };
@@ -883,6 +885,7 @@ export type ChatEditRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
