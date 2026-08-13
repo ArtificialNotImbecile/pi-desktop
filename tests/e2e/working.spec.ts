@@ -70,6 +70,11 @@ test.describe("Working task center", () => {
     expect(failedRunEvidence.messages.some((message) => message.content.includes("filesystem changes were captured"))).toBe(false);
     await expect(page.locator(".working-group:not(.attention) .working-task.status-running")).toHaveCount(3);
     await expect(page.locator(".sidebar-feature-row").filter({ hasText: "Working" })).toContainText("4");
+    await expect(page.locator(".working-headline")).toContainText("need you");
+    // Nothing has finished yet, so the Done group renders nothing at all rather
+    // than a placeholder telling you so.
+    await expect(page.locator(".working-group")).toHaveCount(2);
+    await expect(page.locator(".working-group-empty")).toHaveCount(0);
 
     const taskGeometry = await page.locator(".working-task").evaluateAll((rows) => rows.map((row) => {
       const card = row.getBoundingClientRect();
@@ -84,7 +89,7 @@ test.describe("Working task center", () => {
       };
     }));
     for (const task of taskGeometry) {
-      expect(task.height).toBeGreaterThanOrEqual(72);
+      expect(task.height).toBeGreaterThanOrEqual(48);
       for (const box of task.content) {
         expect(box.top).toBeGreaterThanOrEqual(task.card.top - 1);
         expect(box.left).toBeGreaterThanOrEqual(task.card.left - 1);
@@ -97,6 +102,18 @@ test.describe("Working task center", () => {
     await waitingDialog.getByRole("radio", { name: /Continue/ }).click();
     await waitingDialog.getByRole("button", { name: /Submit/ }).click();
     await expect(page.locator(".working-task.status-waiting_user")).toHaveCount(0, { timeout: 5_000 });
+
+    // The summary counts are the filter: pressing one narrows the list to those
+    // tasks, pressing it again restores the whole inbox.
+    const attentionTile = page.getByRole("button", { name: /Needs you/ });
+    await attentionTile.click();
+    await expect(attentionTile).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".working-group")).toHaveCount(1);
+    await expect(page.locator(".working-task")).toHaveCount(1);
+    await expect(page.locator(".working-task.status-failed")).toHaveCount(1);
+    await attentionTile.click();
+    await expect(page.locator(".working-task")).toHaveCount(5);
+
     const screenshotDir = path.join(rootDir, "test-results", "ui-harness", "e2e");
     await mkdir(screenshotDir, { recursive: true });
     await page.screenshot({ path: path.join(screenshotDir, "working-task-layout.png") });

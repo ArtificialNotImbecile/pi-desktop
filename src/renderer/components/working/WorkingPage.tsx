@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc";
 import { StopIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { Button, EmptyState } from "../ui";
 import { useI18n } from "../../i18n";
 
 const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stopping"];
+const ATTENTION_STATUSES: WorkingTaskStatus[] = ["waiting_user", "failed"];
+const DONE_STATUSES: WorkingTaskStatus[] = ["completed", "cancelled", "interrupted"];
+const CLEARABLE_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelled", "interrupted"];
+// Finished runs are history: they stay one click away instead of pushing the
+// tasks that still need a decision off the first screen.
+const DONE_PREVIEW_COUNT = 5;
+
+type WorkingFilter = "all" | "attention" | "running" | "done";
 
 export function WorkingPage(props: {
   snapshot: WorkingSnapshot;
@@ -12,13 +20,16 @@ export function WorkingPage(props: {
   onOpen(task: WorkingTask): void;
   onStop(requestId: string): void;
   onClearCompleted(): void;
+  onNewChat(): void;
 }) {
   const { t } = useI18n();
   const [now, setNow] = useState(Date.now());
+  const [filter, setFilter] = useState<WorkingFilter>("all");
+  const [showAllDone, setShowAllDone] = useState(false);
   const groups = useMemo(() => ({
-    attention: props.snapshot.items.filter((task) => task.status === "waiting_user" || task.status === "failed"),
+    attention: props.snapshot.items.filter((task) => ATTENTION_STATUSES.includes(task.status)),
     progress: props.snapshot.items.filter((task) => task.status === "running" || task.status === "stopping"),
-    recent: props.snapshot.items.filter((task) => task.status === "completed" || task.status === "cancelled" || task.status === "interrupted")
+    done: props.snapshot.items.filter((task) => DONE_STATUSES.includes(task.status))
   }), [props.snapshot.items]);
 
   useEffect(() => {
@@ -28,16 +39,28 @@ export function WorkingPage(props: {
   }, [props.snapshot.activeCount]);
 
   const empty = props.snapshot.items.length === 0;
-  const clearableCount = props.snapshot.items.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).length;
+  const clearableCount = props.snapshot.items.filter((task) => CLEARABLE_STATUSES.includes(task.status)).length;
+  const waitingCount = groups.attention.filter((task) => task.status === "waiting_user").length;
+  const failedCount = groups.attention.length - waitingCount;
+  const queuedCount = props.snapshot.items.reduce((total, task) => total + task.queueCount, 0);
+  const lastFinishedAt = groups.done.reduce<string | null>((latest, task) => (
+    task.finishedAt && (!latest || task.finishedAt > latest) ? task.finishedAt : latest
+  ), null);
+  const visible = {
+    attention: filter === "all" || filter === "attention" ? groups.attention : [],
+    progress: filter === "all" || filter === "running" ? groups.progress : [],
+    done: filter === "all" || filter === "done" ? groups.done : []
+  };
+  const nothingVisible = visible.attention.length === 0 && visible.progress.length === 0 && visible.done.length === 0;
+
   return (
     <section className="working-page" aria-label={t("working.title")}>
       <header className="working-header">
         <div className="working-title-group">
-          <span className="working-title-icon"><WorkingIcon /></span>
-          <div>
-            <h1>{t("working.title")}</h1>
-            <p>{t("working.subtitle")}</p>
-          </div>
+          <h1>{t("working.title")}</h1>
+          <p className={groups.attention.length > 0 ? "working-headline attention" : "working-headline"}>
+            {headline(groups.progress.length, groups.attention.length, t)}
+          </p>
         </div>
         <Button
           size="sm"
@@ -54,16 +77,95 @@ export function WorkingPage(props: {
         {props.loading && empty ? (
           <div className="working-loading" role="status"><div /><div /><div /></div>
         ) : empty ? (
-          <EmptyState title={t("working.empty.title")} subtitle={t("working.empty.description")} />
+          <EmptyState
+            icon={<WorkingIcon />}
+            title={t("working.empty.title")}
+            subtitle={t("working.empty.description")}
+            action={<Button size="sm" variant="primary" onClick={props.onNewChat}>{t("working.empty.action")}</Button>}
+          />
         ) : (
-          <div className="working-groups">
-            <WorkingGroup title={t("working.group.attention")} tone="attention" tasks={groups.attention} now={now} onOpen={props.onOpen} onStop={props.onStop} />
-            <WorkingGroup title={t("working.group.progress")} tasks={groups.progress} now={now} onOpen={props.onOpen} onStop={props.onStop} />
-            <WorkingGroup title={t("working.group.recent")} tasks={groups.recent} now={now} onOpen={props.onOpen} onStop={props.onStop} />
+          <div className="working-column">
+            <div className="working-summary" role="group" aria-label={t("working.filter.label")}>
+              <WorkingFilterTile
+                filter="attention"
+                tone="attention"
+                active={filter === "attention"}
+                label={t("working.filter.attention")}
+                count={groups.attention.length}
+                note={groups.attention.length === 0
+                  ? t("working.filter.note.attentionIdle")
+                  : t("working.filter.note.attention", { waiting: waitingCount, failed: failedCount })}
+                onSelect={setFilter}
+              />
+              <WorkingFilterTile
+                filter="running"
+                active={filter === "running"}
+                label={t("working.filter.running")}
+                count={groups.progress.length}
+                note={queuedCount === 0
+                  ? t("working.filter.note.runningIdle")
+                  : t("working.filter.note.running", { count: queuedCount })}
+                onSelect={setFilter}
+              />
+              <WorkingFilterTile
+                filter="done"
+                active={filter === "done"}
+                label={t("working.filter.done")}
+                count={groups.done.length}
+                note={lastFinishedAt
+                  ? t("working.filter.note.done", { time: formatClock(lastFinishedAt) })
+                  : t("working.filter.note.doneIdle")}
+                onSelect={setFilter}
+              />
+            </div>
+
+            {nothingVisible ? <p className="working-group-empty">{t("working.group.empty")}</p> : (
+              <div className="working-groups">
+                <WorkingGroup title={t("working.group.attention")} tone="attention" tasks={visible.attention} now={now} onOpen={props.onOpen} onStop={props.onStop} />
+                <WorkingGroup title={t("working.group.progress")} tasks={visible.progress} now={now} onOpen={props.onOpen} onStop={props.onStop} />
+                <WorkingGroup
+                  title={t("working.group.recent")}
+                  tasks={showAllDone ? visible.done : visible.done.slice(0, DONE_PREVIEW_COUNT)}
+                  now={now}
+                  onOpen={props.onOpen}
+                  onStop={props.onStop}
+                  action={visible.done.length > DONE_PREVIEW_COUNT ? (
+                    <Button className="working-group-link" size="sm" variant="quiet" onClick={() => setShowAllDone((shown) => !shown)}>
+                      {showAllDone ? t("working.showLess") : t("working.showAll", { count: visible.done.length })}
+                    </Button>
+                  ) : null}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+function WorkingFilterTile(props: {
+  filter: WorkingFilter;
+  tone?: "attention";
+  active: boolean;
+  label: string;
+  count: number;
+  note: string;
+  onSelect(filter: WorkingFilter): void;
+}) {
+  const highlight = props.tone === "attention" && props.count > 0;
+  return (
+    <button
+      className={`working-tile ${props.active ? "active" : ""} ${highlight ? "attention" : ""}`}
+      type="button"
+      aria-pressed={props.active}
+      // Pressing the active tile is the way back to the unfiltered list.
+      onClick={() => props.onSelect(props.active ? "all" : props.filter)}
+    >
+      <span className="working-tile-label">{props.label}</span>
+      <span className="working-tile-count">{props.count}</span>
+      <span className="working-tile-note">{props.note}</span>
+    </button>
   );
 }
 
@@ -72,51 +174,68 @@ function WorkingGroup(props: {
   tone?: "attention";
   tasks: WorkingTask[];
   now: number;
+  action?: ReactNode;
   onOpen(task: WorkingTask): void;
   onStop(requestId: string): void;
 }) {
   const { t } = useI18n();
+  // An empty group is not news; it renders nothing rather than a placeholder.
+  if (props.tasks.length === 0) return null;
   return (
     <section className={`working-group ${props.tone ?? ""}`}>
       <div className="working-group-heading">
         <h2>{props.title}</h2>
         <span>{props.tasks.length}</span>
+        {props.action ? <div className="working-group-action">{props.action}</div> : null}
       </div>
-      {props.tasks.length === 0 ? <p className="working-group-empty">{t("working.group.empty")}</p> : (
-        <div className="working-task-list">
-          {props.tasks.map((task) => (
-            <article className={`working-task status-${task.status} ${task.unread ? "unread" : ""}`} data-request-id={task.requestId} key={task.requestId}>
-              <Button className="working-task-main" variant="ghost" onClick={() => props.onOpen(task)}>
-                <span className="working-task-status-dot" aria-hidden="true" />
-                <span className="working-task-copy">
-                  <span className="working-task-title">{task.threadTitle}</span>
+      <div className="working-task-list">
+        {props.tasks.map((task) => (
+          <article className={`working-task status-${task.status} ${task.unread ? "unread" : ""}`} data-request-id={task.requestId} key={task.requestId}>
+            <Button className="working-task-main" variant="ghost" onClick={() => props.onOpen(task)}>
+              <span className="working-task-glyph" aria-hidden="true">
+                <span className="working-task-status-dot" />
+              </span>
+              <span className="working-task-copy">
+                <span className="working-task-title">{task.threadTitle}</span>
+                <span className="working-task-detail">
+                  {terminalLabel(task.status, t) ? <span className="working-task-status-label">{terminalLabel(task.status, t)}</span> : null}
+                  {detailText(task, t) ? <span className="working-task-activity">{detailText(task, t)}</span> : null}
                   <span className="working-task-meta">{task.projectName ?? t("working.noProject")}</span>
-                  <span className="working-task-activity">{statusLabel(task.status, t)} · {task.activity}</span>
                 </span>
-                <span className="working-task-aside">
-                  <time>{formatTaskTime(task, props.now)}</time>
-                  {task.queueCount > 0 ? <span>{t("working.queued", { count: task.queueCount })}</span> : null}
-                  {task.unread ? <span className="working-unread">{t("working.unread")}</span> : null}
-                </span>
+              </span>
+              <span className="working-task-aside">
+                {task.queueCount > 0 ? <span className="working-chip">{t("working.queued", { count: task.queueCount })}</span> : null}
+                {task.unread ? <span className="working-unread">{t("working.unread")}</span> : null}
+                <time dateTime={task.finishedAt ?? task.startedAt}>{formatTaskTime(task, props.now)}</time>
+              </span>
+            </Button>
+            {ACTIVE_STATUSES.includes(task.status) ? (
+              <Button
+                className="working-stop"
+                size="sm"
+                variant="quiet"
+                leftIcon={<StopIcon />}
+                disabled={task.status === "stopping"}
+                onClick={() => props.onStop(task.requestId)}
+              >
+                {task.status === "stopping" ? t("working.stopping") : t("working.stop")}
               </Button>
-              {ACTIVE_STATUSES.includes(task.status) ? (
-                <Button
-                  className="working-stop"
-                  size="sm"
-                  variant="quiet"
-                  leftIcon={<StopIcon />}
-                  disabled={task.status === "stopping"}
-                  onClick={() => props.onStop(task.requestId)}
-                >
-                  {task.status === "stopping" ? t("working.stopping") : t("working.stop")}
-                </Button>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      )}
+            ) : null}
+            {task.status === "running" ? <span className="working-task-progress" aria-hidden="true"><i /></span> : null}
+          </article>
+        ))}
+      </div>
     </section>
   );
+}
+
+// The old subtitle explained the page every time you opened it. This says what
+// is true right now instead.
+function headline(runningCount: number, attentionCount: number, t: ReturnType<typeof useI18n>["t"]): string {
+  const parts: string[] = [];
+  if (runningCount > 0) parts.push(t("working.headline.running", { count: runningCount }));
+  if (attentionCount > 0) parts.push(t("working.headline.attention", { count: attentionCount }));
+  return parts.length > 0 ? parts.join(" · ") : t("working.headline.idle");
 }
 
 function statusLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>["t"]): string {
@@ -129,10 +248,43 @@ function statusLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>["t
   return t("working.status.interrupted");
 }
 
+// A green tick already says "completed"; only the outcomes a colour alone
+// cannot spell out keep a written label.
+function terminalLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>["t"]): string | null {
+  if (status === "failed" || status === "cancelled" || status === "interrupted") return statusLabel(status, t);
+  return null;
+}
+
+// The status is carried by the glyph and the label above, so this line spends
+// itself on what the run is actually doing -- or, once it is over, how long it
+// took. Activity text that only repeats the status is dropped.
+function detailText(task: WorkingTask, t: ReturnType<typeof useI18n>["t"]): string {
+  const activity = task.activity.trim();
+  const repeatsStatus = activity.toLowerCase() === statusLabel(task.status, t).toLowerCase();
+  if (!DONE_STATUSES.includes(task.status) && task.status !== "failed") return activity;
+  if (activity && !repeatsStatus) return activity;
+  const duration = taskDuration(task);
+  return duration ? t("working.took", { duration }) : "";
+}
+
+function taskDuration(task: WorkingTask): string | null {
+  if (!task.finishedAt) return null;
+  const elapsed = new Date(task.finishedAt).getTime() - new Date(task.startedAt).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return null;
+  return formatElapsed(elapsed);
+}
+
+function formatClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
 function formatTaskTime(task: WorkingTask, now: number): string {
-  if (task.finishedAt) return new Date(task.finishedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const elapsed = Math.max(0, now - new Date(task.startedAt).getTime());
-  const seconds = Math.floor(elapsed / 1_000);
+  if (task.finishedAt) return formatClock(task.finishedAt);
+  return formatElapsed(Math.max(0, now - new Date(task.startedAt).getTime()));
+}
+
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1_000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;

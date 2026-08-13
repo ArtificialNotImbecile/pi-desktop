@@ -634,6 +634,7 @@ function App(props: { initialAppSettings: AppSettings }) {
           onOpen={(task) => void openWorkingTask(task)}
           onStop={(requestId) => void working.stop(requestId)}
           onClearCompleted={() => void working.clearCompleted()}
+          onNewChat={() => void startNewChat(activeScopeProjectId)}
         />
       ) : <ChatPage
         activeThread={threads.activeThread}
