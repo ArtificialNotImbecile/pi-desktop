@@ -33,9 +33,9 @@ const startupTimingGrep = /Jasmine cold start/;
 // visibility transitions. The default off-screen mode does not need OS focus.
 const focusSensitiveGrep = /Spotlight quick launcher/;
 
-// A handful of specs assert real desktop-session behavior -- window maximize,
-// minimize, restore, window drags, and pointer-driven panel resizes -- which a
-// CI runner does not provide. They fail there on Linux and macOS alike, in
+// Four cases across three specs assert real desktop-session behavior -- window
+// maximize/minimize, model-menu geometry, terminal resize/session, and Working
+// notification behavior -- which a CI runner does not provide. They fail there on Linux and macOS alike, in
 // partly different sets, while passing on a developer machine, so CI skips them
 // via JASMINE_E2E_SKIP_DESKTOP_SESSION and a local run still covers them.
 // Project-level grepInvert wins over the CLI flag, so the skip has to be woven

@@ -83,70 +83,14 @@ test.describe("Jasmine providers and models", () => {
     await page.locator(".settings-subnav button").first().click();
     await page.locator(".model-options-button").first().click();
     await expect(page.locator(".model-dialog")).toBeVisible();
+    const dialogBox = await page.locator(".model-dialog").boundingBox();
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    expect(dialogBox).not.toBeNull();
+    expect(Math.abs(((dialogBox?.x ?? 0) + (dialogBox?.width ?? 0) / 2) - viewport.width / 2)).toBeLessThanOrEqual(12);
+    expect(Math.abs(((dialogBox?.y ?? 0) + (dialogBox?.height ?? 0) / 2) - viewport.height / 2)).toBeLessThanOrEqual(12);
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.locator(".model-dialog")).toBeHidden();
-  });
 
-  test("model menu stays bounded and scrollable with many models", async () => {
-    const { page } = harness;
-
-    await page.evaluate(async () => {
-      await window.jasmine.fetchProviderModels("moonshot");
-    });
-    await page.reload();
-
-    await page.locator(".model-pill").click();
-    const menu = page.locator(".model-menu");
-    await expect(menu).toBeVisible();
-
-    const menuBox = await menu.boundingBox();
-    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
-    expect(menuBox).not.toBeNull();
-    expect(viewport).not.toBeNull();
-    expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height - 4);
-    expect(menuBox?.height ?? 0).toBeGreaterThan(170);
-
-    const modelList = page.locator(".model-menu-models");
-    await expect.poll(() => modelList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
-    await expect(page.locator(".model-menu-actions")).toBeVisible();
-    await modelList.evaluate((node) => { node.scrollTop = node.scrollHeight; });
-    await expect(menu.getByRole("button", { name: /kimi-k2\.24/ })).toBeVisible();
-  });
-
-  test("provider enabled toggle responds to pointer and keyboard", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-actions button.primary")).toHaveText("Saved");
-    await expect(page.locator(".settings-actions button.primary")).toBeDisabled();
-
-    const providerEnabledSwitch = page.getByRole("switch", { name: "Provider enabled" });
-    await page.getByText("Enabled", { exact: true }).click();
-    await expect(providerEnabledSwitch.locator(".ui-switch-label")).toHaveCount(0);
-    await expect(providerEnabledSwitch).toHaveAttribute("aria-checked", "true");
-    await providerEnabledSwitch.focus();
-    await page.keyboard.press("Space");
-    await expect(providerEnabledSwitch).toHaveAttribute("aria-checked", "false");
-    await page.keyboard.press("Space");
-    await expect(providerEnabledSwitch).toHaveAttribute("aria-checked", "true");
-  });
-
-  test("provider saves env-var key and tests the connection", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
-    await page.locator("#provider-base-url").fill("https://api.deepseek.com/v1");
-    await expect(page.getByRole("group", { name: "API key input type" }).getByRole("button", { name: "Env var" })).toHaveClass(/active/);
-    await page.locator("#provider-api-key-ref").fill("DEEPSEEK_API_KEY");
-    await saveProvider(page);
-    await testProvider(page);
-  });
-
-  test("provider rows keep their label column and fill their control column in both API key modes", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
     for (const mode of ["Env var", "Direct key"]) {
       await page.getByRole("group", { name: "API key input type" }).getByRole("button", { name: mode, exact: true }).click();
       const geometry = await page.evaluate(() => {
@@ -156,22 +100,40 @@ test.describe("Jasmine providers and models", () => {
         if (!copy || !control) return null;
         return { copy: copy.getBoundingClientRect().width, gap: control.getBoundingClientRect().left - copy.getBoundingClientRect().right };
       });
-      // The control column used to size to its content, and the longer Direct key
-      // hint then took the whole row: the label column collapsed to 0 and spilled
-      // its description across the control.
       expect(geometry).not.toBeNull();
       expect(geometry!.copy, `${mode} label column collapsed`).toBeGreaterThan(80);
       expect(geometry!.gap, `${mode} label overlaps its control`).toBeGreaterThanOrEqual(0);
     }
-
-    // A content-sized column also left inputs at the width an input asks for by
-    // default, which truncated the base URL.
     const baseUrl = await page.locator("#provider-base-url").evaluate((node: HTMLInputElement) => ({
       truncated: node.scrollWidth > node.clientWidth,
       width: node.getBoundingClientRect().width
     }));
     expect(baseUrl.truncated).toBe(false);
     expect(baseUrl.width).toBeGreaterThan(200);
+    // Use the real ProviderSettingsPanel -> App -> useProviders -> preload
+    // path. Calling the bridge directly would miss a broken provider id or a
+    // missing renderer state update while still making the model menu pass.
+    await page.locator(".settings-subnav").getByRole("button", { name: /Moonshot|Kimi/ }).click();
+    await page.getByRole("button", { name: "Fetch", exact: true }).click();
+    await expect(page.locator(".model-list")).toContainText("kimi-k2.24");
+    await page.getByRole("button", { name: "Close settings" }).click();
+
+    await page.locator(".model-pill").click();
+    const menu = page.locator(".model-menu");
+    await expect(menu).toBeVisible();
+
+    const boundedMenuBox = await menu.boundingBox();
+    const menuViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    expect(boundedMenuBox).not.toBeNull();
+    expect(menuViewport).not.toBeNull();
+    expect((boundedMenuBox?.y ?? 0) + (boundedMenuBox?.height ?? 0)).toBeLessThanOrEqual(menuViewport.height - 4);
+    expect(boundedMenuBox?.height ?? 0).toBeGreaterThan(170);
+
+    const modelList = page.locator(".model-menu-models");
+    await expect.poll(() => modelList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+    await expect(page.locator(".model-menu-actions")).toBeVisible();
+    await modelList.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+    await expect(menu.getByRole("button", { name: /kimi-k2\.24/ })).toBeVisible();
   });
 
   test("provider direct key saves masked and persists", async () => {
@@ -195,49 +157,21 @@ test.describe("Jasmine providers and models", () => {
       return provider?.apiKeyRef ?? "";
     })).toBe("key:\u2022\u2022\u2022\u20221234");
     await testProvider(page);
+
+    // Direct keys and environment references share the form, but resolve
+    // through different main-process secret paths. Exercise both without a
+    // second Electron launch.
+    await page.getByRole("button", { name: "Env var" }).click();
+    await page.locator("#provider-api-key-ref").fill("DEEPSEEK_API_KEY");
+    await saveProvider(page);
+    await expect.poll(() => page.evaluate(async () => {
+      const provider = (await window.jasmine.listProviders()).find((item) => item.id === "deepseek");
+      return provider?.apiKeyRef ?? "";
+    })).toBe("env:DEEPSEEK_API_KEY");
+    await testProvider(page);
   });
 
-  test("provider fetch models populates the default model", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
-    await page.locator(".models-header").getByRole("button", { name: "Fetch" }).click();
-    await expect(page.locator(".model-list .model-row")).toHaveCount(2);
-    await expect(page.locator("#provider-default-model")).toContainText("deepseek-v4-pro");
-    await expect(page.locator(".model-search input")).toBeVisible();
-  });
-
-  test("switch provider/model from compact menu and send through selected model @smoke", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-
-    await page.locator(".model-pill").click();
-    await page.locator(".model-provider-group", { hasText: "Moonshot Kimi" }).getByRole("button", { name: /kimi-k2\.6/ }).click();
-    await expect(page.locator(".model-pill")).toContainText("kimi-k2.6");
-
-    await page.locator(".rich-composer-editor").fill("provider switch check");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("kimi-k2.6");
-  });
-
-  test("assistant model labels stay bound to the model used for each response", async () => {
-    const { page } = harness;
-
-    await expect(page.locator(".assistant-block").first().locator(".message-run-line")).toContainText("deepseek-v4-flash");
-    await page.locator(".model-pill").click();
-    await page.locator(".model-provider-group", { hasText: "Moonshot Kimi" }).getByRole("button", { name: /kimi-k2\.6/ }).click();
-    await expect(page.locator(".model-pill")).toContainText("kimi-k2.6");
-    await expect(page.locator(".assistant-block").first().locator(".message-run-line")).toContainText("deepseek-v4-flash");
-
-    await page.locator(".rich-composer-editor").fill("provider switch history label");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".assistant-block").first().locator(".message-run-line")).toContainText("deepseek-v4-flash");
-    await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("kimi-k2.6");
-  });
-
-  test("running response model label stays bound while composer model changes", async () => {
+  test("model labels stay bound while the composer switches models @smoke", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 
@@ -261,36 +195,11 @@ test.describe("Jasmine providers and models", () => {
 
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.", { timeout: 10_000 });
     await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("deepseek-v4-flash");
-  });
 
-  test("providers section shows the configured provider card", async () => {
-    const { page } = harness;
-
-    await openSettings(page, "Providers");
-    await expect(page.locator(".settings-panel")).toHaveClass(/has-subnav/);
-    await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
-    await expect(page.locator(".provider-card h3")).toHaveText("DeepSeek");
-    await expect(page.locator(".settings-detail")).not.toContainText("Configure the model backend used by Jasmine chat");
-  });
-
-  test("model options validates provider JSON inline", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
-    const firstModelOptions = page.locator(".model-options-button").first();
-    await firstModelOptions.click();
-    const dialogBox = await page.locator(".model-dialog").boundingBox();
-    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
-    expect(dialogBox).not.toBeNull();
-    expect(Math.abs(((dialogBox?.x ?? 0) + (dialogBox?.width ?? 0) / 2) - viewport.width / 2)).toBeLessThanOrEqual(12);
-    expect(Math.abs(((dialogBox?.y ?? 0) + (dialogBox?.height ?? 0) / 2) - viewport.height / 2)).toBeLessThanOrEqual(12);
-
-    const jsonField = page.locator(".provider-json-field textarea");
-    await jsonField.fill("{ invalid");
-    await page.locator(".model-dialog-actions").getByRole("button", { name: "Save" }).click();
-
-    await expect(page.locator("#provider-options-error")).toHaveText("Provider options must be valid JSON.");
-    await expect(page.locator(".model-dialog")).toBeVisible();
-    await expect(jsonField).toHaveAttribute("aria-invalid", "true");
+    await page.locator(".rich-composer-editor").fill("provider switch history label");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
+    await expect(page.locator(".assistant-block").first().locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("kimi-k2.6");
   });
 });

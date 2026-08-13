@@ -18,7 +18,6 @@ import {
   expectModelMenuAnchored,
   expectNoPurpleThemeColors,
   expectSettingsSaved,
-  expectSurfaceInViewport,
   expectToolbarHasNoOverlap,
   launchJasmine,
   messageJumpMarkAlignment,
@@ -95,18 +94,8 @@ test.describe("Jasmine threads and projects", () => {
     await expect(page.getByRole("button", { name: "New chat empty" })).toHaveCount(1);
   });
 
-  test("automatic title fallback keeps the original user message", async () => {
-    const { page } = harness;
-
-    await page.getByRole("button", { name: "New chat" }).first().click();
-    await page.locator(".rich-composer-editor").fill("来玩成语接龙");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.getByRole("button", { name: "来玩成语接龙 2" })).toBeVisible();
-  });
-
-  test("local folder projects create scoped and unscoped chats without row side effects", async () => {
-    const { page } = harness;
+  test("local folder projects create scoped and unscoped chats, drive project runtimes, and remove safely", async ({}, testInfo) => {
+    let { page } = harness;
 
     await expect(page.locator(".sidebar-section-heading", { hasText: "Projects" })).toBeVisible();
     await page.getByRole("button", { name: "Open Folder..." }).first().click();
@@ -161,20 +150,8 @@ test.describe("Jasmine threads and projects", () => {
     await expect.poll(projectThreadCount).toBe(1);
     await page.locator(".side-top").getByRole("button", { name: "New chat" }).click();
     await expect.poll(projectThreadCount).toBe(1);
-  });
 
-  test("local folder projects drive file search, runtime cwd, terminal cwd, and safe removal", async ({}, testInfo) => {
-    let { page } = harness;
-
-    await page.getByRole("button", { name: "Open Folder..." }).first().click();
     await expect(page.locator(".project-row", { hasText: "local-project" })).toBeVisible();
-    const project = await page.evaluate(async () => {
-      const projects = await window.jasmine.listProjects();
-      const project = projects.find((item) => item.name === "local-project");
-      if (!project) throw new Error("local-project was not created.");
-      return project;
-    });
-    const projectRow = page.locator(".project-row", { hasText: "local-project" }).first();
     await projectRow.hover();
     await projectRow.getByRole("button", { name: "New chat in local-project" }).click();
     await expect.poll(() => navigationPath(page)).toContain(`/projects/${encodeURIComponent(project.id)}/chat/`);
@@ -228,25 +205,6 @@ test.describe("Jasmine threads and projects", () => {
       return threads.find((thread) => thread.title.includes("project cwd check")) ?? null;
     });
     expect(movedThread?.projectId).toBeNull();
-  });
-
-  test("draft hydration does not overwrite immediate typing after switching chats in a populated sidebar", async () => {
-    const { page } = harness;
-
-    await page.evaluate(async () => {
-      for (let index = 0; index < 40; index += 1) {
-        const thread = await window.jasmine.createThread({ title: `Hydration fixture ${index + 1}` });
-        await window.jasmine.updateThreadDraft({ threadId: thread.id, content: `fixture draft ${index + 1}` });
-      }
-    });
-    await page.reload();
-    await page.getByRole("button", { name: "New chat" }).first().click();
-    await page.locator(".rich-composer-editor").fill("typed before draft hydration settles");
-    await expectComposerDraft(page, "typed before draft hydration settles");
-    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
-    await page.waitForTimeout(350);
-    await expectComposerDraft(page, "typed before draft hydration settles");
-    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 
   test("thread drafts, rename, delete confirmation, and long-list paging are durable", async () => {
@@ -330,57 +288,6 @@ test.describe("Jasmine threads and projects", () => {
     await expect(access(piSession.sessionFile)).rejects.toThrow();
   });
 
-  test("seeded large threads render newest messages first and page older history on demand @desktop-session", async () => {
-    const { page, userDataDir } = harness;
-    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Large JSONL import" }));
-    // Data seeding keeps this as a rendering/pagination E2E instead of a slow 220-turn chat workflow.
-    // Repository pagination order is covered in tests/unit/database-smoke.mjs.
-    seedLargeThreadMessages(userDataDir, thread.id, 220);
-    await page.reload();
-    await page.waitForSelector(".app-shell");
-
-    await page.getByRole("button", { name: /Large JSONL import/ }).click();
-    await expect(page.locator(".chat-header")).toContainText("220 messages");
-    await expect(page.locator(".load-older-messages")).toBeVisible();
-    await expect(page.locator(".user-bubble, .assistant-block").first()).toContainText("large import message 61");
-    await expect(page.locator(".user-bubble, .assistant-block")).toHaveCount(160);
-
-    await page.locator(".load-older-messages").click();
-    await expect(page.locator(".load-older-messages")).toBeHidden();
-    await expect(page.locator(".user-bubble, .assistant-block").first()).toContainText("large import message 1");
-    await expect(page.locator(".user-bubble, .assistant-block")).toHaveCount(220);
-    await page.locator(".message-scroll").evaluate((node) => { node.scrollTop = 0; });
-    await expect(page.locator(".message-jump-marks span")).toHaveCount(110);
-    await expect.poll(async () => (await messageJumpMarkAlignment(page)).maxDelta).toBeLessThanOrEqual(4);
-    const markAlignment = await messageJumpMarkAlignment(page);
-    expect(markAlignment.monotonic).toBe(true);
-    await page.locator(".message-scroll").evaluate((node) => { node.scrollTop = node.scrollHeight; });
-    await expect(page.locator(".user-bubble").first()).not.toBeInViewport();
-    await page.getByRole("button", { name: "Open user message navigation" }).click();
-    await expect(page.locator(".message-jump-menu")).toHaveCSS("opacity", "1");
-    await expect(page.locator(".message-jump-menu button").first()).toContainText("1/110");
-    await expectSurfaceInViewport(page, ".message-jump-menu");
-    const jumpGeometry = await page.evaluate(() => {
-      const menu = document.querySelector(".message-jump-menu")?.getBoundingClientRect();
-      const rail = document.querySelector(".message-jump-marks")?.getBoundingClientRect();
-      if (!menu || !rail) throw new Error("Jump rail geometry missing.");
-      return {
-        gap: rail.left - menu.right,
-        verticalDelta: Math.abs((menu.top + menu.height / 2) - (rail.top + rail.height / 2)),
-        menuRight: menu.right,
-        railLeft: rail.left
-      };
-    });
-    expect(jumpGeometry.gap).toBeGreaterThanOrEqual(0);
-    expect(jumpGeometry.gap).toBeLessThanOrEqual(18);
-    expect(jumpGeometry.verticalDelta).toBeLessThanOrEqual(24);
-    await page.mouse.move(jumpGeometry.menuRight - 12, 160);
-    await expect(page.locator(".message-jump-menu")).toHaveCSS("opacity", "1");
-    await page.locator(".message-jump-menu button").first().click();
-    await expect(page.locator(".user-bubble").first()).toBeInViewport();
-    await expect(page.locator(".message-jump-menu")).toBeHidden();
-  });
-
   test("running responses do not force-scroll while reading loaded history", async () => {
     const { page, userDataDir } = harness;
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Running history read" }));
@@ -392,6 +299,10 @@ test.describe("Jasmine threads and projects", () => {
     await page.getByRole("button", { name: /Running history read/ }).click();
     await page.locator(".load-older-messages").click();
     await expect(page.locator(".user-bubble, .assistant-block")).toHaveCount(220);
+    await page.locator(".message-scroll").evaluate((node) => { node.scrollTop = 0; });
+    await expect(page.locator(".message-jump-marks span")).toHaveCount(110);
+    await expect.poll(async () => (await messageJumpMarkAlignment(page)).maxDelta).toBeLessThanOrEqual(4);
+    expect((await messageJumpMarkAlignment(page)).monotonic).toBe(true);
 
     await page.locator(".rich-composer-editor").fill("slow response while reading history");
     await page.getByRole("button", { name: "Send" }).click();

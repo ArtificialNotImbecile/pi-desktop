@@ -34,13 +34,44 @@ For a localized change, run:
 
 - `npm.cmd run build`
 - `npm.cmd run test:unit` when main services, database, runtime, or schemas change
+- `npm.cmd run test:renderer` when renderer components or hooks change
 - `npm.cmd run harness:check` when test-contract docs or UI rules change
 - the smallest relevant Playwright spec or test-name grep
 
-CI owns the full E2E suite. The `Full E2E` job runs `npm run test:e2e` on every push
-and pull request, so do not run the whole suite locally as routine verification: it
-takes minutes, and CI reruns it on the exact commit anyway. Locally, run the smallest
-spec or `--grep` that covers your change and let CI catch the rest.
+### Which layer a test belongs in
+
+`npm.cmd run test:renderer` (Vitest + jsdom, `tests/renderer/`) mounts real
+components and hooks against a fake desktop bridge, with no Electron. The whole
+suite runs in seconds rather than Electron-suite minutes, so prefer it whenever the behavior under test is
+renderer state: message reconciliation, pagination, run and error states, panel
+chrome, menu and form logic. `tests/renderer/fakeBridge.ts` models the IPC
+surface; add to it rather than reaching for a real bridge, and note that an
+unmodeled method throws by name instead of resolving undefined.
+
+Keep a case in `tests/e2e/` when it needs something jsdom does not have: real
+layout (`boundingBox`, `toBeInViewport`, scroll positions, element geometry), a
+PTY or clipboard, actual paint timing, DOM node identity across a re-render,
+persistence across a restart, or a second BrowserWindow. jsdom has no layout
+engine, so geometry there reads as zero and a test that reaches for it fails
+uninformatively rather than catching anything.
+
+When sinking an E2E case, confirm the new test fails against the bug it is meant
+to catch before trusting it. Reintroduce the defect, watch the assertion go red,
+then restore. Assertions that read state the component sets unconditionally --
+an inline style a maximized panel never carries, a row a refetch restores anyway
+-- pass whether or not the behavior works, and several only revealed themselves
+this way.
+
+CI owns the full E2E suite, split across three jobs: two `Full E2E (i/2)` shards
+of the `main` Playwright project, plus `Full E2E (serial projects)` for the
+focus-sensitive and startup-timing projects. Do not run the whole suite locally as
+routine verification: CI reruns it on the exact commit anyway. Locally, run the
+smallest spec or `--grep` that covers your change and let CI catch the rest.
+
+Every E2E case launches Electron at least once; restart and secondary-process
+cases launch it more than once. That makes case and launch count, not assertion
+count, the thing that costs wall-clock time — prefer adding coverage in
+`tests/renderer/`.
 
 Run the full `npm.cmd run test:e2e` locally only when you have a specific reason —
 debugging a failure CI reported, or a change to the harness or Playwright config

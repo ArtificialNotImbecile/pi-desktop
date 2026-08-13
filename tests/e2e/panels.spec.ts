@@ -143,70 +143,6 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.locator(".activity-panel")).toBeHidden();
   });
 
-  test("command palette routes to settings, panels, and tool surfaces @smoke", async () => {
-    const { page } = harness;
-
-    await page.keyboard.press("Control+K");
-    await expect(page.locator(".command-panel")).toBeVisible();
-    await page.getByRole("combobox", { name: "Command palette" }).fill("activity");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".activity-panel")).toBeVisible();
-    await page.locator(".activity-panel").getByRole("button", { name: "Close activity panel" }).click();
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("memory");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".memory-panel")).toBeVisible();
-    await page.locator(".memory-panel").getByRole("button", { name: "Close memory panel" }).click();
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("package");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect(page.locator(".settings-nav").getByRole("button", { name: "Packages" })).toHaveClass(/active/);
-    await page.getByRole("button", { name: "Close settings" }).click();
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("search");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".search-backdrop")).toBeVisible();
-    await page.keyboard.press("Escape");
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("toggle");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".app-shell")).toHaveClass(/sidebar-collapsed/);
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("catalog");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".ui-catalog")).toBeVisible();
-    await expect(page.locator(".ui-catalog")).toContainText("Buttons");
-    await expect(page.locator(".ui-catalog")).toContainText("Settings rows");
-    await expect(page.locator(".ui-catalog")).toContainText("Code and logs");
-    await page.mouse.move(0, 0);
-    await page.locator(".ui-catalog").getByRole("button", { name: "Settings" }).hover();
-    await expect(page.locator(".ui-tooltip", { hasText: "Settings" })).toBeVisible();
-    await expect(page.getByRole("switch", { name: "Disabled switch" })).toHaveAttribute("aria-checked", "false");
-    await page.getByRole("switch", { name: "Disabled switch" }).focus();
-    await page.keyboard.press("Space");
-    await expect(page.getByRole("switch", { name: "Disabled switch" })).toHaveAttribute("aria-checked", "false");
-    const dialogTrigger = page.locator(".ui-catalog").getByRole("button", { name: "Open dialog sample" });
-    await dialogTrigger.click();
-    await expect(page.locator(".ui-dialog")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".ui-dialog")).toBeHidden();
-    await expect(dialogTrigger).toBeFocused();
-    await page.locator(".ui-catalog").getByRole("button", { name: "Close" }).click();
-    await expect(page.locator(".ui-catalog")).toBeHidden();
-
-    await page.keyboard.press("Control+F");
-    await expect(page.locator(".search-backdrop")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("Control+N");
-    await expect(page.locator(".empty-state")).toBeVisible();
-  });
-
   test("right panel terminal resizes and preserves terminal session @desktop-session", async () => {
     const { page } = harness;
     await startEmptyThread(page);
@@ -284,33 +220,6 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.getByRole("complementary", { name: "Terminal" })).toBeVisible();
   });
 
-  test("right panel terminal tab labels reuse closed display names", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-
-    await page.getByRole("button", { name: "Open Terminal" }).click();
-    await expect(page.getByRole("complementary", { name: "Terminal" })).toBeVisible();
-    const addPanelButton = page.getByRole("button", { name: "Add panel" });
-    const addPanelMenu = page.getByRole("menu", { name: "Add panel menu" });
-    await addPanelButton.click();
-    await addPanelMenu.getByRole("menuitem", { name: "Terminal" }).click();
-    await expect(page.getByRole("complementary", { name: "Terminal 2" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Close Terminal 2 tab" }).click();
-    await expect(page.getByRole("tab", { name: "Terminal 2" })).toHaveCount(0);
-    await addPanelButton.click();
-    await addPanelMenu.getByRole("menuitem", { name: "Terminal" }).click();
-    await expect(page.getByRole("complementary", { name: "Terminal 2" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Terminal 3" })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Close Terminal 2 tab" }).click();
-    await page.getByRole("button", { name: "Close Terminal tab", exact: true }).click();
-    await expect(page.locator(".chat-right-panel")).toHaveCount(0);
-    await page.getByRole("button", { name: "Open Terminal" }).click();
-    await expect(page.getByRole("complementary", { name: "Terminal" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Terminal 3" })).toHaveCount(0);
-  });
-
   test("right panel artifacts and context taxonomy update from the current thread", async () => {
     const { page } = harness;
     await startEmptyThread(page);
@@ -349,6 +258,21 @@ test.describe("Jasmine panels and tools", () => {
     await expect(page.getByRole("complementary", { name: "Terminal 2" })).toBeVisible();
     await expect(page.locator(".right-panel-tab", { hasText: "Terminal" })).toHaveCount(2);
     await expect(page.locator(".right-panel-tab", { hasText: "Terminal 2" })).toBeVisible();
+    await page.getByRole("button", { name: "Close Terminal 2 tab" }).click();
+    await expect(page.getByRole("tab", { name: "Terminal 2" })).toHaveCount(0);
+    await addPanelButton.click();
+    await addPanelMenu.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(page.getByRole("complementary", { name: "Terminal 2" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Terminal 3" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close Terminal 2 tab" }).click();
+    await page.getByRole("button", { name: "Close Terminal tab", exact: true }).click();
+    await expect(page.locator(".chat-right-panel")).toHaveCount(0);
+    await page.getByRole("button", { name: "Open Terminal" }).click();
+    await expect(page.getByRole("complementary", { name: "Terminal" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Terminal 3" })).toHaveCount(0);
+    await addPanelButton.click();
+    await addPanelMenu.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(page.getByRole("complementary", { name: "Terminal 2" })).toBeVisible();
     await addPanelButton.click();
     await addPanelMenu.getByRole("menuitem", { name: "Artifacts" }).click();
     await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
@@ -680,8 +604,10 @@ test.describe("Jasmine panels and tools", () => {
   test("context taxonomy refreshes after a slow loop and exposes source-ordered taxonomy sections", async () => {
     const { page } = harness;
     await startEmptyThread(page);
+    const threadRoute = await navigationPath(page);
     await page.getByRole("button", { name: "Open Context taxonomy" }).click();
     await expect(page.getByRole("complementary", { name: "Context taxonomy" })).toBeVisible();
+    await expect.poll(() => navigationPath(page)).toBe(`${threadRoute}/right-panel/context`);
     await expect(page.locator(".panel-empty")).toContainText("No captured context taxonomy yet");
 
     await page.locator(".rich-composer-editor").fill("show structured taxonomy with unclassified taxonomy slow response slow timeline");
@@ -722,17 +648,4 @@ test.describe("Jasmine panels and tools", () => {
     await expect.poll(() => systemMessage.locator(".taxonomy-part").evaluateAll((parts) => parts.length > 0 && parts.every((part) => (part as HTMLDetailsElement).open))).toBe(true);
   });
 
-  test("search shows an empty state for no results", async () => {
-    const { page } = harness;
-
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByPlaceholder("Search chats").fill("Greeting");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".chat-header")).toContainText("Greeting");
-
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByPlaceholder("Search chats").fill("no-chat-with-this-title");
-
-    await expect(page.locator(".search-empty")).toHaveText("No chats found");
-  });
 });

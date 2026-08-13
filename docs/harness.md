@@ -1,25 +1,48 @@
 # Jasmine Test Harness
 
-Jasmine combines unit tests, Electron E2E tests, a structured UI audit, generated visual evidence, and a headed acceptance run. Generated artifacts are local evidence and live under ignored `test-results/ui-harness/`.
+Jasmine combines unit tests, renderer tests, Electron E2E tests, a structured UI audit, generated visual evidence, and a headed acceptance run. Generated artifacts are local evidence and live under ignored `test-results/ui-harness/`.
 
 ## Commands
 
-- `npm run build`: context-capture build, typecheck, renderer build, and Electron main build.
-- `npm run test:unit`: database, runtime, icon, startup, stream, updater, permission, and context-capture checks.
+- `npm run build`: extension package builds, typecheck, renderer build, and Electron main build.
+- `npm run test:unit`: database, runtime, icon, startup, stream, updater,
+  permission, and context-capture checks. The root runner consumes the compiled
+  app and extension outputs from the preceding `npm run build`; extension
+  packages that expose a standalone `npm test` remain self-building for
+  package-local development.
+- `npm run test:renderer`: Vitest + jsdom over `tests/renderer/`. Mounts real
+  components and hooks against a fake desktop bridge, with no Electron and no
+  display. The full suite finishes in seconds rather than Electron-suite
+  minutes, so it is the default home for renderer state; see the layer split in
+  `AGENTS.md`.
 - `npm run harness:check`: validates this test contract and UI implementation rules.
 - `npm run harness:inspect`: writes the UI snapshot and audit under `test-results/ui-harness/inspect/`.
 - `npm run harness:visual`: writes screenshots and a matrix under `test-results/ui-harness/visual/`.
 - `npm run harness:accept`: runs the headed desktop acceptance path and writes `test-results/ui-harness/acceptance/`.
 - `npm run test:e2e:smoke`: fast critical paths in background/off-screen mode.
-- Six specs are tagged `@desktop-session` and are skipped by CI's Full E2E job
-  through `JASMINE_E2E_SKIP_DESKTOP_SESSION=1`. They assert window maximize,
-  minimize, restore, window drags, and pointer-driven panel resizes, which a CI
-  runner cannot perform: they failed on Linux and macOS alike, in partly
+- Four cases across three spec files are tagged `@desktop-session` and are
+  skipped by CI's Full E2E job through
+  `JASMINE_E2E_SKIP_DESKTOP_SESSION=1`. They assert window maximize/minimize,
+  model-menu geometry, terminal resize/session, and Working notification
+  behavior that a CI runner cannot perform: they failed on Linux and macOS alike, in partly
   different sets, while passing locally. A local `npm run test:e2e` still runs
-  all 111. Retiring the tag means either covering those assertions in renderer
+  them. Retiring the tag means either covering those assertions in renderer
   tests or giving CI a session that can satisfy them -- not simply re-enabling
   them.
+- Another case was split that first way. The settings window is a div, not an OS
+  window, so its pointer arithmetic, drag guards, minimize, and maximize state
+  live in `tests/renderer/settingsWindowChrome.test.tsx` and run everywhere.
+  One `boundingBox()` drag assertion remains folded into an existing settings
+  E2E case: jsdom cannot prove that the real CSS honors the resulting left/top
+  values, and folding it avoids another Electron launch. The remaining four
+  tagged cases need real layout, a PTY, or a real window manager, and a renderer
+  test cannot stand in for them.
 - `npm run test:e2e`: full Electron suite in background/off-screen mode.
+- `npm run test:e2e:main` / `npm run test:e2e:serial`: the two halves CI runs as
+  separate jobs. `test:e2e:main` accepts `-- --shard=i/2`. `--shard` cannot be
+  applied to the whole config, because the projects that declare `dependencies`
+  make Playwright put every test in the first shard; sharding the `main` project
+  alone splits evenly, and `test:e2e:serial` runs the rest with `--no-deps`.
 - `npm run test:e2e:headed`: explicit foreground run for interactive debugging.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
 - `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.
@@ -36,24 +59,55 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 
 - `startup.spec.ts`: bootstrap, hydration, startup timing, and native-history isolation.
 - `shell.spec.ts`: app shell, navigation, About access, window controls, tray, overlays, and UI bridge.
-- `threads.spec.ts`: thread lifecycle, drafts, projects, paging, and deletion.
+- `threads.spec.ts`: thread lifecycle, durable drafts, projects, reading intent, and deletion.
 - `composer.spec.ts`: rich editing, commands, attachments, paste, and render isolation.
-- `providers.spec.ts`: provider settings, discovery, menus, labels, and options.
+- `providers.spec.ts`: real menu/settings geometry, direct-secret persistence, and runtime model labels.
 - `chat-runtime.spec.ts`: streaming, queueing, stop, traces, search, edit, and recovery.
-- `settings.spec.ts`: settings shell, appearance, brand, language, and window states.
-- `updater.spec.ts`: About version state plus manual check, download, and restart-to-install transitions.
-- `panels.spec.ts`: memory, activity, search, terminal, deterministic file-change artifacts/diffs/previews, and context.
+- `settings.spec.ts`: settings shell geometry, brand restart persistence, language/executables, and minimum-window layout.
+- `updater.spec.ts`: the real About-to-main update check, download, restart-to-install bridge, and manual browser hand-off.
+- `panels.spec.ts`: memory, activity, command routing, terminal, deterministic file-change artifacts/diffs/previews, and context.
 - `integrations.spec.ts`: skills, prompts, Pi packages, and retired built-in migration.
-- `rendering.spec.ts`: markdown, timelines, tool summaries, images, actions, long-history render isolation, and tail-follow completion.
+- `rendering.spec.ts`: real Shiki/Markdown paint, timelines, lazy tool details, layout, scroll behavior, restart restoration, and DOM identity.
 - `streaming-markdown.spec.ts`: cumulative Markdown chunk stability, late tool classification, and continuously growing fenced code.
 - `message-jump-rail.spec.ts`: stable jump-target observation and a layout-read-free scroll hot path.
 - `spotlight.spec.ts`: global Spotlight launcher.
 - `working.spec.ts`: task-state routing, controls, viewed-chat hidden/minimized notifications and unread fallback, and card geometry.
 - `permissions.spec.ts`: permission-mode persistence, project scope, approval decisions, sender binding, reload, and cancellation.
 
+## Unit infrastructure checks
+
+- `test-infrastructure.mjs`: portable, collision-resistant E2E user-data
+  directory names and Vite's fixed strict development-server port. These are
+  pure Node/config checks and do not belong in the Playwright project count.
+
+## Renderer test map
+
+- `settingsWindowChrome.test.tsx`: settings panel drag arithmetic, drag suppression, minimize, maximize, and restore; real drag geometry stays in `settings.spec.ts`.
+- `chatMessagePaging.test.tsx`: first-page selection, older-history paging and its cursor, in-flight and thread-switch guards.
+- `chatMessageReconciliation.test.tsx`: thread switching, stale page reads, settlement precedence, and provider-failure state.
+- `chatMessageRuns.test.tsx`: cross-thread completion and rapid-run promotion without duplicate optimistic rows.
+- `providerSettings.test.tsx`: provider/settings controls, section routing, update payloads, and validation.
+- `shellComponents.test.tsx`, `surfaceDismissal.test.tsx`, and `reducedMotion.test.tsx`: question/search surfaces, overlay dismissal, and reduced-motion transitions.
+- `updaterPage.test.tsx`: manual-download and up-to-date About rendering; the cross-process browser hand-off and its failure state stay in `updater.spec.ts`.
+- `streamTransitions.test.ts`: cumulative stream snapshots compact into replayable deltas.
+- `composerClipboard.test.tsx`: synthetic image `File` clipboard payloads; the native OS clipboard stays in E2E.
+- `threadDraftPersistence.test.tsx`: deterministic delayed-draft hydration and immediate typing.
+- `commandPalette.test.tsx` and `navigation.test.tsx`: command/shortcut routing, UI catalog interactions, route serialization, and browser-style navigation history.
+- `rightPanelTabs.test.ts`: terminal-tab display-name allocation without launching a desktop shell.
+- `messageRendering.test.tsx`: message actions, tool summaries, decoded errors, and image lightboxes through the real `MessageView`; Shiki, layout, scroll, paint timing, and DOM identity stay in E2E.
+- `fakeBridge.ts`: the fake `window.jasmine`. It mirrors the repository's
+  `(created_at, rowid)` paging order, can hold and release a `listMessages`
+  reply to reproduce an out-of-order IPC response deterministically, returns
+  type-checked real-contract response shapes, and throws by name for any method
+  it does not model.
+
 ## Verification policy
 
 - Use the smallest relevant spec while iterating, then run the broader gate once.
+- Put renderer state in `tests/renderer/` and keep layout, PTY, clipboard, paint
+  timing, node identity, restart, and second-window behavior in `tests/e2e/`.
+- Before trusting a sunk test, reintroduce the defect it targets and confirm it
+  goes red.
 - Run the full E2E suite for shared shell, IPC, persistence, provider/runtime, or multi-workflow changes.
 - Test the intended control and nearby non-control clicks for interaction fixes.
 - Verify visible or persistent success/failure state for saves and updates.

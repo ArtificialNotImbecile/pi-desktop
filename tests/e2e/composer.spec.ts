@@ -342,6 +342,33 @@ test.describe("Jasmine composer", () => {
     await page.getByRole("button", { name: "Close image preview" }).click();
     await expect(page.locator(".image-lightbox")).toBeHidden();
     await expect(page.locator(".user-bubble").last()).not.toContainText(imagePath);
+
+    // Rebuild the row through database -> main -> preload -> renderer after a
+    // real reload. The component test owns lightbox interaction, but cannot
+    // prove persisted attachment JSON survives this cross-process round trip.
+    const persistedThread = await page.evaluate(async () => {
+      const snapshot = (window as Window & {
+        __jasmineHarness?: { snapshot(): { app: { activeThreadId: string | null } } };
+      }).__jasmineHarness?.snapshot();
+      const thread = (await window.jasmine.listThreads()).find((item) => item.id === snapshot?.app.activeThreadId);
+      if (!thread) throw new Error("Image attachment thread was not active.");
+      return { id: thread.id, title: thread.title };
+    });
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    if (await page.locator(".message-image-grid img").count() === 0) {
+      const threadRow = page.locator(".thread-row").filter({
+        has: page.getByText(persistedThread.title, { exact: true })
+      }).first();
+      await threadRow.locator(".thread-item").click();
+    }
+    await expect.poll(() => page.evaluate(() => (
+      window as Window & {
+        __jasmineHarness?: { snapshot(): { app: { activeThreadId: string | null } } };
+      }
+    ).__jasmineHarness?.snapshot().app.activeThreadId ?? null)).toBe(persistedThread.id);
+    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
+    await expect(page.locator(".user-bubble").last()).not.toContainText(imagePath);
   });
 
   test("pasting a clipboard image attaches it to the composer", async () => {
@@ -375,65 +402,87 @@ test.describe("Jasmine composer", () => {
         height: written.getSize().height
       };
     });
-    test.skip(clipboardState.empty, "Native image clipboard is unavailable in this Windows test session.");
-    expect(clipboardState).toEqual({ sourceEmpty: false, empty: false, width: 8, height: 8 });
-    await page.locator(".rich-composer-editor").click();
-    await page.keyboard.press("Control+V");
-
-    await expect(page.locator(".attachment-row img")).toHaveCount(1);
-    await page.locator(".attachment-chip-preview").click();
-    await expect(page.locator(".image-lightbox")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".image-lightbox")).toBeHidden();
-    await expect(page.locator(".attachment-row img")).toHaveCount(1);
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
-
-    const pastedAttachment = await page.evaluate(async () => {
-      for (const thread of await window.jasmine.listThreads()) {
-        const messages = await window.jasmine.listMessages({ threadId: thread.id, limit: 20 });
-        const attachment = messages.flatMap((message) => message.attachments ?? []).find((item) => item.isImage && item.name.startsWith("clipboard-"));
-        if (attachment) return attachment;
-      }
-      return null;
-    });
-    expect(pastedAttachment).toBeTruthy();
-    expect(pastedAttachment?.path).toContain(`${path.sep}attachments${path.sep}clipboard${path.sep}`);
-    await access(pastedAttachment?.path ?? "");
-
-    await page.locator(".rich-composer-editor").fill("look at the pasted image again");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
-  });
-
-  test("pasting an image file payload attaches it to the composer", async () => {
-    const { page } = harness;
-    await page.evaluate(async () => {
-      const provider = (await window.jasmine.listProviders())[0];
-      await window.jasmine.updateProviderModel({
-        providerId: provider.id,
-        modelId: provider.defaultModel,
-        enabled: true,
-        capabilities: { vision: true }
+    expect(clipboardState.sourceEmpty).toBe(false);
+    if (clipboardState.empty) {
+      test.info().annotations.push({
+        type: "native-clipboard",
+        description: "Native image clipboard is unavailable in this off-screen session; Chromium file-payload paste still runs below."
       });
-    });
-    await page.reload();
-    await startEmptyThread(page);
+    } else {
+      expect(clipboardState).toEqual({ sourceEmpty: false, empty: false, width: 8, height: 8 });
+      await page.locator(".rich-composer-editor").click();
+      await page.keyboard.press("Control+V");
+
+      await expect(page.locator(".attachment-row img")).toHaveCount(1);
+      await page.locator(".attachment-chip-preview").click();
+      await expect(page.locator(".image-lightbox")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".image-lightbox")).toBeHidden();
+      await expect(page.locator(".attachment-row img")).toHaveCount(1);
+      await page.getByRole("button", { name: "Send" }).click();
+      await expect(page.locator(".message-image-grid img")).toHaveCount(1);
+      await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
+
+      const pastedAttachment = await page.evaluate(async () => {
+        for (const thread of await window.jasmine.listThreads()) {
+          const messages = await window.jasmine.listMessages({ threadId: thread.id, limit: 20 });
+          const attachment = messages.flatMap((message) => message.attachments ?? []).find((item) => item.isImage && item.name.startsWith("clipboard-"));
+          if (attachment) return attachment;
+        }
+        return null;
+      });
+      expect(pastedAttachment).toBeTruthy();
+      expect(pastedAttachment?.path).toContain(`${path.sep}attachments${path.sep}clipboard${path.sep}`);
+      await access(pastedAttachment?.path ?? "");
+
+      await page.locator(".rich-composer-editor").fill("look at the pasted image again");
+      await page.getByRole("button", { name: "Send" }).click();
+      await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
+    }
+
+    // Keep Chromium/Lexical's file-payload route covered alongside the native
+    // clipboard fallback above, without paying for another Electron launch.
     const editor = page.locator(".rich-composer-editor");
     await editor.click();
-    await editor.evaluate((node, base64) => {
+    const filePaste = await editor.evaluate((node, base64) => {
       const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
       const file = new File([bytes], "pasted-red.png", { type: "image/png" });
       const clipboard = new DataTransfer();
       clipboard.items.add(file);
-      node.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
+      const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard });
+      const dispatched = node.dispatchEvent(event);
+      return {
+        defaultPrevented: event.defaultPrevented,
+        dispatched,
+        fileCount: clipboard.files.length,
+        fileName: clipboard.files[0]?.name,
+        fileType: clipboard.files[0]?.type
+      };
     }, RED_SQUARE_BASE64);
 
-    await expect(page.locator(".attachment-row img")).toHaveCount(1);
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
+    expect(filePaste).toEqual({
+      defaultPrevented: true,
+      dispatched: false,
+      fileCount: 1,
+      fileName: "pasted-red.png",
+      fileType: "image/png"
+    });
+    await expect(page.getByRole("button", { name: "Preview attachment clipboard-", exact: false })).toBeVisible();
+    await page.locator(".attachment-chip-preview").click();
+    await expect(page.locator(".image-lightbox")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".image-lightbox")).toBeHidden();
+
+    const filePayloadAttachment = await page.locator(".attachment-chip").evaluate((node) => ({
+      name: node.querySelector(".attachment-chip-main span")?.textContent ?? "",
+      path: node.getAttribute("title") ?? ""
+    }));
+    expect(filePayloadAttachment.name).toMatch(/^clipboard-.*\.png$/);
+    expect(filePayloadAttachment.path).toContain(`${path.sep}attachments${path.sep}clipboard${path.sep}`);
+    expect(await readFile(filePayloadAttachment.path)).toEqual(Buffer.from(RED_SQUARE_BASE64, "base64"));
+
+    await page.getByRole("button", { name: `Remove attachment ${filePayloadAttachment.name}` }).click();
+    await expect(page.locator(".attachment-row")).toHaveCount(0);
   });
 
   test("composer @ menu lists searchable project files", async () => {

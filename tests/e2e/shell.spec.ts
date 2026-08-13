@@ -57,22 +57,115 @@ test.describe("Jasmine app shell", () => {
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  test("opens a nonblank shell with the chat composer ready @smoke", async () => {
-    const { page } = harness;
+  test("opens the shell and exercises its basic surfaces @smoke", async () => {
+    const { app, page } = harness;
 
     await expect(page.locator(".app-shell")).toBeVisible();
     await expect(page.locator(".chat-page")).toBeVisible();
     await expect(page.locator(".rich-composer-editor")).toBeVisible();
     await expect(page.locator(".composer textarea")).toHaveCount(0);
-  });
 
-  test("sidebar toggles between collapsed and expanded", async () => {
-    const { page } = harness;
+    // The structured harness describes this same initial shell. Keep its audit
+    // and action/snapshot wiring in the smoke launch instead of paying for a
+    // second Electron process that reconstructs the identical state.
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __jasmineHarness?: unknown }).__jasmineHarness))).toBe(true);
+    const initialAudit = await page.evaluate(() => (window as Window & {
+      __jasmineHarness: {
+        audit(): {
+          errorCount: number;
+          warningCount: number;
+          snapshot: {
+            controls: Array<{ label: string; disabled: boolean; disabledReason: string }>;
+            surfaces: string[];
+          };
+        };
+      };
+    }).__jasmineHarness.audit());
+    expect(initialAudit.errorCount).toBe(0);
+    expect(initialAudit.snapshot.controls.some((control) => control.label === "Message draft")).toBe(true);
+    expect(initialAudit.snapshot.controls.some((control) => control.label === "Send" && control.disabled && control.disabledReason.length > 0)).toBe(true);
+
+    await page.evaluate(() => (window as Window & {
+      __jasmineHarness: { actions: { openSettings(): void } };
+    }).__jasmineHarness.actions.openSettings());
+    await expect(page.locator(".settings-panel")).toBeVisible();
+    const settingsSnapshot = await page.evaluate(() => (window as Window & {
+      __jasmineHarness: {
+        snapshot(): {
+          surfaces: string[];
+          controls: Array<{ label: string; selector: string }>;
+        };
+      };
+    }).__jasmineHarness.snapshot());
+    expect(settingsSnapshot.surfaces).toContain("settings");
+    expect(settingsSnapshot.controls.some((control) => control.label === "Close settings")).toBe(true);
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await expect(page.locator(".settings-panel")).toBeHidden();
 
     await page.getByRole("button", { name: "Hide sidebar" }).click();
     await expect(page.locator(".app-shell")).toHaveClass(/sidebar-collapsed/);
     await page.getByRole("button", { name: "Show sidebar" }).click();
     await expect(page.locator(".app-shell")).not.toHaveClass(/sidebar-collapsed/);
+
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator(".side-menu")).toBeVisible();
+    await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
+    await expect(page.locator(".search-backdrop")).toBeVisible();
+    await expect(page.locator(".side-menu")).toBeHidden();
+    await page.getByPlaceholder("Search chats").fill("Greeting");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".search-backdrop")).toBeHidden();
+    await expect(page.locator(".chat-header")).toContainText("Greeting");
+    await expect(page.locator(".side-top").getByRole("button")).toHaveCount(3);
+    await expect(page.locator(".side-top").getByRole("button", { name: "Shortcuts" })).toHaveCount(0);
+
+    await page.keyboard.press("Control+K");
+    await expect(page.locator(".command-panel")).toBeVisible();
+    await page.getByRole("combobox", { name: "Command palette" }).fill("UI catalog");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".command-panel")).toBeHidden();
+    await expect(page.getByRole("region", { name: "UI catalog" })).toBeVisible();
+    await page.getByRole("region", { name: "UI catalog" }).getByRole("button", { name: "Close" }).click();
+    await expect(page.getByRole("region", { name: "UI catalog" })).toBeHidden();
+
+    await page.locator(".composer").getByRole("button", { name: "Tools" }).click();
+    await expect(page.locator(".tools-menu")).toBeVisible();
+    await expect(page.locator(".tools-menu")).toContainText("Pi tools");
+    await expect(page.locator(".tools-menu")).toContainText("Packages");
+    await expect(page.locator(".tools-menu-row")).toHaveCount(2);
+    await expect(page.locator(".tools-menu-row").first().locator(".tools-menu-state .icon")).toHaveCount(1);
+    await expect(page.locator(".tools-menu").getByRole("menuitemcheckbox")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".tools-menu")).toBeHidden();
+
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator(".side-menu").getByRole("button", { name: /Clear History/i })).toHaveCount(0);
+    await page.locator(".side-menu").getByRole("button", { name: "About" }).click();
+    await expect(page.locator(".settings-nav button.active")).toContainText("About");
+    await expect(page.locator(".settings-detail")).toContainText("Jasmine — The desktop app for Pi");
+    await expect.poll(() => navigationPath(page)).toBe("/settings/about");
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await expect(page.locator(".settings-panel")).toBeHidden();
+    await expect.poll(() => navigationPath(page)).toMatch(/^\/(?:chats|projects)\//);
+
+    // Component tests own the dialog's option/back/custom-answer behavior.
+    // Keep the real main -> preload -> hook -> App dialog wiring here.
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send("askUserQuestion:prompt", {
+        id: "e2e-ask-user-question-wiring",
+        questions: [{
+          id: "answer",
+          header: "Answer",
+          question: "What answer should be sent back?",
+          options: [{ label: "Alpha" }, { label: "Beta" }]
+        }]
+      });
+    });
+    const dialog = page.getByRole("dialog", { name: "Questions from assistant" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("radio", { name: "Alpha" }).click();
+    await dialog.getByRole("button", { name: "Submit answers" }).click();
+    await expect(dialog).toBeHidden();
   });
 
   test("window controls maximize, restore, and minimize @desktop-session", async () => {
@@ -124,204 +217,6 @@ test.describe("Jasmine app shell", () => {
       win?.restore();
       win?.focus();
     });
-  });
-
-  test("search overlay and command palette open and dismiss", async () => {
-    const { page } = harness;
-
-    await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
-    await expect(page.locator(".search-backdrop")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".search-backdrop")).toBeHidden();
-
-    await expect(page.locator(".side-top").getByRole("button")).toHaveCount(3);
-    await expect(page.locator(".side-top").getByRole("button", { name: "Shortcuts" })).toHaveCount(0);
-    await page.keyboard.press("Control+K");
-    await expect(page.locator(".command-panel")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".command-panel")).toBeHidden();
-  });
-
-  test("tools menu shows always-on Pi tools and packages", async () => {
-    const { page } = harness;
-
-    await page.locator(".composer").getByRole("button", { name: "Tools" }).click();
-    await expect(page.locator(".tools-menu")).toBeVisible();
-    await expect(page.locator(".tools-menu")).toContainText("Pi tools");
-    await expect(page.locator(".tools-menu")).toContainText("Packages");
-    await expect(page.locator(".tools-menu-row")).toHaveCount(2);
-    await expect(page.locator(".tools-menu-row").first().locator(".tools-menu-state .icon")).toHaveCount(1);
-    await expect(page.locator(".tools-menu").getByRole("menuitemcheckbox")).toHaveCount(0);
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".tools-menu")).toBeHidden();
-  });
-
-  test("More menu opens About without exposing bulk history deletion @smoke", async () => {
-    const { page } = harness;
-
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await expect(page.locator(".side-menu").getByRole("button", { name: /Clear History/i })).toHaveCount(0);
-    await page.locator(".side-menu").getByRole("button", { name: "About" }).click();
-    await expect(page.locator(".settings-nav button.active")).toContainText("About");
-    await expect(page.locator(".settings-detail")).toContainText("Jasmine — The desktop app for Pi");
-    await page.getByRole("button", { name: "Close settings" }).click();
-    await expect(page.locator(".settings-panel")).toBeHidden();
-  });
-
-  test("AskUserQuestion dialog collects batched option and Other answers", async () => {
-    const { app, page } = harness;
-
-    await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send("askUserQuestion:prompt", {
-        id: "e2e-ask-user-question-batch",
-        questions: [
-          {
-            id: "path",
-            header: "Path",
-            question: "Which path should the assistant take?",
-            options: [
-              { label: "Use the fast path", description: "Prefer the existing runtime hook." },
-              { label: "Use the full path", description: "Add IPC and UI coverage." }
-            ]
-          },
-          {
-            id: "tone",
-            header: "Tone",
-            question: "How should the answer be framed?",
-            options: [
-              { label: "Short" },
-              { label: "Detailed" }
-            ]
-          }
-        ]
-      });
-    });
-
-    const dialog = page.getByRole("dialog", { name: "Questions from assistant" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Question 1 of 2");
-    await expect(dialog).toContainText("Which path should the assistant take?");
-    await expect(dialog).not.toContainText("How should the answer be framed?");
-    await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
-    await expect(dialog.getByRole("button", { name: "Close" })).toHaveCount(0);
-    await dialog.getByRole("radiogroup", { name: "Which path should the assistant take?" }).getByRole("radio", { name: /Use the full path/ }).click();
-    await expect(dialog.getByRole("button", { name: "Next" })).toBeEnabled();
-    await dialog.getByRole("button", { name: "Next" }).click();
-    await expect(dialog).toContainText("Question 2 of 2");
-    await expect(dialog).not.toContainText("Which path should the assistant take?");
-    await expect(dialog).toContainText("How should the answer be framed?");
-    await expect(dialog.getByRole("button", { name: "Back" })).toBeVisible();
-    await dialog.getByRole("button", { name: "Back" }).click();
-    await expect(dialog).toContainText("Question 1 of 2");
-    await dialog.getByRole("button", { name: "Next" }).click();
-    await dialog.getByRole("radiogroup", { name: "How should the answer be framed?" }).getByRole("radio", { name: /Other/ }).click();
-    await expect(dialog.getByRole("button", { name: "Submit answers" })).toBeDisabled();
-    await dialog.getByRole("textbox", { name: "Custom answer - Tone" }).fill("Use a typed custom framing.");
-    await expect(dialog.getByRole("button", { name: "Submit answers" })).toBeEnabled();
-    await dialog.getByRole("button", { name: "Submit answers" }).click();
-    await expect(dialog).toBeHidden();
-
-    await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.webContents.send("askUserQuestion:prompt", {
-        id: "e2e-ask-user-question-single",
-        questions: [
-          {
-            id: "answer",
-            header: "Answer",
-            question: "What answer should be sent back?",
-            options: [
-              { label: "Alpha" },
-              { label: "Beta" }
-            ]
-          }
-        ]
-      });
-    });
-
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Question 1 of 1");
-    await dialog.getByRole("radio", { name: /Other/ }).click();
-    await expect(dialog.getByRole("button", { name: "Submit answers" })).toBeDisabled();
-    await dialog.getByRole("textbox", { name: "Custom answer - Answer" }).fill("Use a typed custom answer.");
-    await expect(dialog.getByRole("button", { name: "Submit answers" })).toBeEnabled();
-    await dialog.getByRole("button", { name: "Submit answers" }).click();
-    await expect(dialog).toBeHidden();
-  });
-
-  test("harness bridge exposes structured UI snapshot and audit", async () => {
-    const { page } = harness;
-
-    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __jasmineHarness?: unknown }).__jasmineHarness))).toBe(true);
-
-    const initialAudit = await page.evaluate(() => (window as Window & {
-      __jasmineHarness: {
-        audit(): {
-          errorCount: number;
-          warningCount: number;
-          snapshot: {
-            controls: Array<{ label: string; disabled: boolean; disabledReason: string }>;
-            surfaces: string[];
-          };
-        };
-      };
-    }).__jasmineHarness.audit());
-
-    expect(initialAudit.errorCount).toBe(0);
-    expect(initialAudit.snapshot.controls.some((control) => control.label === "Message draft")).toBe(true);
-    expect(initialAudit.snapshot.controls.some((control) => control.label === "Send" && control.disabled && control.disabledReason.length > 0)).toBe(true);
-
-    await page.evaluate(() => (window as Window & {
-      __jasmineHarness: { actions: { openSettings(): void } };
-    }).__jasmineHarness.actions.openSettings());
-    await expect(page.locator(".settings-panel")).toBeVisible();
-
-    const settingsSnapshot = await page.evaluate(() => (window as Window & {
-      __jasmineHarness: {
-        snapshot(): {
-          surfaces: string[];
-          controls: Array<{ label: string; selector: string }>;
-        };
-      };
-    }).__jasmineHarness.snapshot());
-
-    expect(settingsSnapshot.surfaces).toContain("settings");
-    expect(settingsSnapshot.controls.some((control) => control.label === "Close settings")).toBe(true);
-  });
-
-  test("navigation route adapter tracks settings, provider, thread, and right-panel targets", async () => {
-    const { page } = harness;
-
-    await expect.poll(() => page.evaluate(() => (window as Window & {
-      __jasmineHarness?: { snapshot(): { app: { navigation: { path: string } } } };
-    }).__jasmineHarness?.snapshot().app.navigation.path ?? "")).toMatch(/^\/(?:chats|projects)\//);
-
-    await page.keyboard.press("Control+K");
-    await page.getByRole("combobox", { name: "Command palette" }).fill("provider settings");
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    await expect.poll(() => navigationPath(page)).toMatch(/^\/settings\/providers\/[^/]+$/);
-
-    await page.locator(".settings-subnav").getByRole("button", { name: /Moonshot|Kimi/ }).click();
-    await expect.poll(() => navigationPath(page)).toBe("/settings/providers/moonshot");
-
-    await page.getByRole("button", { name: "Close settings" }).click();
-    await expect.poll(() => navigationPath(page)).toMatch(/^\/(?:chats|projects)\//);
-
-    const routeBeforeNewChat = await navigationPath(page);
-    await page.locator(".side-top").getByRole("button", { name: "New chat" }).click();
-    // The route keeps pointing at the previous thread for a tick after the
-    // click, and the generic /chats/ shape below matches that stale value too,
-    // so it cannot be used to synchronize. Wait for the switch to the new draft
-    // thread before pinning the right-panel routes to it.
-    await expect.poll(() => navigationPath(page)).not.toBe(routeBeforeNewChat);
-    await expect.poll(() => navigationPath(page)).toMatch(/^\/(?:chats|projects)\//);
-    const currentThreadRoute = await navigationPath(page);
-
-    await page.getByRole("button", { name: "Open Terminal" }).click();
-    await expect.poll(() => navigationPath(page)).toBe(`${currentThreadRoute}/right-panel/terminal`);
-
-    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
-    await expect.poll(() => navigationPath(page)).toBe(`${currentThreadRoute}/right-panel/context`);
   });
 
   test("window states, settings discoverability, and maximized settings layout stay polished", async () => {
@@ -423,88 +318,46 @@ test.describe("Jasmine app shell", () => {
     expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.viewportHeight - 4);
   });
 
-  test("the tray icon stays a status-area icon instead of the full-size app logo", async () => {
-    // Windows scales its .ico down on its own and keeps the untouched icon.
-    test.skip(process.platform === "win32", "Windows sizes tray icons itself");
-    // macOS and most Linux panels render the tray image at its own size, so the
-    // 1024px app logo stretched the status item across the whole menu bar.
-    const size = await harness.app.evaluate(() =>
-      (globalThis as Record<string, any>).__jasmineTray?.iconSize?.() as { width: number; height: number } | null
-    );
-    expect(size).not.toBeNull();
-    expect(size!.width).toBeGreaterThan(0);
-    expect(size!.width).toBeLessThanOrEqual(32);
-    expect(size!.height).toBeLessThanOrEqual(32);
-  });
+  test("tray icon, click bindings, and close-to-tray exit stay native", async () => {
+    const { app, page } = harness;
 
-  test("clicking the macOS status item opens its menu instead of the window", async () => {
+    // Windows scales its .ico down on its own and keeps the untouched icon.
+    // Keep running the rest of this case there instead of skipping the entire
+    // merged tray lifecycle.
+    if (process.platform !== "win32") {
+      // macOS and most Linux panels render the tray image at its own size, so
+      // the 1024px app logo stretched the status item across the whole menu bar.
+      const size = await app.evaluate(() =>
+        (globalThis as Record<string, any>).__jasmineTray?.iconSize?.() as { width: number; height: number } | null
+      );
+      expect(size).not.toBeNull();
+      expect(size!.width).toBeGreaterThan(0);
+      expect(size!.width).toBeLessThanOrEqual(32);
+      expect(size!.height).toBeLessThanOrEqual(32);
+    }
+
     // A Windows notification-area icon opens the app on a left click and keeps
     // the menu on the right button, so the app binds those clicks itself. macOS
     // gives its one click to the menu, and binding it here as well opened the
     // window before Open Jasmine could be read.
-    const listeners = await harness.app.evaluate(() =>
+    const listeners = await app.evaluate(() =>
       (globalThis as Record<string, any>).__jasmineTray?.clickListenerCount?.() as number
     );
     expect(listeners).toBe(process.platform === "darwin" ? 0 : 2);
-  });
 
-  test("window close minimizes to the tray and only tray exit quits the app", async () => {
-    await closeWindowFromTitleBar(harness.page);
+    await closeWindowFromTitleBar(page);
     // Closing hides the window into the system tray; the app stays resident so
     // global shortcuts and the tray keep working instead of leaving a zombie.
     await expect
-      .poll(() => harness.app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainAlive?.())))
+      .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainAlive?.())))
       .toBe(true);
     await expect
-      .poll(() => harness.app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
+      .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
       .toBe(false);
     // The tray "Exit" action is the only path that truly quits the app.
-    const closed = harness.app.waitForEvent("close");
-    await harness.app.evaluate(() => (globalThis as Record<string, any>).__jasmineTray?.quit?.());
+    const closed = app.waitForEvent("close");
+    await app.evaluate(() => (globalThis as Record<string, any>).__jasmineTray?.quit?.());
     await closed;
   });
 
-  test("floating surfaces dismiss and do not stack stale overlays", async () => {
-    const { page } = harness;
-
-    await page.locator(".model-pill").click();
-    await expect(page.locator(".model-menu")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".model-menu")).toBeHidden();
-
-    await page.locator(".model-pill").click();
-    await expect(page.locator(".model-menu")).toBeVisible();
-    await page.locator(".message-scroll").click({ position: { x: 10, y: 10 } });
-    await expect(page.locator(".model-menu")).toBeHidden();
-
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await expect(page.locator(".side-menu")).toBeVisible();
-    await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
-    await expect(page.locator(".search-backdrop")).toBeVisible();
-    await expect(page.locator(".side-menu")).toBeHidden();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".search-backdrop")).toBeHidden();
-    await expect(page.locator(".side-menu")).toBeHidden();
-  });
-
-  test("motion polish respects reduced-motion while keeping surfaces interactive", async () => {
-    const { page } = harness;
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
-
-    await page.locator(".model-pill").click();
-    await expect(page.locator(".model-menu")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".model-menu")).toBeHidden();
-
-    await page.keyboard.press("Control+K");
-    await expect(page.locator(".command-panel")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".command-panel")).toBeHidden();
-
-    await page.locator(".side-top").getByRole("button", { name: "Search" }).click();
-    await expect(page.locator(".search-backdrop")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".search-backdrop")).toBeHidden();
-  });
 });

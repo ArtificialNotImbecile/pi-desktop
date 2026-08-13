@@ -6,16 +6,22 @@
 
 | 流程 | 触发方式 | 运行内容 | 是否产生公开版本 |
 | --- | --- | --- | --- |
-| 普通 CI | 提交到 `main`，或创建/更新 Pull Request | 仓库规则检查一次；Windows、Linux、Apple Silicon macOS 各自编译、单元测试和 E2E smoke | 否 |
+| 普通 CI | 提交到 `main`，或创建/更新 Pull Request | 仓库规则检查一次；Windows、Linux、Apple Silicon macOS 各自原生编译和运行单元测试；Linux 运行 renderer 测试；Windows/Linux 运行 E2E smoke；macOS 分片运行完整 E2E | 否 |
 | 手动 Release 预构建 | GitHub Actions 中手动运行 `Release` | Windows、Linux、Apple Silicon macOS 原生构建、单元测试、安装包冒烟测试 | 否，只保留 7 天的 Actions Artifacts |
 | 正式 Release | 推送与 `package.json` 版本一致的 `v*.*.*` 标签 | 与手动预构建相同；三个目标平台全部通过后校验产物、生成 SHA-256 并创建 GitHub Release | 是 |
 
 普通提交不生成 NSIS、AppImage、deb 或 DMG。它负责尽快发现编译和核心回归，配置位于 `.github/workflows/ci.yml`。正式安装包由 `.github/workflows/release.yml` 生成，两套工作流不要合并成“每次提交都打全平台安装包”。
 
-普通 CI 分成两类 Job，边界是“结果会不会随操作系统变化”：
+普通 CI 按“结果会不会随操作系统变化”和“是否需要真实 Electron”分层：
 
 - `Repository rules` 只跑 `harness:check`。这些检查只读 `docs/` 和源码，不依赖任何 npm 包，也不依赖编译产物，因此不安装依赖、不构建，跑一次即可，几十秒内就能报出文档与 UI 规则违规。
-- `Linux x64`、`Windows x64`、`macOS Apple Silicon` 三个 Job 跑 `npm ci`、`build`、`test:unit` 和 `test:e2e:smoke`。原生依赖必须在目标平台编译，路径解析、文件监听、终端和 Electron 窗口行为都随平台变化，这些必须逐平台重复执行，不要为了省时间合并成一个。
+- `Linux x64`、`Windows x64` 两个验证 Job 跑各自原生的 `npm ci`、`build`、`test:unit` 和 `test:e2e:smoke`。macOS 完整 E2E Job 本身已经原生安装和构建，串行 E2E Job 在 cold-start timing 完成后再运行 macOS `test:unit`，避免单元测试中的 Electron smoke 预热冷启动路径；因此不再额外启动一个重复安装、重复构建的 macOS 验证 Job。三个目标平台的原生构建与单元测试仍全部保留。
+- `test:renderer` 使用 jsdom 和 fake desktop bridge，不启动 Electron，也不加载原生模块；它只在 Linux Job 跑一次。macOS 的完整 E2E 分片已包含同一批 `@smoke` 用例，不重复执行。
+- 本地完整 E2E 已从 133 个 case 下沉到 85 个（`main` 81 个，加上 focus-sensitive/startup-timing 4 个）。CI 会跳过 4 个需要真实桌面会话的 `main` case，因此完整 E2E 实际运行 81 个：`main` 的 77 个 case 拆成两个 macOS shard（39/38），其余 4 个使用独立串行 Job。两个 shard 在保持墙钟可控的同时，比原来的三个 shard 少一次完整依赖安装和构建；后续继续下沉时仍应按历史耗时而不只是 case 数重新评估。
+
+同一 Pull Request 或 `main` 分支有新提交时，旧 CI run 会被取消，只保留最新提交继续占用 runner。Pull Request 按稳定的 PR 编号分组，`main` 按分支 ref 分组；不同 Pull Request 互不取消。合并后的 `main` 提交仍会重新运行一次集成结果，不复用 Pull Request merge ref 的结论。
+
+所有会执行 `npm ci` 的 Job 都同时缓存 npm 下载与按操作系统、CPU 架构隔离的 Electron binary 下载。第一次 `npm ci` 最多运行 8 分钟；失败后只重试一次，第二次失败即让 Job 失败。这个重试只覆盖依赖下载等瞬时故障，不给 Playwright 测试增加自动重试，也不会把确定性的测试失败伪装成成功。
 
 不要把 `test:unit` 按“平台相关/无关”拆开。整个单元套件并行跑完只需十几秒，拆分省不下时间，却要求每个新增测试都正确归类，漏标就会静默地跑错 Job 或者哪个 Job 都不跑。
 
@@ -133,5 +139,5 @@ AppImage 是便携版本，首次运行前可能需要执行 `chmod +x`；deb �
 - 先打开失败 Job，定位首次失败的命令，不要只看最后的汇总错误。
 - 单个平台失败时，其他平台会继续运行以暴露全部兼容性问题；Publish Job 不会执行。
 - 修复应同时补充能够覆盖该失败的自动化检查。例如平台资源路径问题应进入 `test:packaged`，产物缺失应进入 `tests/unit/release-workflow.mjs`。
-- 手动预构建可以反复运行。标签触发的正式构建失败后，遵循新的补丁版本流程，不强推旧标签。
+- 手动预构建可以反复运行；同一 ref 上更新的手动运行会取消旧运行，只保留最新一次。正式标签构建使用与手动运行隔离的并发组，永不因手动运行或其他标签而取消。标签触发的正式构建失败后，遵循新的补丁版本流程，不强推旧标签。
 - Actions Artifacts 只保留 7 天；正式交付物以 GitHub Release Assets 为准。

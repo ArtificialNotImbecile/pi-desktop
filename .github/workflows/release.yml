@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer manual prebuild supersedes an older one for the same ref. Formal
+  # tag builds use a different event group and are never cancelled.
+  group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -69,8 +71,28 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
+      - name: Restore Electron download cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
+        id: npm_ci
+        continue-on-error: true
+        timeout-minutes: 8
         run: ${{ matrix.npm }} ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
+
+      - name: Retry dependency install once
+        if: steps.npm_ci.outcome == 'failure'
+        timeout-minutes: 8
+        run: ${{ matrix.npm }} ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
 
       - name: Install Linux runtime dependencies
         if: matrix.id == 'linux-x64'
@@ -106,7 +128,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15

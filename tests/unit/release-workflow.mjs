@@ -7,6 +7,7 @@ import path from "node:path";
 const rootDir = process.cwd();
 const manifest = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
 const version = manifest.version;
+const ciWorkflow = await readFile(path.join(rootDir, ".github", "workflows", "ci.yml"), "utf8");
 const releaseWorkflow = await readFile(path.join(rootDir, ".github", "workflows", "release.yml"), "utf8");
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "jasmine-release-workflow-"));
 const sourceDirectory = path.join(temporaryRoot, "source");
@@ -44,6 +45,47 @@ try {
   }
   assert.ok(releaseWorkflow.includes("actions/upload-artifact@v7"));
   assert.ok(releaseWorkflow.includes("actions/download-artifact@v8"));
+  assert.match(ciWorkflow, /group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/,
+    "CI concurrency must group successive runs by pull request or branch");
+  assert.match(ciWorkflow, /cancel-in-progress: true/,
+    "CI must cancel superseded pull request and main runs");
+  assert.match(releaseWorkflow, /group: release-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name \}\}-\$\{\{ github\.ref \}\}/,
+    "manual prebuilds and formal tag builds must use separate concurrency groups");
+  assert.match(releaseWorkflow, /cancel-in-progress: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/,
+    "only superseded manual release prebuilds may be cancelled");
+  assert.match(releaseWorkflow, /if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/'\)/,
+    "manual tag prebuilds must never race a tag push to publish the same release");
+  assert.equal((ciWorkflow.match(/uses: actions\/cache@v6/g) || []).length, 3,
+    "every CI dependency-install job must restore the Electron cache");
+  assert.equal((releaseWorkflow.match(/uses: actions\/cache@v6/g) || []).length, 1,
+    "release dependency-install jobs must restore the Electron cache");
+  for (const [name, workflow, expectedInstalls] of [
+    ["CI", ciWorkflow, 3],
+    ["Release", releaseWorkflow, 1]
+  ]) {
+    assert.equal((workflow.match(/id: npm_ci/g) || []).length, expectedInstalls,
+      `${name} must mark each first dependency-install attempt`);
+    assert.equal((workflow.match(/if: steps\.npm_ci\.outcome == 'failure'/g) || []).length, expectedInstalls,
+      `${name} must retry each failed dependency install exactly once`);
+    assert.equal((workflow.match(/electron_config_cache: \$\{\{ runner\.temp \}\}\/electron-cache/g) || []).length, expectedInstalls * 2,
+      `${name} must use the cached Electron download on both bounded install attempts`);
+  }
+  assert.match(ciWorkflow, /name: Run renderer tests\s+if: matrix\.id == 'linux-x64'/,
+    "renderer tests must run once rather than once per platform");
+  assert.equal((ciWorkflow.match(/label: (?:Linux x64|Windows x64)/g) || []).length, 2,
+    "the verify matrix should contain only Linux and Windows");
+  assert.ok(!ciWorkflow.includes("label: macOS Apple Silicon"),
+    "macOS must not repeat an install and build outside its full E2E jobs");
+  assert.ok(ciWorkflow.includes("name: Run macOS unit tests"),
+    "the serial macOS E2E job must retain native unit coverage");
+  assert.ok(ciWorkflow.indexOf("name: Run macOS unit tests") > ciWorkflow.indexOf("name: Run focus-sensitive and startup-timing projects"),
+    "macOS unit smoke must run after cold-start timing so it cannot warm Electron first");
+  assert.match(ciWorkflow, /name: Run macOS unit tests\s+if: \$\{\{ !cancelled\(\) && steps\.build\.outcome == 'success' \}\}/,
+    "macOS native unit coverage must still run after an E2E failure when the build is usable");
+  assert.ok(ciWorkflow.includes("shard: [1, 2]"),
+    "the reduced main E2E suite should use two shards, not repeat a third install and build");
+  assert.ok(ciWorkflow.includes("--shard=${{ matrix.shard }}/2"),
+    "the E2E command must use the same two-way split as the matrix");
 
   const mockSpawnHelper = path.join(mockMacApp, "Contents", "Resources", "app.asar.unpacked", "node_modules", "node-pty", "prebuilds", "darwin-arm64", "spawn-helper");
   await mkdir(path.dirname(mockSpawnHelper), { recursive: true });

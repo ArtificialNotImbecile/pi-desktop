@@ -3,14 +3,12 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  RED_SQUARE_BASE64,
   baseLaunchEnv,
   clickCenter,
   createExternalSkillFixture,
   createPiPluginFixture,
   createProjectFolderFixture,
   createPromptTemplateFixture,
-  createRedSquarePng,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -56,43 +54,6 @@ test.describe("Jasmine message rendering", () => {
   test.afterEach(async () => {
     if (harness?.app) await quitElectron(harness.app);
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-  });
-
-  test("assistant message icon actions have accessible names", async () => {
-    const { page } = harness;
-
-    await page.locator(".rich-composer-editor").fill("hello accessibility");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-
-    await expect(page.getByRole("button", { name: "Copy message" }).last()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Regenerate this response" }).last()).toBeVisible();
-
-    const latestAssistant = page.locator(".assistant-block").last();
-    await latestAssistant.getByRole("button", { name: "Message actions" }).click();
-    await expect(page.locator(".message-menu")).toBeVisible();
-    await expect(page.locator(".message-menu .ui-menu-item")).toHaveCount(3);
-    await expect(page.locator(".message-menu .ui-menu-item").first()).toHaveCSS("border-style", "none");
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".message-menu")).toBeHidden();
-
-    await latestAssistant.getByRole("button", { name: "Message actions" }).click();
-    await page.locator(".message-menu").getByRole("button", { name: "Copy message" }).click();
-    await expect(page.locator(".toast")).toHaveText("Copied");
-
-    await page.locator(".assistant-block").last().getByRole("button", { name: "Message actions" }).click();
-    await page.locator(".message-menu").getByRole("button", { name: "Remember this" }).click();
-    await expect(page.locator(".memory-dialog")).toBeVisible();
-    await page.locator(".memory-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(page.locator(".memory-dialog")).toBeHidden();
-
-    await page.locator(".assistant-block").last().getByRole("button", { name: "Message actions" }).click();
-    await page.locator(".message-menu").getByRole("button", { name: "Retry from here" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-
-    await expect(latestAssistant.getByRole("button", { name: "Show work details" })).toBeVisible();
-    await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
-    await expect(latestAssistant.getByRole("button", { name: "Open trace" })).toHaveCount(0);
   });
 
   test("assistant timeline renders chronological thinking, tool calls, results, and output", async () => {
@@ -381,55 +342,6 @@ test.describe("Jasmine message rendering", () => {
     }
   });
 
-  test("assistant tool timeline summarizes edit, bash, and decoded errors", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-
-    await page.locator(".rich-composer-editor").fill("show edit timeline");
-    await page.getByRole("button", { name: "Send" }).click();
-    const editMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expandWorkDetails(editMessage);
-    const editTool = editMessage.locator(".tool-run-item", { hasText: "src/example.ts" });
-    await expect(editTool).toContainText("edit");
-    await expect(editTool).toContainText("edited - +1 -1");
-
-    await page.locator(".rich-composer-editor").fill("show bash timeline");
-    await page.getByRole("button", { name: "Send" }).click();
-    const bashMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expandWorkDetails(bashMessage);
-    const bashTool = bashMessage.locator(".tool-run-item", { hasText: "ls src/renderer/components/chat" });
-    const bashDetails = bashTool.locator(".tool-run-details");
-    await expect(bashTool).toContainText("bash");
-    await expect(bashTool).toContainText("done - 3 lines");
-    await expect(bashDetails).toHaveCount(0);
-    const bashToggle = bashTool.locator(".tool-run-toggle");
-    await expect(bashToggle).toHaveAttribute("aria-expanded", "false");
-    await bashToggle.click();
-    await expect(bashToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(bashDetails).toBeVisible();
-    await expect(bashTool).toContainText("COMMAND");
-    await expect(bashTool).toContainText("MessageTimeline.tsx");
-
-    await page.locator(".rich-composer-editor").fill("show bash error timeline");
-    await page.getByRole("button", { name: "Send" }).click();
-    const errorMessage = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expandWorkDetails(errorMessage);
-    const errorTool = errorMessage.locator(".tool-run-item.error");
-    await expect(errorTool).toContainText("exit 1");
-    await expect(errorTool).toContainText("Output encoding could not be decoded.");
-    const errorToggle = errorTool.locator(".tool-run-toggle");
-    const errorDetails = errorTool.locator(".tool-run-details");
-    await expect(errorToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(errorDetails).toBeVisible();
-    await expect(errorDetails).toContainText("Output encoding could not be decoded.");
-    await expect(errorDetails).not.toContainText("����");
-    await errorToggle.click();
-    await expect(errorToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(errorDetails).toBeHidden();
-    await expect(errorDetails).toContainText("Output encoding could not be decoded.");
-    await expect(errorDetails).not.toContainText("����");
-  });
-
   test("assistant markdown renders as structure instead of raw markdown text @smoke", async () => {
     const { app, page } = harness;
     await startEmptyThread(page);
@@ -715,52 +627,6 @@ test.describe("Jasmine message rendering", () => {
     expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeLessThanOrEqual(viewportHeight);
   });
 
-  test("image messages render thumbnails instead of path-only text", async () => {
-    const { page } = harness;
-    const imagePath = await createRedSquarePng(harness.userDataDir);
-    const previewDataUrl = `data:image/png;base64,${RED_SQUARE_BASE64}`;
-
-    await page.evaluate(
-      async ({ imagePath: pathValue, preview }) => {
-        const provider = (await window.jasmine.listProviders())[0];
-        await window.jasmine.updateProviderModel({
-          providerId: provider.id,
-          modelId: provider.defaultModel,
-          enabled: true,
-          capabilities: { vision: true }
-        });
-        const thread = await window.jasmine.createThread({ title: "Image thumbnail E2E" });
-        await window.jasmine.sendChatMessage({
-          threadId: thread.id,
-          providerId: provider.id,
-          messages: [],
-          content: "What color is this image?",
-          attachments: [
-            {
-              name: "red-square.png",
-              path: pathValue,
-              kind: "file",
-              mediaType: "image/png",
-              isImage: true,
-              previewDataUrl: preview
-            }
-          ]
-        });
-      },
-      { imagePath, preview: previewDataUrl }
-    );
-
-    await page.reload();
-    await page.getByRole("button", { name: /What color is this image/ }).click();
-
-    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
-    await page.getByRole("button", { name: "Preview red-square.png" }).click();
-    await expect(page.locator(".image-lightbox")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".image-lightbox")).toBeHidden();
-    await expect(page.locator(".user-bubble").last()).not.toContainText(imagePath);
-    await expect(page.locator(".assistant-block")).toContainText("Mock reply received 1 image attachment.");
-  });
 });
 
 async function expandWorkDetails(assistant: Locator): Promise<void> {

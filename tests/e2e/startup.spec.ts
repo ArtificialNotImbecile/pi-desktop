@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { _electron as electron } from "playwright";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, mkdir } from "node:fs/promises";
+import { rm, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
@@ -233,16 +233,5 @@ test.describe("Jasmine cold start", () => {
     }
 
     await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
-  });
-});
-
-// Static config assertions live outside the harness describe so they do not
-// pay for an Electron launch in beforeEach.
-test.describe("Jasmine static configuration", () => {
-  test("dev server config fails instead of silently switching Electron ports", async () => {
-    const config = await readFile(path.join(rootDir, "vite.config.ts"), "utf8");
-
-    expect(config).toContain("port: 5173");
-    expect(config).toContain("strictPort: true");
   });
 });

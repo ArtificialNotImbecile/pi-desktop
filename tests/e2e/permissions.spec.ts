@@ -23,7 +23,7 @@ test.describe("Jasmine permission approvals", () => {
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  test("ask is the default and each bash call can be denied or allowed once @smoke", async () => {
+  test("ask mode denies, allows once, and scopes project writes @smoke", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 
@@ -53,31 +53,6 @@ test.describe("Jasmine permission approvals", () => {
     await waitForStableAssistant(page, "Permission approved once for the fixture.");
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).permissionMode)).toBe("ask");
     await expect(page.getByRole("dialog", { name: "Permission required" })).toHaveCount(0);
-  });
-
-  test("full access persists across restart and bypasses approval", async () => {
-    let { page } = harness;
-    await startEmptyThread(page);
-
-    await page.getByRole("button", { name: "Permission mode" }).click();
-    await page.locator(".permission-mode-item.full-access").click();
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).permissionMode)).toBe("full-access");
-    await expect(page.getByRole("button", { name: "Permission mode" })).toContainText("Full access");
-
-    const userDataDir = harness.userDataDir;
-    await quitElectron(harness.app);
-    harness = await launchJasmine("permission-full-access-restart", userDataDir);
-    page = harness.page;
-
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).permissionMode)).toBe("full-access");
-    await expect(page.getByRole("button", { name: "Permission mode" })).toContainText("Full access");
-    await sendPermissionFixture(page, "permission approval fixture bash full access");
-    await waitForStableAssistant(page, "Full access allowed the fixture without an approval prompt.");
-    await expect(page.getByRole("dialog", { name: "Permission required" })).toHaveCount(0);
-  });
-
-  test("project writes stay scoped while external and unscoped writes ask", async () => {
-    const { page } = harness;
 
     await page.getByRole("button", { name: "Open Folder..." }).first().click();
     const project = await page.evaluate(async () => {
@@ -109,6 +84,27 @@ test.describe("Jasmine permission approvals", () => {
     await expect(noProjectPrompt).not.toContainText(project.rootPath);
     await noProjectPrompt.getByRole("button", { name: "Deny" }).click();
     await waitForStableAssistant(page, "Permission denied for the fixture.");
+  });
+
+  test("full access persists across restart and bypasses approval", async () => {
+    let { page } = harness;
+    await startEmptyThread(page);
+
+    await page.getByRole("button", { name: "Permission mode" }).click();
+    await page.locator(".permission-mode-item.full-access").click();
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).permissionMode)).toBe("full-access");
+    await expect(page.getByRole("button", { name: "Permission mode" })).toContainText("Full access");
+
+    const userDataDir = harness.userDataDir;
+    await quitElectron(harness.app);
+    harness = await launchJasmine("permission-full-access-restart", userDataDir);
+    page = harness.page;
+
+    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).permissionMode)).toBe("full-access");
+    await expect(page.getByRole("button", { name: "Permission mode" })).toContainText("Full access");
+    await sendPermissionFixture(page, "permission approval fixture bash full access");
+    await waitForStableAssistant(page, "Full access allowed the fixture without an approval prompt.");
+    await expect(page.getByRole("dialog", { name: "Permission required" })).toHaveCount(0);
   });
 
   test("a different renderer cannot approve and reload or cancellation never falls through", async () => {
