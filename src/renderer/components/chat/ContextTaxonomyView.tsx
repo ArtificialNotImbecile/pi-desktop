@@ -638,6 +638,18 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
   });
 
   if (useSegments) {
+    // The classifier creates segments from `item.text`, and provider-message
+    // extraction builds that text from every wire part. Metadata and unknown
+    // sibling fields therefore already consume part of the segment estimate.
+    // Reserve their tokens before rendering semantic segments so keeping the
+    // wire rows does not inflate either the item total or the composition.
+    const preservedWireTokens = parts
+      .filter((part) => part.kind === "metadata" || part.kind === "unclassified")
+      .reduce((total, part) => total + part.tokenEstimate, 0);
+    const segmentTokens = allocateTokenBudget(
+      segments.map((segment) => segment.tokenEstimate),
+      Math.max(0, item.tokenEstimate - preservedWireTokens)
+    );
     for (const [index, segment] of segments.entries()) {
       resolvedParts.push({
         key: `${key}:s${index}`,
@@ -646,7 +658,7 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
         title: segment.title,
         text: segment.text,
         format: looksLikeJson(segment.text) ? "json" : "markdown",
-        tokenEstimate: segment.tokenEstimate,
+        tokenEstimate: segmentTokens[index] ?? 0,
         isReasoning: false
       });
     }
@@ -705,6 +717,24 @@ function resolveItem(item: ContextTaxonomyItem): ResolvedItem {
       .join(" ")
       .toLowerCase()
   };
+}
+
+function allocateTokenBudget(weights: number[], budget: number): number[] {
+  if (weights.length === 0) return [];
+  const normalizedBudget = Math.max(0, Math.round(budget));
+  const totalWeight = weights.reduce((total, weight) => total + Math.max(0, weight), 0);
+  if (totalWeight === 0) return weights.map((_weight, index) => index === 0 ? normalizedBudget : 0);
+
+  const exact = weights.map((weight) => Math.max(0, weight) / totalWeight * normalizedBudget);
+  const allocated = exact.map((value) => Math.floor(value));
+  let remainder = normalizedBudget - allocated.reduce((total, value) => total + value, 0);
+  const byRemainder = exact
+    .map((value, index) => ({ index, remainder: value - allocated[index] }))
+    .sort((left, right) => right.remainder - left.remainder || left.index - right.index);
+  for (let index = 0; index < byRemainder.length && remainder > 0; index += 1, remainder -= 1) {
+    allocated[byRemainder[index].index] += 1;
+  }
+  return allocated;
 }
 
 export function buildComposition(groups: ResolvedGroup[], total: number): CompositionItem[] {

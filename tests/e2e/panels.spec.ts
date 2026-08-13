@@ -388,6 +388,28 @@ test.describe("Jasmine panels and tools", () => {
     await requestSwitcher.getByRole("button", { name: "Request 1 of 2" }).click();
     await expect(requestSwitcher.getByRole("button", { name: "Request 1 of 2" })).toHaveAttribute("aria-pressed", "true");
 
+    // At the supported 240px minimum the provider identity and request
+    // switcher wrap inside the sticky header. The offsets below must follow the
+    // resulting two-row header rather than letting the toolbar cover it.
+    const taxonomyResizeHandle = page.getByRole("separator", { name: "Resize right panel" });
+    await taxonomyResizeHandle.focus();
+    await page.keyboard.press("Home");
+    await expect(taxonomyResizeHandle).toHaveAttribute("aria-valuenow", "240");
+    await page.locator(".taxonomy-view").evaluate((node) => node.scrollTo(0, 600));
+    const narrowSticky = await page.evaluate(() => {
+      const head = document.querySelector(".taxonomy-head")?.getBoundingClientRect();
+      const toolbar = document.querySelector(".taxonomy-toolbar")?.getBoundingClientRect();
+      if (!head || !toolbar) throw new Error("Taxonomy sticky surfaces missing at the minimum width.");
+      return {
+        headHeight: head.height,
+        toolbarAfterHead: toolbar.top >= head.bottom - 1
+      };
+    });
+    expect(narrowSticky.headHeight).toBeGreaterThan(58);
+    expect(narrowSticky.toolbarAfterHead).toBe(true);
+    for (let index = 0; index < 5; index += 1) await page.keyboard.press("ArrowLeft");
+    await expect(taxonomyResizeHandle).toHaveAttribute("aria-valuenow", "360");
+
     const rawPayload = page.locator(".taxonomy-raw-payload");
     await expect(rawPayload).toBeVisible();
     await expect(rawPayload).toContainText("Sanitized raw payload");

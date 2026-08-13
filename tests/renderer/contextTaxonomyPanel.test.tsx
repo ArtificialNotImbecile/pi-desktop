@@ -223,7 +223,7 @@ describe("context taxonomy panel", () => {
 
     // Every bucket still adds up to the whole payload.
     const total = panel.text(".taxonomy-legend-value").reduce((sum, value) => sum + Number(value.replace(/,/g, "")), 0);
-    expect(total).toBe(1727);
+    expect(total).toBe(1719);
   });
 
   test("an instruction message keeps the wire fields its segments do not cover", () => {
@@ -241,8 +241,11 @@ describe("context taxonomy panel", () => {
       .toEqual(["system_prompt", "project_context", "unclassified"]);
     expect(system.querySelector(".taxonomy-part[open] .taxonomy-part-meta")?.textContent).toContain("$.messages[0].cache_control");
     expect(system.querySelector(".taxonomy-item-meta")?.textContent).toContain("+1 envelope field");
-    // 300 + 200 segments, 7 unknown field, 1 folded role.
-    expect(system.querySelector(".taxonomy-item-tokens")?.textContent).toBe("508");
+    // The classifier builds instruction segments from the complete wire text,
+    // including the role and unknown field. Preserve those rows and their
+    // buckets, but reserve their 8 tokens from the segment budget so the item
+    // still equals the classifier's original 500-token estimate.
+    expect(system.querySelector(".taxonomy-item-tokens")?.textContent).toBe("500");
 
     const unknownLegend = Array.from(panel.container.querySelectorAll<HTMLElement>(".taxonomy-legend button"))
       .find((node) => node.textContent?.includes("Unknown"));
@@ -266,14 +269,14 @@ describe("context taxonomy panel", () => {
 
     expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,800");
     expect(panel.container.querySelector(".taxonomy-total-label")?.textContent).toBe("actual input tokens");
-    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("est. 1,727");
-    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("4.1%");
+    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("est. 1,719");
+    expect(panel.container.querySelector(".taxonomy-total-estimate")?.textContent).toContain("4.5%");
   });
 
   test("falls back to the estimate when the provider reported no usage", () => {
     const panel = renderPanel(fixture({ cacheMetrics: undefined }));
 
-    expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,727");
+    expect(panel.container.querySelector(".taxonomy-total-value")?.textContent).toBe("1,719");
     expect(panel.container.querySelector(".taxonomy-total-label")?.textContent).toBe("estimated input tokens");
     expect(panel.container.querySelector(".taxonomy-total-estimate")).toBeNull();
   });

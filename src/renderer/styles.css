@@ -3196,6 +3196,18 @@ body.resizing-right-panel {
    token column and the group percentage stop earning their space, and the
    request switcher needs its own row. */
 @container taxonomy (max-width: 320px) {
+  .taxonomy-view {
+    /* The identity row wraps above the request switcher at the supported
+       minimum width. Give that second row a fixed sticky budget so the toolbar
+       and group headings derive their offsets from the real header height. */
+    --taxonomy-head-height: 82px;
+  }
+
+  .taxonomy-head {
+    height: var(--taxonomy-head-height);
+    overflow: hidden;
+  }
+
   .taxonomy-item-tokens,
   .taxonomy-group-percent {
     display: none;
@@ -3206,7 +3218,9 @@ body.resizing-right-panel {
   }
 
   .taxonomy-request-switcher {
+    max-width: 100%;
     margin-left: 0;
+    overflow-x: auto;
   }
 }
 
