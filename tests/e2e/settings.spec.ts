@@ -243,6 +243,8 @@ test.describe("Jasmine settings", () => {
     await expect(page.getByRole("complementary", { name: "上下文分类" })).toBeVisible();
     await expect(page.getByRole("separator", { name: "调整右侧面板宽度" })).toBeVisible();
     await expect(page.getByRole("button", { name: "收起面板" })).toBeVisible();
+    await page.getByRole("button", { name: "打开终端" }).click();
+    await expect(page.locator(".terminal-meta button")).toHaveText(/启动|停止/);
     await expect(page.locator(".settings-panel")).toBeHidden();
     await expect(page.locator(".empty-state h1")).toHaveText("\u8a00\u5df1");
     await expect(page.locator(".empty-state p")).toHaveText("\u6211\u89c1\u9752\u5c71\u591a\u59a9\u5a9a\uff0c\u6599\u9752\u5c71\u89c1\u6211\u5e94\u5982\u662f\u3002");

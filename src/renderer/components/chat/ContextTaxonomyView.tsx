@@ -158,7 +158,7 @@ export function TaxonomyView(props: {
           onChange={(event) => setQuery(event.target.value)}
         />
         <button type="button" className="taxonomy-toolbar-button" onClick={toggleAll}>
-          {allExpanded ? "Collapse all" : "Expand all"}
+          {allExpanded ? t("taxonomy.collapseAll") : t("taxonomy.expandAll")}
         </button>
       </div>
 
@@ -256,7 +256,7 @@ function TaxonomyHeader(props: {
               aria-live="polite"
               onClick={() => void copyHash()}
             >
-              {copied ? "copied" : copyError ? "copy failed" : taxonomy.payloadHash.slice(0, 12)}
+              {copied ? t("taxonomy.copied") : copyError ? t("taxonomy.copyFailed") : taxonomy.payloadHash.slice(0, 12)}
             </button>
           </>
         )}
@@ -334,21 +334,21 @@ function TaxonomyBudget(props: {
 
       <div className="taxonomy-status">
         {taxonomy.source === "jasmine-assembly" && (
-          <button {...chipProps("assembly")} data-tone="bad">Reconstructed approximation</button>
+          <button {...chipProps("assembly")} data-tone="bad">{t("taxonomy.reconstructedChip")}</button>
         )}
         {metrics && (
           <button {...chipProps("cache")} data-tone={metrics.cacheHitTokens > 0 ? "ok" : "neutral"}>
-            Cache {Math.round(metrics.hitRate * 1000) / 10}% hit
+            {t("taxonomy.cacheChip", { rate: Math.round(metrics.hitRate * 1000) / 10 })}
           </button>
         )}
         {validation && (
           <button {...chipProps("reasoning")} data-tone={validationTone(validation.status)}>
-            Reasoning {validationStatusLabel(validation.status)}
+            {t("taxonomy.reasoningChip", { status: validationStatusLabel(validation.status, t) })}
           </button>
         )}
         {props.unclassifiedPaths.length > 0 && (
           <button {...chipProps("unclassified")} data-tone="bad">
-            {props.unclassifiedPaths.length} unknown {props.unclassifiedPaths.length === 1 ? "field" : "fields"}
+            {t(props.unclassifiedPaths.length === 1 ? "taxonomy.unknownField" : "taxonomy.unknownFields", { count: props.unclassifiedPaths.length })}
           </button>
         )}
       </div>
@@ -565,7 +565,7 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
           disabled={props.taxonomy.rawState === "unavailable" || loading}
           onClick={(event) => { event.preventDefault(); event.stopPropagation(); void copyFull(); }}
         >
-          {copied ? "Copied" : "Copy full"}
+          {copied ? t("taxonomy.copied") : t("taxonomy.copyFull")}
         </Button>
       </summary>
       <div className="taxonomy-raw-body">
@@ -583,7 +583,7 @@ function RawPayload(props: { captureId: string; taxonomy: ContextTaxonomy }) {
         {text && <ShikiCodeBlock code={text} language="json" kind="json" title={t("taxonomy.sanitizedPayload")} />}
         {!done && props.taxonomy.rawState !== "unavailable" && (
           <Button className="taxonomy-load-more" size="sm" variant="quiet" loading={loading} onClick={() => void loadMore()}>
-            {loading ? "Loading…" : "Load next 64 KiB"}
+            {loading ? t("taxonomy.loading") : t("taxonomy.loadNext")}
           </Button>
         )}
         {props.taxonomy.rawState === "unavailable" && (
@@ -961,8 +961,11 @@ function formatCapturedAt(value: string, language: AppLanguage): string {
   return parsed.toLocaleTimeString(localeTag(language), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function validationStatusLabel(status: ContextReasoningValidation["status"]): string {
-  return ({ pass: "kept", fail: "dropped", not_applicable: "n/a", unknown: "unknown" } as const)[status];
+function validationStatusLabel(status: ContextReasoningValidation["status"], t: ReturnType<typeof useI18n>["t"]): string {
+  if (status === "pass") return t("taxonomy.validation.kept");
+  if (status === "fail") return t("taxonomy.validation.dropped");
+  if (status === "not_applicable") return t("taxonomy.validation.notApplicable");
+  return t("taxonomy.validation.unknown");
 }
 
 function validationTone(status: ContextReasoningValidation["status"]): string {

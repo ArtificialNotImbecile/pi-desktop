@@ -1,7 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import type { ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyPart, ContextTaxonomySegment } from "../../src/shared/ipc";
+import type { AppLanguage, ContextTaxonomy, ContextTaxonomyItem, ContextTaxonomyPart, ContextTaxonomySegment } from "../../src/shared/ipc";
 import { TaxonomyView } from "../../src/renderer/components/chat/ContextTaxonomyView";
+import { I18nProvider } from "../../src/renderer/i18n";
 import { installFakeBridge } from "./fakeBridge";
 
 /**
@@ -169,9 +170,17 @@ function fixture(overrides: Partial<ContextTaxonomy> = {}): ContextTaxonomy {
   };
 }
 
-function renderPanel(taxonomy = fixture(), props: Partial<Parameters<typeof TaxonomyView>[0]> = {}) {
+function renderPanel(
+  taxonomy = fixture(),
+  props: Partial<Parameters<typeof TaxonomyView>[0]> = {},
+  language: AppLanguage = "en"
+) {
   installFakeBridge();
-  const view = render(<TaxonomyView taxonomy={taxonomy} captureId="capture-1" {...props} />);
+  const view = render(
+    <I18nProvider language={language}>
+      <TaxonomyView taxonomy={taxonomy} captureId="capture-1" {...props} />
+    </I18nProvider>
+  );
   return {
     ...view,
     text(selector: string): string[] {
@@ -506,6 +515,34 @@ describe("context taxonomy panel", () => {
     expect(open).toContain("Assistant turn");
     expect(panel.text(".taxonomy-part[open] .taxonomy-tag")).toEqual(["reasoning"]);
     expect(panel.container.querySelector(".taxonomy-chip[data-tone='bad']")?.textContent).toBe("Reasoning dropped");
+  });
+
+  test("toolbar and diagnostic control names follow the Chinese interface language", async () => {
+    const panel = renderPanel(fixture({
+      source: "jasmine-assembly",
+      assemblyReason: "no-capture",
+      reasoningValidation: {
+        status: "fail",
+        policyId: "deepseek-tool-interval-v1",
+        policyVersion: 1,
+        summary: "A required reasoning block was not sent back.",
+        requiredCount: 2,
+        sentCount: 1,
+        blocks: []
+      }
+    }), {}, "zh");
+
+    expect(panel.button("全部展开")).toBeDefined();
+    expect(panel.button("重建的近似结果")).toBeDefined();
+    expect(panel.button("缓存命中率 77.8%")).toBeDefined();
+    expect(panel.button("推理 已丢弃")).toBeDefined();
+    expect(panel.button("2 个未知字段")).toBeDefined();
+    expect(panel.button("复制全部")).toBeDefined();
+
+    const hash = panel.container.querySelector<HTMLElement>(".taxonomy-head-hash");
+    if (!hash) throw new Error("Payload hash button did not render.");
+    fireEvent.click(hash);
+    await waitFor(() => expect(hash.textContent).toBe("复制失败"));
   });
 
   test("a reconstructed capture is marked in the header and explained by a chip", () => {

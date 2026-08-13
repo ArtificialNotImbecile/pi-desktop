@@ -482,7 +482,7 @@ function TerminalPane(props: { active: boolean; activeProjectId: string | null; 
     <div className="terminal-pane">
       <div className="terminal-meta">
         <span>{status}</span>
-        <button type="button" onClick={session ? () => void stop() : () => void start()}>{session ? "Stop" : "Start"}</button>
+        <button type="button" onClick={session ? () => void stop() : () => void start()}>{session ? t("terminal.stop") : t("terminal.start")}</button>
       </div>
       <div
         ref={hostRef}

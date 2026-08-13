@@ -198,7 +198,7 @@ function CaptureGroup(props: {
           variant="quiet"
         >
           <span className="artifact-capture-chevron" aria-hidden="true">{props.open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-          <span className="artifact-capture-when">{formatRelativeTime(capture.completedAt, props.now, language)}</span>
+          <span className="artifact-capture-when">{formatRelativeTime(capture.completedAt, props.now, language, t)}</span>
           <StatusTally counts={counts} />
         </Button>
         {alert ? (
@@ -320,7 +320,7 @@ function ArtifactDetailView(props: { change: FileChangeDetail; capture: FileChan
                 size="sm"
                 variant="quiet"
               >
-                {candidate === "diff" ? "Diff" : candidate === "after" ? "After" : "Before"}
+                {t(`artifacts.view.${candidate}`)}
               </Button>
             ))}
           </div>
@@ -615,17 +615,22 @@ function formatTimestamp(value: string, language: AppLanguage): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString(localeTag(language));
 }
 
-function formatRelativeTime(value: string, now: number, language: AppLanguage): string {
+export function formatRelativeTime(
+  value: string,
+  now: number,
+  language: AppLanguage,
+  t: ReturnType<typeof useI18n>["t"]
+): string {
   const time = new Date(value).valueOf();
   if (Number.isNaN(time)) return value;
   const seconds = Math.max(Math.round((now - time) / 1000), 0);
-  if (seconds < 45) return "just now";
+  if (seconds < 45) return t("artifacts.relative.justNow");
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return t("artifacts.relative.minutesAgo", { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
+  if (hours < 24) return t("artifacts.relative.hoursAgo", { count: hours });
   const days = Math.round(hours / 24);
-  if (days < 7) return `${days} d ago`;
+  if (days < 7) return t("artifacts.relative.daysAgo", { count: days });
   return new Date(time).toLocaleDateString(localeTag(language));
 }
 
