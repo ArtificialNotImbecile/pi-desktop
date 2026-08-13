@@ -30,6 +30,11 @@ Jasmine combines unit tests, renderer tests, Electron E2E tests, a structured UI
   remaining five need real layout, a PTY, or a real window manager, and a
   renderer test cannot stand in for any of them.
 - `npm run test:e2e`: full Electron suite in background/off-screen mode.
+- `npm run test:e2e:main` / `npm run test:e2e:serial`: the two halves CI runs as
+  separate jobs. `test:e2e:main` accepts `-- --shard=i/3`. `--shard` cannot be
+  applied to the whole config, because the projects that declare `dependencies`
+  make Playwright put every test in the first shard; sharding the `main` project
+  alone splits evenly, and `test:e2e:serial` runs the rest with `--no-deps`.
 - `npm run test:e2e:headed`: explicit foreground run for interactive debugging.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
 - `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.

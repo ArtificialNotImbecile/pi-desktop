@@ -834,66 +834,8 @@ test.describe("Jasmine chat runtime", () => {
     expect(Math.abs(after.scrollTop - before.scrollTop)).toBeLessThanOrEqual(1);
   });
 
-  test("a promoted delayed initial load keeps an older identical prompt without painting a third copy", async () => {
-    const { page } = harness;
-    const repeatedPrompt = "same prompt promoted load identity";
-
-    await startEmptyThread(page);
-    await page.locator(".rich-composer-editor").fill(repeatedPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const threadId = await page.evaluate(async (title) => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
-      if (!thread) throw new Error("Repeated-prompt history is missing.");
-      return thread.id;
-    }, repeatedPrompt);
-
-    await startEmptyThread(page);
-    await page.evaluate((id) => {
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
-    }, threadId);
-    await page.getByRole("button", { name: new RegExp(repeatedPrompt, "i") }).first().click();
-    await expect.poll(() => page.evaluate((id) => (
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
-    ), threadId)).toBe(0);
-    await page.evaluate((text) => {
-      const scope = window as Window & {
-        __JASMINE_REPEATED_PROMPT_MAX__?: number;
-        __JASMINE_REPEATED_PROMPT_OBSERVER__?: MutationObserver;
-      };
-      const sample = () => {
-        const count = Array.from(document.querySelectorAll(".user-message-wrap"))
-          .filter((node) => node.textContent?.includes(text)).length;
-        scope.__JASMINE_REPEATED_PROMPT_MAX__ = Math.max(scope.__JASMINE_REPEATED_PROMPT_MAX__ ?? 0, count);
-      };
-      scope.__JASMINE_REPEATED_PROMPT_MAX__ = 0;
-      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__ = new MutationObserver(sample);
-      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__.observe(
-        document.querySelector(".message-stack") ?? document.body,
-        { childList: true, subtree: true }
-      );
-      sample();
-    }, repeatedPrompt);
-    await page.locator(".rich-composer-editor").fill(repeatedPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-
-    const repeatedUsers = page.locator(".user-message-wrap", { hasText: repeatedPrompt });
-    await expect(repeatedUsers).toHaveCount(2);
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4, { timeout: 4_000 });
-    await expect(repeatedUsers).toHaveCount(2);
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4);
-    await expect(repeatedUsers).toHaveCount(2);
-    const maxRepeatedUsers = await page.evaluate(() => {
-      const scope = window as Window & {
-        __JASMINE_REPEATED_PROMPT_MAX__?: number;
-        __JASMINE_REPEATED_PROMPT_OBSERVER__?: MutationObserver;
-      };
-      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__?.disconnect();
-      return scope.__JASMINE_REPEATED_PROMPT_MAX__ ?? -1;
-    });
-    expect(maxRepeatedUsers).toBe(2);
-  });
+  // "a promoted delayed initial load keeps an older identical prompt without
+  // painting a third copy" moved to tests/renderer/chatMessageRuns.test.tsx.
 
   test("send, retry, edit, queue, and stop publish ordered persisted stream settlements", async () => {
     const { page } = harness;
@@ -1528,54 +1470,11 @@ test.describe("Jasmine chat runtime", () => {
     expect(continuity.replaced).toBe(false);
   });
 
-  test("a rapid second run invalidates the initial page promoted to the first run", async () => {
-    const { page } = harness;
-    const historyPrompt = "rapid promotion history baseline";
-    const firstPrompt = "rapid promotion first run";
-    const secondPrompt = "slow response slow timeline rapid promotion second run";
-
-    await startEmptyThread(page);
-    await page.locator(".rich-composer-editor").fill(historyPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const threadId = await page.evaluate(async (title) => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
-      if (!thread) throw new Error("Rapid-promotion history is missing.");
-      return thread.id;
-    }, historyPrompt);
-
-    await startEmptyThread(page);
-    await page.evaluate((id) => {
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
-    }, threadId);
-    await page.getByRole("button", { name: /rapid promotion history baseline/i }).first().click();
-    await expect.poll(() => page.evaluate((id) => (
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
-    ), threadId)).toBe(0);
-
-    // Run one settles while the selected thread's original database page is
-    // still delayed. Run two has a stable anchor that old page never observed,
-    // so it must invalidate (not inherit) that promoted list response.
-    await page.locator(".rich-composer-editor").fill(firstPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await page.locator(".rich-composer-editor").fill(secondPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-    const secondLive = page.locator(".assistant-block.live-message").last();
-    await expect(secondLive).toBeVisible();
-
-    // The stale page arrives during run two. All three user/assistant pairs must
-    // remain mounted; otherwise the late initial load erased both newer runs.
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(6, { timeout: 4_000 });
-    await expect(secondLive).toBeVisible();
-    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
-    await expect(page.locator(".message-stack")).toContainText(firstPrompt);
-    await expect(page.locator(".message-stack")).toContainText(secondPrompt);
-
-    await waitForStableAssistant(page, "Slow response complete.", 12_000);
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(6);
-    await expect(page.locator(".error-strip")).toBeHidden();
-  });
+  // "a rapid second run invalidates the initial page promoted to the first run"
+  // moved to tests/renderer/chatMessageRuns.test.tsx. It staged the race with a
+  // 2.2s __JASMINE_MESSAGE_LOAD_DELAYS__ wait and a 12s settle window; the
+  // renderer version holds the opening page across both runs instead. Verified
+  // against three injected defects in the promoted-load boundary.
 
   test("paged retry removes a stale page-first assistant when its anchor is outside the delayed page", async () => {
     const { page, userDataDir } = harness;

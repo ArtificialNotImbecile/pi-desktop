@@ -62,10 +62,15 @@ an inline style a maximized panel never carries, a row a refetch restores anyway
 -- pass whether or not the behavior works, and several only revealed themselves
 this way.
 
-CI owns the full E2E suite. The `Full E2E` job runs `npm run test:e2e` on every push
-and pull request, so do not run the whole suite locally as routine verification: it
-takes minutes, and CI reruns it on the exact commit anyway. Locally, run the smallest
-spec or `--grep` that covers your change and let CI catch the rest.
+CI owns the full E2E suite, split across four jobs: three `Full E2E (i/3)` shards
+of the `main` Playwright project, plus `Full E2E (serial projects)` for the
+focus-sensitive and startup-timing projects. Do not run the whole suite locally as
+routine verification: CI reruns it on the exact commit anyway. Locally, run the
+smallest spec or `--grep` that covers your change and let CI catch the rest.
+
+Every E2E test launches its own Electron instance, so roughly 2s of each ~4.6s
+test is process startup. That makes test count, not assertion count, the thing
+that costs wall-clock time — prefer adding coverage in `tests/renderer/`.
 
 Run the full `npm.cmd run test:e2e` locally only when you have a specific reason —
 debugging a failure CI reported, or a change to the harness or Playwright config

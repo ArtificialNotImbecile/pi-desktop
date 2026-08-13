@@ -30,7 +30,25 @@ export type ChatHarness = {
   commits(): Array<{ threadId: string | null; contents: string[] }>;
   refreshThreads: { calls: Array<string | null | undefined> };
   patchThread: { calls: Array<{ threadId: string; partial: Partial<ChatThread> }> };
+  /**
+   * Starts a send and returns its live handle. The hook mints the requestId
+   * internally with crypto.randomUUID, so it is read back off the send the fake
+   * bridge received rather than guessed.
+   */
+  startRun(text: string): Promise<RunHandle>;
   unmount(): void;
+};
+
+export type RunHandle = {
+  requestId: string;
+  threadId: string;
+  /** Emits a `running` event carrying the given live assistant text. */
+  stream(text: string): Promise<void>;
+  /**
+   * Persists `text` as the run's assistant row, settles the run against
+   * `replaceAfterMessageId`, and waits for the send to finish.
+   */
+  settle(text: string, replaceAfterMessageId?: string): Promise<void>;
 };
 
 export function thread(id: string, overrides: Partial<ChatThread> = {}): ChatThread {
@@ -110,6 +128,63 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
     },
     refreshThreads,
     patchThread,
+    async startRun(text) {
+      const sendsBefore = bridge.calls.sendChatMessage.length;
+      let sending: Promise<boolean> | null = null;
+      await act(async () => {
+        sending = harness.current().sendMessage(text);
+        // Let the optimistic row commit without awaiting the send: it does not
+        // resolve until the run settles.
+        await Promise.resolve();
+      });
+      const sent = bridge.calls.sendChatMessage.at(-1);
+      if (!sent || bridge.calls.sendChatMessage.length === sendsBefore) {
+        throw new Error(`sendMessage("${text}") never reached the bridge.`);
+      }
+      const { threadId } = sent;
+      const requestId = sent.requestId;
+      if (!requestId) throw new Error("Send reached the bridge without a requestId.");
+      // Main persists the user row as part of handling the send, so the store
+      // has to gain it here for a later page read to see the same history the
+      // real database would return.
+      const persistedUser = bridge.append(threadId, {
+        id: `${requestId}-user`,
+        role: "user",
+        content: text
+      });
+      let replyIndex = 0;
+      return {
+        requestId,
+        threadId,
+        async stream(liveText) {
+          await bridge.emit({
+            requestId,
+            threadId,
+            status: "running",
+            liveMessages: [{ role: "assistant", content: liveText }]
+          });
+        },
+        async settle(replyText, replaceAfterMessageId) {
+          replyIndex += 1;
+          const id = `${requestId}-reply-${replyIndex}`;
+          const persisted = bridge.append(threadId, { id, role: "assistant", content: replyText });
+          await bridge.emit({
+            requestId,
+            threadId,
+            status: "done",
+            // The run's authoritative tail is the user turn plus its answer,
+            // which is what the main process publishes.
+            settlement: {
+              ...(replaceAfterMessageId ? { replaceAfterMessageId } : {}),
+              messages: [persistedUser, persisted]
+            }
+          });
+          await act(async () => {
+            await sending;
+          });
+        }
+      };
+    },
     unmount() {
       view?.unmount();
     }

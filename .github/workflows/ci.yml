@@ -105,10 +105,26 @@ jobs:
   # tagged @smoke, so they had never run on Linux before this job existed.
   # macOS is the configuration with a green full run behind it. Making the suite
   # pass under X11 is its own change, and belongs with the offscreen harness.
+  # Each E2E test launches its own Electron instance, so about 2s of every
+  # test is process startup: the unsharded suite spent 9m56s on 130 tests, ~4.6s
+  # each. One worker stays mandatory -- parallel Electron launches starve the
+  # heavier specs on macOS, which the Playwright config documents -- so the way
+  # to spend less wall-clock time is more machines, not more workers.
+  #
+  # `--shard` cannot be applied to the whole config: the focus-sensitive and
+  # startup-timing projects declare `dependencies`, and Playwright then places
+  # every test in the first shard (verified: 128/0/0). Sharding the `main`
+  # project alone splits evenly (41/40/40 of its 121 tests) and the two serial
+  # projects run as their own job with --no-deps, which also gives them the
+  # uncontended machine their `dependencies` were there to guarantee.
   e2e:
-    name: Full E2E
+    name: Full E2E (${{ matrix.shard }}/3)
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
 
@@ -123,22 +139,55 @@ jobs:
       - name: Build application
         run: npm run build
 
-      # One worker. Two finished in 3.6m against 5.4m on Linux but failed the
-      # same specs either way, and the Playwright config documents parallel
-      # Electron starving the heavier specs on macOS specifically.
-      - name: Run full E2E suite
-        run: npm run test:e2e
+      - name: Run E2E shard
+        run: npm run test:e2e:main -- --shard=${{ matrix.shard }}/3
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
-          # 105 of 111. The six @desktop-session specs need a real desktop
-          # session; see tests/playwright.config.ts. A local run covers them.
+          # The @desktop-session specs need a real desktop session; see
+          # tests/playwright.config.ts. A local run covers them.
           JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
 
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-failures
+          name: e2e-failures-shard-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
+
+  # Spotlight drives a second BrowserWindow, and the cold-start specs assert
+  # wall-clock startup budgets. Both need a machine to themselves, which is what
+  # this separate job gives them.
+  e2e-serial:
+    name: Full E2E (serial projects)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run focus-sensitive and startup-timing projects
+        run: npm run test:e2e:serial
+        env:
+          JASMINE_E2E_OFFSCREEN: "1"
+          JASMINE_E2E_WORKERS: "1"
+          JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failures-serial
           path: test-results/
           retention-days: 7

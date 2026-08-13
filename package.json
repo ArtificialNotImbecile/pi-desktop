@@ -36,6 +36,8 @@
     "test:e2e:bg": "npm run test:e2e",
     "test:e2e:smoke": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --grep @smoke",
     "test:e2e:full": "npm run test:e2e",
+    "test:e2e:main": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --project=main",
+    "test:e2e:serial": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --project=focus-sensitive --project=startup-timing --no-deps",
     "test:e2e:headed": "cross-env JASMINE_E2E_OFFSCREEN= playwright test -c tests/playwright.config.ts --headed",
     "test:context-capture": "npm run build:context-capture && node --no-warnings scripts/smoke-context-capture-package.mjs",
     "test:file-changes": "npm --prefix src/main/agent/extensions/fileChanges test",

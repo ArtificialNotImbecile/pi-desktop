@@ -50,7 +50,12 @@ export type FakeBridge = {
    * Withholds the next `listMessages` response until the returned function is
    * called. This is how a renderer test reproduces an out-of-order IPC reply --
    * deterministically, rather than by racing a timeout as the E2E harness has
-   * to. `release()` resolves it and flushes React.
+   * to.
+   *
+   * The rows are paged when the request arrives and delivered unchanged on
+   * release, matching the real handler, which reads SQLite before its response
+   * travels. A reply released after later writes therefore carries a genuinely
+   * stale page.
    */
   holdNextListMessages(): () => Promise<void>;
   calls: {
@@ -68,7 +73,7 @@ export type FakeBridge = {
 export function createFakeBridge(): FakeBridge {
   const threads = new Map<string, StoredMessage[]>();
   const streamListeners = new Set<(event: ChatStreamEvent) => void>();
-  const heldListMessages: Array<{ resolve(value: ChatMessage[]): void; request: MessageListRequest }> = [];
+  const heldListMessages: Array<{ resolve(value: ChatMessage[]): void; snapshot: ChatMessage[] }> = [];
   let holdCount = 0;
   let sendBehavior: ((request: ChatSendRequest) => Promise<unknown>) | null = null;
 
@@ -136,8 +141,14 @@ export function createFakeBridge(): FakeBridge {
       calls.listMessages.push(normalized);
       if (holdCount > 0) {
         holdCount -= 1;
+        // Paged now, delivered later. The real messages:list handler reads
+        // SQLite and only then does the response travel, so a held reply must
+        // carry the rows as they were when the request was made -- not as they
+        // are when it finally lands. That difference is the whole point of
+        // these tests: the page is stale, and the renderer has to notice.
+        const snapshot = page(normalized);
         return new Promise<ChatMessage[]>((resolve) => {
-          heldListMessages.push({ resolve, request: normalized });
+          heldListMessages.push({ resolve, snapshot });
         });
       }
       return Promise.resolve(page(normalized));
@@ -217,11 +228,10 @@ export function createFakeBridge(): FakeBridge {
       return async () => {
         const held = heldListMessages.shift();
         if (!held) throw new Error("No held listMessages response to release.");
-        // Paged at release time, so a test can mutate the store in between and
-        // model an IPC reply that reflects state newer than its own request.
         await act(async () => {
-          held.resolve(page(held.request));
+          held.resolve(held.snapshot);
         });
+        await flushFrames();
       };
     },
     calls,
