@@ -348,81 +348,103 @@ test.describe("Jasmine panels and tools", () => {
     await expect(addPanelMenu.getByRole("menuitem", { name: "Artifacts" })).toHaveCount(0);
     await expect(addPanelMenu.getByRole("menuitem", { name: "Context taxonomy" })).toHaveCount(0);
     await page.keyboard.press("Escape");
-    await expect(page.locator(".taxonomy-summary")).toContainText("deepseek-v4-flash");
-    await expect(page.locator(".taxonomy-warning-card")).toContainText("Reconstructed approximation");
-    await expect(page.locator(".taxonomy-item").first()).toContainText("system");
-    await expect(page.locator(".taxonomy-item").last()).toContainText("Current user prompt");
-    await expect(page.locator(".taxonomy-item", { hasText: "Current user prompt" }).locator(".taxonomy-item-details").first()).toHaveAttribute("open", "");
+    // Panel shape, grouping, budget arithmetic, default expansion and filtering
+    // are renderer state and are covered in tests/renderer/contextTaxonomyPanel.
+    // What has to run here is the capture pipeline end to end -- what the real
+    // classifier produces from a real provider request -- plus the layout half
+    // jsdom cannot measure.
+    await expect(page.locator(".taxonomy-head")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".taxonomy-head-approximate")).toBeVisible();
+    await expect(page.locator(".taxonomy-chip", { hasText: "Reconstructed approximation" })).toBeVisible();
+    await expect(page.locator(".taxonomy-item[open] .taxonomy-item-title")).toHaveText("Current user prompt");
 
     await page.locator(".rich-composer-editor").fill("show structured taxonomy");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload");
-    await expect(page.locator(".taxonomy-summary")).toContainText("schema v7");
-    await expect(page.locator(".taxonomy-summary")).toContainText("full sanitized payload sha256");
-    await expect(page.locator(".taxonomy-warning-card")).toHaveCount(0);
-    await expect(page.locator(".taxonomy-validation-card")).toContainText("Reasoning retention: Not required");
-    await expect(page.locator(".taxonomy-validation-card")).toContainText("DeepSeek tool-interval policy");
-    await expect(page.locator(".taxonomy-summary-counts")).toContainText("actual input tokens");
-    await expect(page.locator(".taxonomy-summary-counts")).toContainText("estimated by part");
-    await expect(page.locator(".taxonomy-composition")).toContainText("Estimated composition");
-    await expect(page.locator(".taxonomy-cache-card")).toContainText("Provider usage");
-    await expect(page.locator(".taxonomy-cache-card")).toContainText("4,096 hit");
-    await expect(page.locator(".taxonomy-cache-card")).toContainText("137 miss");
+    await expect(page.locator(".taxonomy-head-meta")).toContainText("provider payload");
+    await expect(page.locator(".taxonomy-head-meta")).toContainText("v7");
+    await expect(page.locator(".taxonomy-head-hash")).toBeVisible();
+    await expect(page.locator(".taxonomy-head-approximate")).toHaveCount(0);
+    const reasoningChip = page.locator(".taxonomy-chip", { hasText: "Reasoning n/a" });
+    await reasoningChip.click();
+    await expect(page.locator(".taxonomy-status-detail")).toContainText("DeepSeek tool-interval policy");
+    await reasoningChip.click();
+    const cacheChip = page.locator(".taxonomy-chip", { hasText: "Cache" });
+    await cacheChip.click();
+    await expect(page.locator(".taxonomy-status-detail")).toContainText("4,096");
+    await expect(page.locator(".taxonomy-status-detail")).toContainText("137");
+    await cacheChip.click();
+
+    // The classifier gives a tool definition a single `metadata` part, so this
+    // is where a regression that files the tool catalogue under "Metadata"
+    // shows up against a real capture rather than a fixture.
+    await expect(page.locator(".taxonomy-legend")).toContainText("Tool definitions");
+    await expect(page.locator(".taxonomy-total-label")).toHaveText("actual input tokens");
+    await expect(page.locator(".taxonomy-total-estimate")).toContainText("est.");
+
     const requestSwitcher = page.locator(".taxonomy-request-switcher");
-    await expect(requestSwitcher.getByRole("button", { name: "1/2" })).toBeVisible();
-    await expect(requestSwitcher.getByRole("button", { name: "2/2" })).toHaveAttribute("aria-pressed", "true");
-    await requestSwitcher.getByRole("button", { name: "1/2" }).click();
-    await expect(requestSwitcher.getByRole("button", { name: "1/2" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".taxonomy-payload-shape")).toContainText("Raw payload shape");
-    const payloadShapeSummary = page.locator(".taxonomy-payload-shape > summary");
-    await expect(payloadShapeSummary).toContainText("Raw payload shape");
-    await payloadShapeSummary.click();
-    await expect(page.locator(".taxonomy-payload-order")).toContainText("messages");
-    await expect(page.locator(".taxonomy-payload-order")).toContainText("tools");
+    await expect(requestSwitcher.getByRole("button", { name: "Request 1 of 2" })).toBeVisible();
+    await expect(requestSwitcher.getByRole("button", { name: "Request 2 of 2" })).toHaveAttribute("aria-pressed", "true");
+    await requestSwitcher.getByRole("button", { name: "Request 1 of 2" }).click();
+    await expect(requestSwitcher.getByRole("button", { name: "Request 1 of 2" })).toHaveAttribute("aria-pressed", "true");
+
     const rawPayload = page.locator(".taxonomy-raw-payload");
     await expect(rawPayload).toBeVisible();
-    await expect(rawPayload).toContainText("Sanitized raw provider payload");
+    await expect(rawPayload).toContainText("Sanitized raw payload");
     await expect(rawPayload.locator("pre")).toHaveCount(0);
     const currentPrompt = page.locator(".taxonomy-item", { hasText: "Current user prompt" });
     await expect(currentPrompt.getByText("show structured taxonomy", { exact: true })).toHaveCount(1);
     await rawPayload.locator("summary").click();
+    await expect(page.locator(".taxonomy-payload-order")).toContainText("messages");
+    await expect(page.locator(".taxonomy-payload-order")).toContainText("tools");
     await expect(rawPayload.locator("pre")).toContainText("\"tools\"");
     await expect(rawPayload.locator("pre")).toContainText("\"messages\"");
+    await rawPayload.locator("summary").click();
+
     const systemTaxonomy = page.locator(".taxonomy-item", { hasText: "System prompt" }).first();
-    await systemTaxonomy.locator(".taxonomy-item-details > summary").click();
-    await expect(systemTaxonomy).toContainText("~");
+    await systemTaxonomy.locator(".taxonomy-item-head").click();
     await expect(systemTaxonomy).toContainText("$.messages[0]");
-    await expect(systemTaxonomy).toContainText("System prompt");
-    await expect(systemTaxonomy.locator(".taxonomy-part", { hasText: "System prompt" })).toBeVisible();
     const projectContext = systemTaxonomy.locator(".taxonomy-part", { hasText: "Project context" });
     await expect(projectContext).toBeVisible();
-    await expect(projectContext).toHaveAttribute("open", "");
+    await projectContext.locator(".taxonomy-part-head").click();
     await expect(projectContext.locator(".markdown-message")).toContainText("Jasmine Agent Instructions");
     const skillInstructions = systemTaxonomy.locator(".taxonomy-part", { hasText: "Skill instructions" });
-    await expect(skillInstructions).toHaveAttribute("open", "");
+    await skillInstructions.locator(".taxonomy-part-head").click();
     await expect(skillInstructions.locator(".markdown-message")).toContainText("ui-ux-product-harness");
-    const toolTaxonomy = page.locator(".taxonomy-item", { hasText: "Tool definition: read" });
-    await expect(toolTaxonomy).toBeVisible();
-    await expect(toolTaxonomy.locator(".taxonomy-item-details > summary").first()).toContainText("Tool: read");
+
+    const toolsGroup = page.locator(".taxonomy-group").filter({ has: page.locator(".taxonomy-group-name", { hasText: "Tools" }) });
+    const toolTaxonomy = toolsGroup.locator(".taxonomy-item").first();
+    await expect(toolTaxonomy.locator(".taxonomy-item-title")).toHaveText("read");
+    await toolTaxonomy.locator(".taxonomy-item-head").click();
     await expect(toolTaxonomy).toContainText("$.tools[0]");
-    await expect(toolTaxonomy.locator(".taxonomy-item-details").first()).toHaveAttribute("open", "");
-    await expect(toolTaxonomy.locator(".taxonomy-part", { hasText: "Tool definition" })).toBeVisible();
     await expect(toolTaxonomy.locator("pre")).toContainText("Read file contents.");
     await expect(toolTaxonomy.locator("pre")).toContainText("parameters");
+
     const optionsTaxonomy = page.locator(".taxonomy-item", { hasText: "Request options" });
     await expect(optionsTaxonomy).toHaveCount(1);
-    await expect(optionsTaxonomy).toBeVisible();
+    await optionsTaxonomy.locator(".taxonomy-item-head").click();
     await expect(optionsTaxonomy).toContainText("request_options");
     await expect(optionsTaxonomy).toContainText("$.model");
-    const optionsDetails = optionsTaxonomy.locator(".taxonomy-item-details");
-    if (!(await optionsDetails.getAttribute("open"))) {
-      await optionsDetails.locator(":scope > summary").click();
-    }
-    const rawPayloadDetails = page.locator(".taxonomy-raw-payload");
-    if (await rawPayloadDetails.getAttribute("open")) {
-      await rawPayloadDetails.locator(":scope > summary").click();
-    }
+
+    // Layout, which jsdom has no engine for. The identity header has to stay
+    // put while the tree scrolls, and a JSONPath has to lose its head rather
+    // than its tail -- the tail is the part that identifies it, and the panel
+    // is often only wide enough for one of them.
+    await page.locator(".taxonomy-view").evaluate((node) => node.scrollTo(0, 600));
+    const stuck = await page.evaluate(() => {
+      const head = document.querySelector(".taxonomy-head")?.getBoundingClientRect();
+      const view = document.querySelector(".taxonomy-view")?.getBoundingClientRect();
+      const path = document.querySelector<HTMLElement>(".taxonomy-path");
+      if (!head || !view || !path) throw new Error("Taxonomy header or path geometry missing.");
+      return {
+        headerOffset: Math.abs(head.top - view.top),
+        headerVisible: head.height > 0,
+        pathDirection: getComputedStyle(path).direction
+      };
+    });
+    expect(stuck.headerVisible).toBe(true);
+    expect(stuck.headerOffset).toBeLessThanOrEqual(1);
+    expect(stuck.pathDirection).toBe("rtl");
     await optionsTaxonomy.scrollIntoViewIfNeeded();
     const taxonomyScreenshotDir = path.join(rootDir, "test-results", "ui-harness", "e2e");
     await mkdir(taxonomyScreenshotDir, { recursive: true });
@@ -620,31 +642,49 @@ test.describe("Jasmine panels and tools", () => {
 
     // Exact regression: the just-finished run must appear without another user
     // turn, panel reopen, or manual refresh.
-    await expect(page.locator(".taxonomy-summary")).toContainText("provider-payload", { timeout: 5_000 });
-    await expect(page.locator(".taxonomy-summary")).toContainText("schema v7");
-    await expect(page.locator(".taxonomy-unclassified-card")).toContainText("1 unclassified payload field");
-    await expect(page.locator(".taxonomy-unclassified-card")).toContainText("$.future_context_envelope");
+    await expect(page.locator(".taxonomy-head-meta")).toContainText("provider payload", { timeout: 5_000 });
+    await expect(page.locator(".taxonomy-head-meta")).toContainText("v7");
 
-    await page.locator(".taxonomy-payload-shape > summary").click();
+    // A field no classifier rule matched is the panel's most load-bearing
+    // signal, so it stays a coloured chip that names the exact JSONPath.
+    const unknownChip = page.locator(".taxonomy-chip", { hasText: "unknown field" });
+    await expect(unknownChip).toHaveText("1 unknown field");
+    await expect(unknownChip).toHaveAttribute("data-tone", "bad");
+    await unknownChip.click();
+    await expect(page.locator(".taxonomy-status-detail")).toContainText("$.future_context_envelope");
+
+    await page.locator(".taxonomy-raw-payload > summary").click();
     await expect(page.locator(".taxonomy-payload-order code")).toHaveText([
       "model", "messages", "stream", "future_context_envelope", "tools"
     ]);
+    await page.locator(".taxonomy-raw-payload > summary").click();
+
+    // Sections carry the grouping the classifier's order implies, and a section
+    // with nothing in it does not take up a heading -- this first turn has no
+    // conversation history yet.
+    await expect(page.locator(".taxonomy-group-name")).toHaveText([
+      "Instructions", "Current prompt", "Tools", "Request options", "Unknown fields"
+    ]);
     const options = page.locator(".taxonomy-item", { hasText: "Request options" });
     await expect(options).toHaveCount(1);
+    await options.locator(".taxonomy-item-head").click();
     await expect(options.locator(".taxonomy-part")).toHaveCount(2);
     await expect(options.locator(".taxonomy-part").nth(0)).toContainText("Option: model");
     await expect(options.locator(".taxonomy-part").nth(1)).toContainText("Option: stream");
-    await expect(page.locator(".taxonomy-derived-note")).toContainText("messages, tools, request options, then other fields");
-    const unclassified = page.locator(".taxonomy-item", { hasText: "future_context_envelope" });
-    await expect(unclassified.locator(".taxonomy-item-details")).toHaveAttribute("open", "");
-    await expect(unclassified.locator(".taxonomy-part-unclassified")).toHaveAttribute("open", "");
-    await expect(unclassified).toContainText("classifier coverage fixture");
 
-    const systemMessage = page.locator(".taxonomy-item", { has: page.locator(".taxonomy-item-title strong", { hasText: "System prompt" }) });
-    const systemDetails = systemMessage.locator(".taxonomy-item-details");
-    await expect(systemDetails).not.toHaveAttribute("open", "");
-    await systemDetails.locator(":scope > summary").click();
-    await expect(systemDetails).toHaveAttribute("open", "");
+    const unclassified = page.locator(".taxonomy-item", { hasText: "Other payload fields" });
+    await unclassified.locator(".taxonomy-item-head").click();
+    await expect(unclassified).toContainText("classifier coverage fixture");
+    await expect(unclassified).toContainText("$.future_context_envelope");
+
+    // Everything but the current prompt starts collapsed, so the panel opens as
+    // a map rather than as every part of every message at once.
+    const systemMessage = page.locator(".taxonomy-item", { has: page.locator(".taxonomy-item-title", { hasText: "System prompt" }) });
+    await expect(systemMessage).not.toHaveAttribute("open", "");
+    await systemMessage.locator(".taxonomy-item-head").click();
+    await expect(systemMessage).toHaveAttribute("open", "");
+    await expect(systemMessage.locator(".taxonomy-part").first()).not.toHaveAttribute("open", "");
+    await page.getByRole("button", { name: "Expand all" }).click();
     await expect.poll(() => systemMessage.locator(".taxonomy-part").evaluateAll((parts) => parts.length > 0 && parts.every((part) => (part as HTMLDetailsElement).open))).toBe(true);
   });
 
