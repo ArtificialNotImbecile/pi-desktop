@@ -114,6 +114,33 @@ test.describe("Working task center", () => {
     await attentionTile.click();
     await expect(page.locator(".working-task")).toHaveCount(5);
 
+    // With more finished runs than the Done group shows at once, the heading has
+    // to keep reporting the total -- the tile and the Show all label do -- while
+    // only the rows on screen are capped.
+    await page.evaluate(async () => {
+      for (let index = 0; index < 6; index += 1) {
+        const thread = await window.jasmine.createThread({ title: `Finished Working chat ${index + 1}` });
+        await window.jasmine.sendChatMessage({
+          requestId: `working-done-e2e-${index + 1}`,
+          threadId: thread.id,
+          content: "working done filler",
+          messages: [],
+          providerId: "deepseek",
+          modelId: "deepseek-v4-flash"
+        });
+      }
+    });
+    const doneTotal = await page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items
+      .filter((item) => ["completed", "cancelled", "interrupted"].includes(item.status)).length);
+    expect(doneTotal).toBeGreaterThan(5);
+    const doneGroup = page.locator('[data-working-group="done"]');
+    await expect(doneGroup.locator(".working-group-heading > span")).toHaveText(String(doneTotal));
+    await expect(doneGroup.locator(".working-task")).toHaveCount(5);
+    await doneGroup.getByRole("button", { name: /Show all/ }).click();
+    await expect(doneGroup.locator(".working-task")).toHaveCount(doneTotal);
+    await doneGroup.getByRole("button", { name: "Show less" }).click();
+    await expect(doneGroup.locator(".working-task")).toHaveCount(5);
+
     const screenshotDir = path.join(rootDir, "test-results", "ui-harness", "e2e");
     await mkdir(screenshotDir, { recursive: true });
     await page.screenshot({ path: path.join(screenshotDir, "working-task-layout.png") });

@@ -125,11 +125,15 @@ export function WorkingPage(props: {
 
             {nothingVisible ? <p className="working-group-empty">{t("working.group.empty")}</p> : (
               <div className="working-groups">
-                <WorkingGroup title={t("working.group.attention")} tone="attention" tasks={visible.attention} now={now} onOpen={props.onOpen} onStop={props.onStop} />
-                <WorkingGroup title={t("working.group.progress")} tasks={visible.progress} now={now} onOpen={props.onOpen} onStop={props.onStop} />
+                <WorkingGroup group="attention" title={t("working.group.attention")} tone="attention" tasks={visible.attention} now={now} onOpen={props.onOpen} onStop={props.onStop} />
+                <WorkingGroup group="running" title={t("working.group.progress")} tasks={visible.progress} now={now} onOpen={props.onOpen} onStop={props.onStop} />
                 <WorkingGroup
+                  group="done"
                   title={t("working.group.recent")}
                   tasks={showAllDone ? visible.done : visible.done.slice(0, DONE_PREVIEW_COUNT)}
+                  // Collapsing caps the rows on screen, not how many finished
+                  // runs there are; the heading has to agree with the tile.
+                  count={visible.done.length}
                   now={now}
                   onOpen={props.onOpen}
                   onStop={props.onStop}
@@ -174,9 +178,11 @@ function WorkingFilterTile(props: {
 }
 
 function WorkingGroup(props: {
+  group: WorkingFilter;
   title: string;
   tone?: "attention";
   tasks: WorkingTask[];
+  count?: number;
   now: number;
   action?: ReactNode;
   onOpen(task: WorkingTask): void;
@@ -186,10 +192,10 @@ function WorkingGroup(props: {
   // An empty group is not news; it renders nothing rather than a placeholder.
   if (props.tasks.length === 0) return null;
   return (
-    <section className={`working-group ${props.tone ?? ""}`}>
+    <section className={`working-group ${props.tone ?? ""}`} data-working-group={props.group}>
       <div className="working-group-heading">
         <h2>{props.title}</h2>
-        <span>{props.tasks.length}</span>
+        <span>{props.count ?? props.tasks.length}</span>
         {props.action ? <div className="working-group-action">{props.action}</div> : null}
       </div>
       <div className="working-task-list">
