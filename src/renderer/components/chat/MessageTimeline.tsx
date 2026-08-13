@@ -407,6 +407,13 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
   const { t } = useI18n();
   const { item } = props;
   const summary = item.summary;
+  const controlAction = localizedToolAction(item.toolName, t);
+  const controlStatus = localizedToolStatus(summary.status, t);
+  const controlName = t("message.toolToggle", {
+    action: controlAction,
+    target: summary.target,
+    status: controlStatus
+  }).replace(/\s+/g, " ").trim();
   // Large tool outputs can be expensive even while hidden: mounting a
   // ShikiCodeBlock immediately starts language loading and highlighting. Keep
   // a never-opened row genuinely lazy, then retain the same detail subtree once
@@ -422,13 +429,13 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
       className={`timeline-item tool-run-item ${summary.state} ${props.expanded ? "" : "collapsed"}`}
       aria-label={t("message.toolSummary", { action: summary.action, target: summary.target }).trim()}
     >
-      <button type="button" className="timeline-label timeline-toggle tool-run-toggle" aria-expanded={props.expanded} onClick={props.onToggle}>
+      <button type="button" className="timeline-label timeline-toggle tool-run-toggle" aria-label={controlName} aria-expanded={props.expanded} onClick={props.onToggle}>
         {toolIcon(item.toolName)}
         <span className="tool-run-main">
-          <b>{summary.action}</b>
+          <b>{controlAction}</b>
           {summary.target && <span className="tool-run-target">{summary.target}</span>}
         </span>
-        <small className={`tool-run-status ${summary.state}`}>{summary.status}</small>
+        <small className={`tool-run-status ${summary.state}`}>{controlStatus}</small>
         <ChevronDownIcon />
       </button>
       {detailsMountedRef.current ? (
@@ -530,6 +537,57 @@ function toolStatus(
   if (toolName.includes("search")) return stats ? `searched - ${stats}` : "searched";
   if (toolName === "fetch_content") return stats ? `fetched - ${stats}` : "fetched";
   return stats ? `done - ${stats}` : "done";
+}
+
+function localizedToolAction(toolName: string, t: ReturnType<typeof useI18n>["t"]): string {
+  if (toolName === "web_search") return t("message.toolAction.search");
+  if (toolName === "fetch_content") return t("message.toolAction.fetch");
+  if (toolName === "get_search_content") return t("message.toolAction.readSearch");
+  if (toolName === "code_search") return t("message.toolAction.codeSearch");
+  if (toolName === "read" || toolName === "write" || toolName === "edit" || toolName === "bash") {
+    return t(`message.toolAction.${toolName}`);
+  }
+  return toolName;
+}
+
+function localizedToolStatus(status: string, t: ReturnType<typeof useI18n>["t"]): string {
+  const exit = /^exit (\d+)$/.exec(status);
+  if (exit) return t("message.toolStatus.exit", { code: exit[1] });
+  const separator = status.indexOf(" - ");
+  const base = separator < 0 ? status : status.slice(0, separator);
+  const stats = separator < 0 ? "" : status.slice(separator + 3);
+  const localized = localizedToolStatusBase(base, t);
+  return stats ? t("message.toolStatus.withStats", { status: localized, stats: localizedToolStats(stats, t) }) : localized;
+}
+
+function localizedToolStatusBase(status: string, t: ReturnType<typeof useI18n>["t"]): string {
+  if (status === "reading") return t("message.toolStatus.reading");
+  if (status === "writing") return t("message.toolStatus.writing");
+  if (status === "editing") return t("message.toolStatus.editing");
+  if (status === "running") return t("message.toolStatus.running");
+  if (status === "searching") return t("message.toolStatus.searching");
+  if (status === "fetching") return t("message.toolStatus.fetching");
+  if (status === "stopped") return t("message.toolStatus.stopped");
+  if (status === "failed") return t("message.toolStatus.failed");
+  if (status === "read") return t("message.toolStatus.read");
+  if (status === "wrote") return t("message.toolStatus.wrote");
+  if (status === "edited") return t("message.toolStatus.edited");
+  if (status === "done") return t("message.toolStatus.done");
+  if (status === "searched") return t("message.toolStatus.searched");
+  if (status === "fetched") return t("message.toolStatus.fetched");
+  return status;
+}
+
+function localizedToolStats(stats: string, t: ReturnType<typeof useI18n>["t"]): string {
+  const linesBytes = /^(\d+) lines, (\d+) bytes$/.exec(stats);
+  if (linesBytes) return t("message.toolStats.linesBytes", { lines: linesBytes[1], bytes: linesBytes[2] });
+  const lines = /^(\d+) lines?$/.exec(stats);
+  if (lines) return t("message.toolStats.lines", { count: lines[1] });
+  const bytes = /^(\d+) bytes$/.exec(stats);
+  if (bytes) return t("message.toolStats.bytes", { count: bytes[1] });
+  const results = /^(\d+) results$/.exec(stats);
+  if (results) return t("message.toolStats.results", { count: results[1] });
+  return stats;
 }
 
 function hasStoppedSystemAfter(items: ChatTimelineItem[], index: number): boolean {

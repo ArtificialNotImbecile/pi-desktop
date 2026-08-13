@@ -244,8 +244,10 @@ describe("message rendering", () => {
     };
 
     const harness = mountMessages([toolMessage, imageMessage], "zh");
-    expect(harness.container.querySelector('[data-message-id="localized-tool"] .tool-run-item')?.getAttribute("aria-label"))
-      .toBe("工具 edit src/example.ts");
+    const localizedTool = harness.container.querySelector('[data-message-id="localized-tool"] .tool-run-item');
+    expect(localizedTool?.getAttribute("aria-label")).toBe("工具 edit src/example.ts");
+    expect(localizedTool?.querySelector(".tool-run-toggle")?.getAttribute("aria-label"))
+      .toBe("编辑 src/example.ts 已编辑 · +1 -1");
     expect(screen.getByRole("button", { name: "预览 red-square.png" })).toBeDefined();
   });
 });
