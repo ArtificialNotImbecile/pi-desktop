@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc";
+import type { AppLanguage, WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc";
 import { WORKING_ACTIVITY, toolNameFromActivity } from "../../../shared/workingActivity";
 import { StopIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { Button, EmptyState } from "../ui";
-import { useI18n, type I18nKey } from "../../i18n";
+import { localeTag, useI18n, type I18nKey } from "../../i18n";
 
 const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stopping"];
 const ATTENTION_STATUSES: WorkingTaskStatus[] = ["waiting_user", "failed"];
@@ -11,7 +11,7 @@ const DONE_STATUSES: WorkingTaskStatus[] = ["completed", "cancelled", "interrupt
 const TERMINAL_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelled", "interrupted"];
 // Main persists activity in English whatever the UI language is. Every line
 // Jasmine writes for itself is listed in shared/workingActivity and translated
-// here; tests/unit/working-activity-i18n.mjs fails if the two lists drift.
+// here; tests/unit/i18n-parity.mjs fails if the two lists drift.
 // Text from a model or a tool is not in this table and is shown as written.
 const ACTIVITY_KEYS: Record<string, I18nKey> = {
   [WORKING_ACTIVITY.preparing]: "working.activity.preparing",
@@ -49,7 +49,7 @@ export function WorkingPage(props: {
   onClearCompleted(): void;
   onNewChat(): void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [now, setNow] = useState(Date.now());
   const [filter, setFilter] = useState<WorkingFilter>("all");
   const [showAllDone, setShowAllDone] = useState(false);
@@ -142,7 +142,7 @@ export function WorkingPage(props: {
                 label={t("working.filter.done")}
                 count={groups.done.length}
                 note={lastFinishedAt
-                  ? t("working.filter.note.done", { time: formatClock(lastFinishedAt) })
+                  ? t("working.filter.note.done", { time: formatClock(lastFinishedAt, language) })
                   : t("working.filter.note.doneIdle")}
                 onSelect={setFilter}
               />
@@ -213,7 +213,7 @@ function WorkingGroup(props: {
   onOpen(task: WorkingTask): void;
   onStop(requestId: string): void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   // An empty group is not news; it renders nothing rather than a placeholder.
   if (props.tasks.length === 0) return null;
   return (
@@ -241,7 +241,7 @@ function WorkingGroup(props: {
               <span className="working-task-aside">
                 {task.queueCount > 0 ? <span className="working-chip">{t("working.queued", { count: task.queueCount })}</span> : null}
                 {task.unread ? <span className="working-unread">{t("working.unread")}</span> : null}
-                <time dateTime={task.finishedAt ?? task.startedAt}>{formatTaskTime(task, props.now)}</time>
+                <time dateTime={task.finishedAt ?? task.startedAt}>{formatTaskTime(task, props.now, language)}</time>
               </span>
             </Button>
             {ACTIVE_STATUSES.includes(task.status) ? (
@@ -314,12 +314,14 @@ function taskDuration(task: WorkingTask): string | null {
   return formatElapsed(elapsed);
 }
 
-function formatClock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+// A clock reads in the language the app is set to, not the one the machine
+// happens to run in.
+function formatClock(iso: string, language: AppLanguage): string {
+  return new Date(iso).toLocaleTimeString(localeTag(language), { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatTaskTime(task: WorkingTask, now: number): string {
-  if (task.finishedAt) return formatClock(task.finishedAt);
+function formatTaskTime(task: WorkingTask, now: number, language: AppLanguage): string {
+  if (task.finishedAt) return formatClock(task.finishedAt, language);
   return formatElapsed(Math.max(0, now - new Date(task.startedAt).getTime()));
 }
 

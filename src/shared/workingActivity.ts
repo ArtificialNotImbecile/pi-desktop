@@ -26,9 +26,14 @@ export const WORKING_ACTIVITY = {
 
 export type WorkingActivityName = keyof typeof WORKING_ACTIVITY;
 
+// What the persistence API accepts. A new literal at a call site is a type
+// error rather than an English string that reaches a Chinese UI and waits to be
+// noticed in review.
+export type WorkingActivity = (typeof WORKING_ACTIVITY)[WorkingActivityName] | `Using ${string}`;
+
 // The one activity with an operand. The tool name is sanitized by the caller
 // and passed through untranslated.
-export function usingToolActivity(toolName: string): string {
+export function usingToolActivity(toolName: string): `Using ${string}` {
   return `Using ${toolName}`;
 }
 

@@ -3,7 +3,7 @@ import type { AiProvider, ModelCapabilities, ProviderModelConfig, ProviderUpdate
 import { Button, Select, Switch, TextInput } from "../ui";
 import { ModelOptionsDialog } from "./ModelOptionsDialog";
 import { SecretField, SettingsActions, SettingsRow, SettingsSection, StatePill } from "./SettingsLayout";
-import { useI18n, type I18nKey } from "../../i18n";
+import { localeTag, useI18n, type I18nKey } from "../../i18n";
 
 export function ProviderDetailPage(props: {
   provider: AiProvider;
@@ -262,7 +262,7 @@ export function ProviderDetailPage(props: {
 
         <div className="provider-meta">
           <span>{t("settings.provider.lastChecked")}</span>
-          <b>{props.provider.lastCheckedAt ? new Date(props.provider.lastCheckedAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US") : t("app.never")}</b>
+          <b>{props.provider.lastCheckedAt ? new Date(props.provider.lastCheckedAt).toLocaleString(localeTag(language)) : t("app.never")}</b>
           <span>{t("settings.provider.lastError")}</span>
           <b>{props.provider.lastError ?? t("settings.provider.none")}</b>
         </div>
@@ -360,7 +360,7 @@ function capabilitySummary(model: ProviderModelConfig, language: "en" | "zh", t:
     model.capabilities.embedding ? t("settings.provider.capability.embedding") : ""
   ].filter(Boolean);
   return t("settings.provider.contextSummary", {
-    count: model.contextWindow.toLocaleString(language === "zh" ? "zh-CN" : "en-US"),
+    count: model.contextWindow.toLocaleString(localeTag(language)),
     source: t(model.customized ? "settings.provider.source.custom" : "settings.provider.source.auto"),
     capabilities: labels.length ? ` - ${labels.join(language === "zh" ? "、" : ", ")}` : ""
   });

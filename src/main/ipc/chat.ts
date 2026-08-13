@@ -27,7 +27,7 @@ import type {
   WebSearchResult
 } from "../../shared/ipc.js";
 import { chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSchema, chatQueueSteerRequestSchema, chatQueueUpdateRequestSchema, chatRetryRequestSchema, chatSendRequestSchema } from "../../shared/schemas.js";
-import { WORKING_ACTIVITY, usingToolActivity } from "../../shared/workingActivity.js";
+import { WORKING_ACTIVITY, usingToolActivity, type WorkingActivity } from "../../shared/workingActivity.js";
 import { computeStreamDelta } from "../../shared/streamDelta.js";
 import { createChatStreamSettlement } from "../../shared/streamSettlement.js";
 import { generateAssistantReply } from "../agent/runtime.js";
@@ -1150,7 +1150,7 @@ async function delayChatGenerationForRegression(signal: AbortSignal): Promise<vo
   });
 }
 
-function activityFromTimeline(timeline: ChatTimelineItem[]): string {
+function activityFromTimeline(timeline: ChatTimelineItem[]): WorkingActivity {
   const latest = timeline.at(-1);
   if (!latest) return WORKING_ACTIVITY.generating;
   if (latest.kind === "thinking") return WORKING_ACTIVITY.thinking;

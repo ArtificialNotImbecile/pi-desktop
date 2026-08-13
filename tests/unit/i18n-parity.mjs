@@ -1,12 +1,19 @@
 // Every review round on the Working redesign found the same class of defect:
-// text Jasmine owns reaching a Chinese UI in English. The causes were always
-// one of three, so this guard covers all three at once rather than waiting for
-// the next instance to be reported.
+// text Jasmine owns reaching a Chinese UI in English. Each round it wore a
+// different hat, so this guard covers every hat found so far rather than
+// waiting for the next one to be reported.
 //
 //   1. a key added to one dictionary and not the other
-//   2. an activity label main persists that the renderer never translates
-//   3. user-visible copy built in main from string literals, where the
+//   2. a translation that drops an operand, including the selector of an ICU
+//      plural form
+//   3. an activity label main persists that the renderer never translates
+//   4. user-visible copy built in main from string literals, where the
 //      dictionary used to be out of reach
+//   5. a clock formatted with the machine's locale instead of the app's
+//
+// A sixth -- a call site persisting an activity string that is not in the
+// shared list -- is a compile error rather than a check here: the persistence
+// API takes WorkingActivity, not string.
 //
 // It reads the sources rather than rendering anything, so it fails on the drift
 // itself instead of needing a run to reach that state.
@@ -14,7 +21,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dictionaries, translate } from "../../dist/main/shared/i18n.js";
+import { dictionaries, localeTag, translate } from "../../dist/main/shared/i18n.js";
 import { WORKING_ACTIVITY } from "../../dist/main/shared/workingActivity.js";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -28,12 +35,14 @@ const missingEn = zh.filter((key) => !(key in dictionaries.en));
 assert.deepEqual(missingZh, [], "Keys missing from the zh dictionary");
 assert.deepEqual(missingEn, [], "Keys missing from the en dictionary");
 
-// The words inside an ICU plural form -- {count, plural, one {message} other
-// {messages}} -- are English text the translator replaces, not operands the
-// other language has to keep, so they are stripped before the check.
+// The branch words inside an ICU plural form -- {count, plural, one {message}
+// other {messages}} -- are English text the translator replaces, not operands
+// the other language has to keep. The selector in front of them is an operand
+// though: a translation that drops every {count} renders a count with no
+// number. So the form collapses to its selector rather than disappearing.
 function operandsOf(template) {
-  const withoutPlurals = template.replace(/\{\w+, plural,[^}]*\{[^{}]*\}[^}]*\{[^{}]*\}\}/g, "");
-  return [...withoutPlurals.matchAll(/\{(\w+)\}/g)].map((match) => match[1]);
+  const selectorOnly = template.replace(/\{(\w+), plural,[^}]*\{[^{}]*\}[^}]*\{[^{}]*\}\}/g, "{$1}");
+  return [...selectorOnly.matchAll(/\{(\w+)\}/g)].map((match) => match[1]);
 }
 
 // Every value is a non-empty string, and a template's operands survive
@@ -67,6 +76,14 @@ for (const name of Object.keys(WORKING_ACTIVITY)) {
 for (const key of [...mapped.values(), "working.activity.usingNamedTool"]) {
   assert.ok(key in dictionaries.en, `Unknown i18n key ${key}`);
 }
+
+// A clock or date formatted with undefined takes the locale of the machine,
+// not the language the app is set to, which is how a Chinese UI ends up
+// printing "03:45 PM". The Working page has to pass the tag explicitly.
+assert.equal(localeTag("zh"), "zh-CN");
+assert.equal(localeTag("en"), "en-US");
+const osLocale = [...page.matchAll(/toLocale\w*\(\s*(undefined|\[\])/g)].map((match) => match[0]);
+assert.deepEqual(osLocale, [], "WorkingPage must format times with localeTag(language), not the OS locale");
 
 // 3. The copy main puts in front of the user goes through the dictionary.
 const registry = await readFile(path.join(rootDir, "src/main/services/workingRegistry.ts"), "utf8");

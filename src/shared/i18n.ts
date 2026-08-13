@@ -1166,6 +1166,14 @@ export const dictionaries = {
 } as const;
 
 export type I18nKey = keyof typeof dictionaries.en;
+
+// Intl wants a BCP 47 tag, not the two-letter setting. Passing undefined would
+// hand it the OS locale instead, so a Chinese UI on an English machine prints
+// clocks like "03:45 PM". One place decides the mapping so a time in one panel
+// cannot disagree with a date in another.
+export function localeTag(language: AppLanguage): string {
+  return language === "zh" ? "zh-CN" : "en-US";
+}
 export type Translate = (key: I18nKey, values?: Record<string, string | number>) => string;
 
 export function translate(language: AppLanguage): Translate {

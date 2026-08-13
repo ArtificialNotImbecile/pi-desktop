@@ -6,7 +6,7 @@ import type {
   WorkingTaskStatus
 } from "../../shared/ipc.js";
 import { translate, type Translate } from "../../shared/i18n.js";
-import { WORKING_ACTIVITY } from "../../shared/workingActivity.js";
+import { WORKING_ACTIVITY, type WorkingActivity } from "../../shared/workingActivity.js";
 import type { JasmineDatabase } from "../db/database.js";
 
 export type WorkingNotification = {
@@ -45,7 +45,7 @@ export class WorkingRegistry {
     this.stopHandler = handler;
   }
 
-  start(input: { requestId: string; threadId: string; activity?: string }): void {
+  start(input: { requestId: string; threadId: string; activity?: WorkingActivity }): void {
     this.db.startWorkingTask({
       requestId: input.requestId,
       threadId: input.threadId,
@@ -55,7 +55,7 @@ export class WorkingRegistry {
     this.publish();
   }
 
-  activity(requestId: string, activity: string): void {
+  activity(requestId: string, activity: WorkingActivity): void {
     if (this.lastActivities.get(requestId) === activity) return;
     this.lastActivities.set(requestId, activity);
     if (this.db.updateWorkingTask({ requestId, status: "running", activity })) this.publish();
@@ -86,7 +86,7 @@ export class WorkingRegistry {
     if (this.db.updateWorkingTask({ requestId, status: "stopping", activity: WORKING_ACTIVITY.stopping })) this.publish();
   }
 
-  finish(requestId: string, status: Extract<WorkingTaskStatus, "completed" | "failed" | "cancelled">, activity?: string): void {
+  finish(requestId: string, status: Extract<WorkingTaskStatus, "completed" | "failed" | "cancelled">): void {
     this.lastActivities.delete(requestId);
     const current = this.snapshot().items.find((item) => item.requestId === requestId);
     const viewedInForeground = current?.threadId === this.viewedThreadId && !this.host.isBackground();
@@ -94,7 +94,7 @@ export class WorkingRegistry {
     if (!this.db.updateWorkingTask({
       requestId,
       status,
-      activity: activity ?? terminalActivity(status),
+      activity: terminalActivity(status),
       finishedAt,
       queueCount: 0,
       unread: status !== "cancelled" && !viewedInForeground

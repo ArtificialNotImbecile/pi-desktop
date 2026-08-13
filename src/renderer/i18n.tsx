@@ -5,7 +5,7 @@ import { translate, type Translate } from "../shared/i18n";
 // The strings themselves live in shared/i18n so Electron main can translate the
 // text it owns -- OS notifications -- with the same table. This file is only the
 // React binding.
-export { translate } from "../shared/i18n";
+export { translate, localeTag } from "../shared/i18n";
 export type { I18nKey } from "../shared/i18n";
 
 type I18nContextValue = {
