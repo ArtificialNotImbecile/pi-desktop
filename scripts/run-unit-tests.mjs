@@ -44,6 +44,7 @@ function packageTestStep(packagePath, testFiles) {
 const tasks = [
   { name: "database-smoke", steps: [["node", "--no-warnings", "tests/unit/database-smoke.mjs"]] },
   { name: "working-registry", steps: [["node", "--no-warnings", "tests/unit/working-registry.mjs"]] },
+  { name: "i18n-parity", steps: [["node", "--no-warnings", "tests/unit/i18n-parity.mjs"]] },
   { name: "app-updater", steps: [["node", "--no-warnings", "tests/unit/app-updater.mjs"]] },
   { name: "stream-delta", steps: [["node", "--no-warnings", "tests/unit/stream-delta.mjs"]] },
   { name: "pi-runtime-equivalence", steps: [["node", "--no-warnings", "tests/unit/pi-runtime-equivalence.mjs"]] },

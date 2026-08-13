@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc";
+import { WORKING_ACTIVITY, toolNameFromActivity } from "../../../shared/workingActivity";
 import { StopIcon, TrashIcon, WorkingIcon } from "../icons/Icons";
 import { Button, EmptyState } from "../ui";
 import { useI18n, type I18nKey } from "../../i18n";
@@ -8,19 +9,32 @@ const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stoppi
 const ATTENTION_STATUSES: WorkingTaskStatus[] = ["waiting_user", "failed"];
 const DONE_STATUSES: WorkingTaskStatus[] = ["completed", "cancelled", "interrupted"];
 const TERMINAL_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelled", "interrupted"];
-// The registry persists these activity strings in English whatever the UI
-// language is, so recognizing "this only repeats the status" has to compare
-// against them rather than against the translated label.
-const GENERIC_TERMINAL_ACTIVITY = new Set(["completed", "failed", "cancelled"]);
-// The stock lines a run passes through before it does anything nameable. They
-// come from the registry in English too, so the page translates them rather
-// than leaking them into a Chinese UI.
-const STOCK_ACTIVITY_KEYS: Record<string, I18nKey> = {
-  "preparing response": "working.activity.preparing",
-  "resuming response": "working.activity.resuming",
-  "waiting for your answer": "working.activity.waiting",
-  "stopping": "working.activity.stopping"
+// Main persists activity in English whatever the UI language is. Every line
+// Jasmine writes for itself is listed in shared/workingActivity and translated
+// here; tests/unit/working-activity-i18n.mjs fails if the two lists drift.
+// Text from a model or a tool is not in this table and is shown as written.
+const ACTIVITY_KEYS: Record<string, I18nKey> = {
+  [WORKING_ACTIVITY.preparing]: "working.activity.preparing",
+  [WORKING_ACTIVITY.preparingRetry]: "working.activity.preparingRetry",
+  [WORKING_ACTIVITY.preparingEdit]: "working.activity.preparingEdit",
+  [WORKING_ACTIVITY.resuming]: "working.activity.resuming",
+  [WORKING_ACTIVITY.generating]: "working.activity.generating",
+  [WORKING_ACTIVITY.thinking]: "working.activity.thinking",
+  [WORKING_ACTIVITY.usingTool]: "working.activity.usingTool",
+  [WORKING_ACTIVITY.processingToolResult]: "working.activity.processingToolResult",
+  [WORKING_ACTIVITY.toolError]: "working.activity.toolError",
+  [WORKING_ACTIVITY.writing]: "working.activity.writing",
+  [WORKING_ACTIVITY.waiting]: "working.activity.waiting",
+  [WORKING_ACTIVITY.stopping]: "working.activity.stopping",
+  [WORKING_ACTIVITY.interrupted]: "working.activity.interrupted"
 };
+// These say nothing the status glyph and label have not already said, so a
+// finished row spends the line on its duration instead.
+const GENERIC_TERMINAL_ACTIVITY = new Set<string>([
+  WORKING_ACTIVITY.completed,
+  WORKING_ACTIVITY.failed,
+  WORKING_ACTIVITY.cancelled
+]);
 // Finished runs are history: they stay one click away instead of pushing the
 // tasks that still need a decision off the first screen.
 const DONE_PREVIEW_COUNT = 5;
@@ -283,10 +297,12 @@ function terminalLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>[
 // is passed through as written.
 function detailText(task: WorkingTask, t: ReturnType<typeof useI18n>["t"]): string {
   const activity = task.activity.trim();
-  const stockKey = STOCK_ACTIVITY_KEYS[activity.toLowerCase()];
-  if (stockKey) return t(stockKey);
+  const ownKey = ACTIVITY_KEYS[activity];
+  if (ownKey) return t(ownKey);
+  const toolName = toolNameFromActivity(activity);
+  if (toolName) return t("working.activity.usingNamedTool", { tool: toolName });
   if (!TERMINAL_STATUSES.includes(task.status)) return activity;
-  if (activity && !GENERIC_TERMINAL_ACTIVITY.has(activity.toLowerCase())) return activity;
+  if (activity && !GENERIC_TERMINAL_ACTIVITY.has(activity)) return activity;
   const duration = taskDuration(task);
   return duration ? t("working.took", { duration }) : "";
 }

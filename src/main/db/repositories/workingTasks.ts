@@ -1,4 +1,5 @@
 import type { WorkingSnapshot, WorkingTask, WorkingTaskStatus } from "../../../shared/ipc.js";
+import { WORKING_ACTIVITY } from "../../../shared/workingActivity.js";
 import type { SqlDatabase } from "./types.js";
 
 const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stopping"];
@@ -134,10 +135,10 @@ export function clearCompletedWorking(db: SqlDatabase): number {
 export function recoverInterruptedWorking(db: SqlDatabase, timestamp: string): number {
   return db.prepare(`
     UPDATE working_tasks
-    SET status = 'interrupted', activity = 'Interrupted when Jasmine exited',
+    SET status = 'interrupted', activity = ?,
         updated_at = ?, finished_at = ?, queue_count = 0, unread = 1
     WHERE status IN ('running', 'waiting_user', 'stopping')
-  `).run(timestamp, timestamp).changes;
+  `).run(WORKING_ACTIVITY.interrupted, timestamp, timestamp).changes;
 }
 
 export function deleteExpiredWorking(db: SqlDatabase, recentSince: string): number {

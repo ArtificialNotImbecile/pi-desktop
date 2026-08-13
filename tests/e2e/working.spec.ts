@@ -220,6 +220,10 @@ test.describe("Working task center", () => {
     await page.getByRole("button", { name: /Private notification chat/ }).click();
     await expect.poll(() => navigationPath(page)).toContain(task.id);
     await page.evaluate((threadId) => window.jasmine.updateWorkingView({ threadId }), task.id);
+    // Main writes notification copy itself, with the window hidden and the
+    // renderer's dictionary out of reach, so the language setting has to reach
+    // it too.
+    await page.evaluate(() => window.jasmine.updateAppSettings({ language: "zh" }));
     await harness.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("index.html"))?.hide();
       (globalThis as any).__jasmineWorkingNotifications?.clear?.();
@@ -239,6 +243,9 @@ test.describe("Working task center", () => {
     await expect.poll(() => page.evaluate(async () => (await window.jasmine.getWorkingSnapshot()).items.find((item) => item.requestId === "working-notification-e2e")?.unread)).toBe(true);
     const notification = await harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications.list()[0]);
     expect(notification.body).not.toContain("Private notification chat");
+    expect(notification.title).toContain("任务已完成");
+    expect(notification.body).toBe("一个 Jasmine 任务已完成。");
+    await page.evaluate(() => window.jasmine.updateAppSettings({ language: "en" }));
     await harness.app.evaluate(() => (globalThis as any).__jasmineWorkingNotifications.click(0));
     await expect.poll(() => harness.app.evaluate(() => Boolean((globalThis as any).__jasmineTray?.isMainVisible?.()))).toBe(true);
     await expect.poll(() => navigationPath(page)).toContain(task.id);
