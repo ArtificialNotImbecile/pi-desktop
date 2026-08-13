@@ -613,6 +613,44 @@ test.describe("Jasmine panels and tools", () => {
     await expect.poll(captureState).toEqual({ count: 1, id: expect.not.stringMatching(retryCapture.id!) });
   });
 
+  test("the rolling taxonomy follows the latest queued task and cascades with it", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await page.locator(".rich-composer-editor").fill("slow response taxonomy queue root");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".user-bubble")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    await page.locator(".rich-composer-editor").fill("queued taxonomy child");
+    await page.getByRole("button", { name: "Queue message" }).click();
+    await expect(page.locator(".assistant-block").last()).toContainText("Queued follow-up complete: queued taxonomy child", { timeout: 10_000 });
+
+    const linked = await page.evaluate(async () => {
+      const threadId = (await window.jasmine.listThreads())[0]?.id;
+      if (!threadId) throw new Error("Queued taxonomy thread is missing.");
+      const messages = await window.jasmine.listMessages(threadId);
+      const capture = (await window.jasmine.listThreadContextTaxonomy(threadId)).captures.at(-1);
+      return {
+        capture,
+        lastAssistantId: messages.filter((message) => message.role === "assistant").at(-1)?.id ?? null
+      };
+    });
+    expect(linked.capture?.taskIndex).toBe(2);
+    expect(linked.capture?.messageId).toBe(linked.lastAssistantId);
+
+    await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
+    const queuedUser = page.locator(".user-message-wrap").last();
+    await queuedUser.hover();
+    await queuedUser.getByRole("button", { name: "Edit message" }).click();
+    await page.locator(".rich-composer-editor").fill("edited queued taxonomy child");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expect.poll(async () => page.evaluate(async () => {
+      const threadId = (await window.jasmine.listThreads())[0]?.id;
+      return threadId ? (await window.jasmine.listThreadContextTaxonomy(threadId)).captures.length : -1;
+    })).toBe(0);
+  });
+
   test("file change artifacts and lazy details restore after restart", async ({}, testInfo) => {
     let { page } = harness;
     const userDataDir = harness.userDataDir;

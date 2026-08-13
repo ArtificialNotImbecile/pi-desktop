@@ -226,7 +226,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   }
 
   const { runPiCodingAgentChat } = await import("./providers/piCodingAgent.js");
-  const capturedTaxonomies: ContextTaxonomy[] = [];
+  let capturedTaxonomy: ContextTaxonomy | undefined;
   const capturedFileChanges: FileChangeCaptureInput[] = [];
   const result = await runPiCodingAgentChat({
     provider,
@@ -264,7 +264,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
           // Taxonomy is a live debug probe. A tool loop can issue many provider
           // requests, but only the newest payload is useful once the loop moves
           // on; retaining every intermediate payload caused unbounded growth.
-          capturedTaxonomies[0] = taxonomy;
+          capturedTaxonomy = taxonomy;
         }
       : undefined,
     fileChangeTrackingMode: request.fileChangeTrackingMode ?? "managed-tools-only",
@@ -277,12 +277,11 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
   });
 
   const normalizedResult = normalizeEmptyAssistantResult(result, provider, request.reasoningEffort);
-  if (captureContextTaxonomy && capturedTaxonomies.length === 0) {
+  if (captureContextTaxonomy && !capturedTaxonomy) {
     console.warn("[context-taxonomy] Falling back to Jasmine assembly taxonomy because no Pi provider payload capture was emitted.");
   }
 
-  const scopedTaxonomies = captureContextTaxonomy ? groupProviderRequestCaptures(capturedTaxonomies) : [];
-  const fallbackTaxonomy = captureContextTaxonomy && capturedTaxonomies.length === 0
+  const fallbackTaxonomy = captureContextTaxonomy && !capturedTaxonomy
     ? buildAssemblyTaxonomy({
         provider,
         systemPrompt: fallbackSystemPrompt,
@@ -300,8 +299,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     timeline: normalizedResult.timeline,
     webSearchUsed: result.webSearchUsed,
     ...(captureContextTaxonomy ? {
-      contextTaxonomy: scopedTaxonomies.at(-1) ?? fallbackTaxonomy,
-      contextTaxonomies: scopedTaxonomies.length > 0 ? scopedTaxonomies : fallbackTaxonomy ? [fallbackTaxonomy] : []
+      contextTaxonomy: capturedTaxonomy ?? fallbackTaxonomy,
+      contextTaxonomies: capturedTaxonomy ? [capturedTaxonomy] : fallbackTaxonomy ? [fallbackTaxonomy] : []
     } : {}),
     fileChangeCaptures: capturedFileChanges,
     generatedMessages: result.generatedMessages
@@ -938,26 +937,6 @@ function buildAssemblyTaxonomy(input: {
     payloadSchemaVersion: CONTEXT_TAXONOMY_SCHEMA_VERSION,
     items
   };
-}
-
-function groupProviderRequestCaptures(captures: ContextTaxonomy[]): ContextTaxonomy[] {
-  const groups: Array<{ key: string; taskIndex: number; captures: ContextTaxonomy[] }> = [];
-  for (const capture of captures) {
-    const current = capture.items.find((item) => item.kind === "current_user_prompt");
-    const key = `${current?.payloadPath ?? "unknown"}\n${current?.text ?? current?.preview ?? ""}`;
-    const latest = groups.at(-1);
-    if (latest?.key === key) latest.captures.push(capture);
-    else groups.push({ key, taskIndex: groups.length + 1, captures: [capture] });
-  }
-  return groups.flatMap((group) => group.captures.map((capture, index) => ({
-    ...capture,
-    providerRequest: {
-      index: index + 1,
-      count: group.captures.length,
-      taskIndex: group.taskIndex,
-      policy: "task-capture" as const
-    }
-  })));
 }
 
 function historyBeforeCurrentPrompt(messages: ChatSendRequest["messages"], content: string, attachments: NonNullable<ChatSendRequest["attachments"]>): ChatSendRequest["messages"] {

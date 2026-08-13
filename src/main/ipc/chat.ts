@@ -20,6 +20,7 @@ import type {
   ChatStreamSettlement,
   ChatStreamMessage,
   ChatTimelineItem,
+  ContextTaxonomy,
   FileChangeCaptureInput,
   ReasoningEffort,
   SkillRecord,
@@ -904,9 +905,21 @@ function persistRuntimeGeneratedMessages(
     }
     const taxonomy = input.reply.contextTaxonomies?.at(-1) ?? input.reply.contextTaxonomy;
     if (taxonomy) {
-      const taskIndex = taxonomy.providerRequest?.taskIndex ?? 1;
-      const message = assistantMessages[Math.min(Math.max(0, taskIndex - 1), assistantMessages.length - 1)] ?? lastAssistantMessage;
-      if (message) db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
+      // Only the newest provider request survives, so it belongs to the newest
+      // assistant task persisted by this multi-turn run. Derive the ordinal
+      // here, where the queued task rows are authoritative, instead of keeping
+      // every large payload merely to infer task boundaries later.
+      const message = assistantMessages.at(-1) ?? lastAssistantMessage;
+      const latestTaxonomy: ContextTaxonomy = {
+        ...taxonomy,
+        providerRequest: {
+          index: 1,
+          count: 1,
+          taskIndex: Math.max(1, assistantMessages.length),
+          policy: "task-capture"
+        }
+      };
+      if (message) db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy: latestTaxonomy });
     }
     persistFileChangeCaptures(db, {
       threadId: input.threadId,
