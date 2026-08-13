@@ -5,6 +5,8 @@ import type {
   WorkingTask,
   WorkingTaskStatus
 } from "../../shared/ipc.js";
+import { translate, type Translate } from "../../shared/i18n.js";
+import { WORKING_ACTIVITY, type WorkingActivity } from "../../shared/workingActivity.js";
 import type { JasmineDatabase } from "../db/database.js";
 
 export type WorkingNotification = {
@@ -43,17 +45,17 @@ export class WorkingRegistry {
     this.stopHandler = handler;
   }
 
-  start(input: { requestId: string; threadId: string; activity?: string }): void {
+  start(input: { requestId: string; threadId: string; activity?: WorkingActivity }): void {
     this.db.startWorkingTask({
       requestId: input.requestId,
       threadId: input.threadId,
-      activity: input.activity ?? "Preparing response"
+      activity: input.activity ?? WORKING_ACTIVITY.preparing
     });
-    this.lastActivities.set(input.requestId, input.activity ?? "Preparing response");
+    this.lastActivities.set(input.requestId, input.activity ?? WORKING_ACTIVITY.preparing);
     this.publish();
   }
 
-  activity(requestId: string, activity: string): void {
+  activity(requestId: string, activity: WorkingActivity): void {
     if (this.lastActivities.get(requestId) === activity) return;
     this.lastActivities.set(requestId, activity);
     if (this.db.updateWorkingTask({ requestId, status: "running", activity })) this.publish();
@@ -64,11 +66,11 @@ export class WorkingRegistry {
   }
 
   waitingForUser(requestId: string): void {
-    this.lastActivities.set(requestId, "Waiting for your answer");
+    this.lastActivities.set(requestId, WORKING_ACTIVITY.waiting);
     if (!this.db.updateWorkingTask({
       requestId,
       status: "waiting_user",
-      activity: "Waiting for your answer",
+      activity: WORKING_ACTIVITY.waiting,
       unread: true
     })) return;
     this.publish();
@@ -76,15 +78,15 @@ export class WorkingRegistry {
   }
 
   resumed(requestId: string): void {
-    this.lastActivities.set(requestId, "Resuming response");
-    if (this.db.updateWorkingTask({ requestId, status: "running", activity: "Resuming response" })) this.publish();
+    this.lastActivities.set(requestId, WORKING_ACTIVITY.resuming);
+    if (this.db.updateWorkingTask({ requestId, status: "running", activity: WORKING_ACTIVITY.resuming })) this.publish();
   }
 
   stopping(requestId: string): void {
-    if (this.db.updateWorkingTask({ requestId, status: "stopping", activity: "Stopping" })) this.publish();
+    if (this.db.updateWorkingTask({ requestId, status: "stopping", activity: WORKING_ACTIVITY.stopping })) this.publish();
   }
 
-  finish(requestId: string, status: Extract<WorkingTaskStatus, "completed" | "failed" | "cancelled">, activity?: string): void {
+  finish(requestId: string, status: Extract<WorkingTaskStatus, "completed" | "failed" | "cancelled">): void {
     this.lastActivities.delete(requestId);
     const current = this.snapshot().items.find((item) => item.requestId === requestId);
     const viewedInForeground = current?.threadId === this.viewedThreadId && !this.host.isBackground();
@@ -92,7 +94,7 @@ export class WorkingRegistry {
     if (!this.db.updateWorkingTask({
       requestId,
       status,
-      activity: activity ?? terminalActivity(status),
+      activity: terminalActivity(status),
       finishedAt,
       queueCount: 0,
       unread: status !== "cancelled" && !viewedInForeground
@@ -135,7 +137,9 @@ export class WorkingRegistry {
     // even if two completion callbacks arrive back-to-back.
     if (!this.db.markWorkingNotificationSent(requestId, status)) return;
     const target = toNavigationTarget(task);
-    const notification = notificationCopy(task, status, settings.includeDetails, target);
+    // Main writes this text while the window is hidden, so it translates with
+    // the same dictionary the renderer uses rather than shipping English.
+    const notification = notificationCopy(task, status, settings.includeDetails, target, translate(this.db.getAppSettings().language));
     try {
       this.host.showNotification(notification, () => {
         this.db.markWorkingRead(requestId);
@@ -163,16 +167,23 @@ function notificationCopy(
   task: WorkingTask,
   status: Extract<WorkingTaskStatus, "waiting_user" | "completed" | "failed">,
   includeDetails: boolean,
-  target: WorkingNavigationTarget
+  target: WorkingNavigationTarget,
+  t: Translate
 ): WorkingNotification {
-  const state = status === "completed" ? "Task completed" : status === "failed" ? "Task failed" : "Task needs your answer";
+  const state = status === "completed"
+    ? t("working.notification.completed")
+    : status === "failed"
+      ? t("working.notification.failed")
+      : t("working.notification.waiting");
   return {
-    title: `Jasmine: ${state}`,
+    title: t("working.notification.title", { state }),
     body: includeDetails
-      ? `${task.projectName ?? "No project"} / ${task.threadTitle}`
+      ? t("working.notification.detail", { project: task.projectName ?? t("working.noProject"), title: task.threadTitle })
       : status === "waiting_user"
-        ? "A Jasmine task needs your answer."
-        : `A Jasmine task ${status === "completed" ? "completed" : "failed"}.`,
+        ? t("working.notification.bodyWaiting")
+        : status === "completed"
+          ? t("working.notification.bodyCompleted")
+          : t("working.notification.bodyFailed"),
     target
   };
 }
@@ -186,7 +197,7 @@ function toNavigationTarget(task: WorkingTask): WorkingNavigationTarget {
 }
 
 function terminalActivity(status: "completed" | "failed" | "cancelled"): string {
-  if (status === "completed") return "Completed";
-  if (status === "failed") return "Failed";
-  return "Cancelled";
+  if (status === "completed") return WORKING_ACTIVITY.completed;
+  if (status === "failed") return WORKING_ACTIVITY.failed;
+  return WORKING_ACTIVITY.cancelled;
 }
