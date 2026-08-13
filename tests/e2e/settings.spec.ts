@@ -81,8 +81,14 @@ test.describe("Jasmine settings", () => {
   });
 
   test("settings panel keeps its navigation and chrome usable when moved or resized", async () => {
-    const { app, page } = harness;
+    const { page } = harness;
 
+    // macOS hosted runners can clamp a newly created 1200px BrowserWindow to
+    // their 1024px display, which activates the responsive left/top !important
+    // rules and correctly prevents free dragging. Normalize the renderer
+    // viewport explicitly so this assertion always exercises the desktop CSS.
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(1200);
     await openSettings(page);
     await expect(page.locator(".settings-nav")).toHaveCSS("user-select", "none");
     await page.locator(".settings-detail").click({ position: { x: 12, y: 12 } });
@@ -122,13 +128,11 @@ test.describe("Jasmine settings", () => {
     expect(Math.abs(after.x - before.x)).toBeGreaterThan(24);
     expect(Math.abs(after.y - before.y)).toBeGreaterThan(24);
 
-    // Drag at the default 1200x800 first: the <=1040 responsive CSS intentionally
-    // recenters the panel. Reuse this launch for the minimum-size layout after
-    // the real left/top assertion has already run.
+    // Reuse this launch for the <=1040 responsive layout after the real
+    // desktop-breakpoint left/top assertion has already run.
     await page.locator(".settings-nav").getByRole("button", { name: "Providers" }).click();
-    await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.setSize(920, 660);
-    });
+    await page.setViewportSize({ width: 920, height: 660 });
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(920);
     const panelBox = await panel.boundingBox();
     const actionBoxes = await page.locator(".settings-actions button").evaluateAll((buttons) =>
       buttons.map((button) => {
