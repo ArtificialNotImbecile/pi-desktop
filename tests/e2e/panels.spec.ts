@@ -698,6 +698,38 @@ test.describe("Jasmine panels and tools", () => {
     expect(capture?.currentPrompt).not.toContain("queued taxonomy skipped after closing");
   });
 
+  test("leaving chat for Working disables taxonomy capture for a queued provider request", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await page.locator(".rich-composer-editor").fill("slow response slow timeline taxonomy starts on chat");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    await page.locator(".rich-composer-editor").fill("queued taxonomy skipped after opening Working");
+    await page.getByRole("button", { name: "Queue message" }).click();
+    const threadId = await page.evaluate(async () => (await window.jasmine.listThreads())[0]?.id ?? "");
+    expect(threadId).toBeTruthy();
+
+    await page.getByRole("button", { name: /^Working/ }).click();
+    await expect(page.locator(".working-page")).toBeVisible();
+    await expect.poll(async () => page.evaluate(async (id) => (await window.jasmine.listMessages(id)).length, threadId), {
+      timeout: 15_000
+    }).toBe(4);
+
+    const capture = await page.evaluate(async (id) => {
+      const summary = (await window.jasmine.listThreadContextTaxonomy(id)).captures.at(-1);
+      if (!summary) return null;
+      const detail = await window.jasmine.getContextTaxonomy(summary.id);
+      return {
+        taskIndex: summary.taskIndex,
+        currentPrompt: detail.taxonomy.items.find((item) => item.kind === "current_user_prompt")?.text ?? ""
+      };
+    }, threadId);
+    expect(capture?.taskIndex).toBe(1);
+    expect(capture?.currentPrompt).toContain("slow response slow timeline taxonomy starts on chat");
+    expect(capture?.currentPrompt).not.toContain("queued taxonomy skipped after opening Working");
+  });
+
   test("file change artifacts and lazy details restore after restart", async ({}, testInfo) => {
     let { page } = harness;
     const userDataDir = harness.userDataDir;

@@ -147,7 +147,9 @@ function App(props: { initialAppSettings: AppSettings }) {
     [activeRightPanelTabId, rightPanelTabs]
   );
   const activeRightPanelMode = activeRightPanelTab?.mode ?? null;
-  const captureContextTaxonomy = activeRightPanelMode === "context" && !rightPanelCollapsed;
+  const captureContextTaxonomy = navigation.route.name !== "working"
+    && activeRightPanelMode === "context"
+    && !rightPanelCollapsed;
   useEffect(() => {
     const threadId = threads.activeThreadId;
     if (!threadId) return;
