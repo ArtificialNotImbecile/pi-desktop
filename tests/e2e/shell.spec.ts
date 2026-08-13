@@ -120,10 +120,17 @@ test.describe("Jasmine app shell", () => {
     await expect(page.locator(".side-top").getByRole("button", { name: "Shortcuts" })).toHaveCount(0);
 
     await page.keyboard.press("Control+K");
-    await expect(page.locator(".command-panel")).toBeVisible();
-    await page.getByRole("combobox", { name: "Command palette" }).fill("UI catalog");
+    const commandPanel = page.locator(".command-panel");
+    await expect(commandPanel).toBeVisible();
+    await commandPanel.getByRole("combobox", { name: "Command palette" }).fill("UI catalog");
+    // React and cmdk update the visible rows and active item separately. On a
+    // slower Windows runner, pressing Enter in the same turn could activate
+    // the command that was selected before filtering. Wait for the one real
+    // result so this remains a keyboard-selection test without a timing race.
+    await expect(commandPanel.getByRole("button")).toHaveCount(1);
+    await expect(commandPanel.getByRole("button", { name: /UI catalog/ })).toBeVisible();
     await page.keyboard.press("Enter");
-    await expect(page.locator(".command-panel")).toBeHidden();
+    await expect(commandPanel).toBeHidden();
     await expect(page.getByRole("region", { name: "UI catalog" })).toBeVisible();
     await page.getByRole("region", { name: "UI catalog" }).getByRole("button", { name: "Close" }).click();
     await expect(page.getByRole("region", { name: "UI catalog" })).toBeHidden();

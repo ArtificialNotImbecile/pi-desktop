@@ -5,7 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { ChatMessage, ChatThread, ContextTaxonomy, TerminalSession, ThreadContextTaxonomyResponse } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { ClipboardIcon, CopyIcon, CutIcon, FolderIcon, MinimizeIcon, PlusIcon, SelectAllIcon, SlidersIcon, TerminalIcon } from "../icons/Icons";
-import { Button, MenuItem, MenuSurface } from "../ui";
+import { MenuItem, MenuSurface } from "../ui";
 import { TaxonomyView } from "./ContextTaxonomyView";
 import { useI18n } from "../../i18n";
 import { useThrottledValue } from "../../hooks/useThrottledValue";
@@ -565,25 +565,17 @@ function ContextTaxonomyPane(props: { threadId: string | null; messages: ChatMes
   if (!selectedId || captures.length === 0) return <p className="panel-empty">No captured context taxonomy yet. Send a message to record one.</p>;
   return (
     <div className="taxonomy-pane">
-      {captures.length > 1 && (
-        <div className="taxonomy-request-switcher" role="group" aria-label="Provider request">
-          {captures.map((capture) => (
-            <Button
-              key={capture.id}
-              size="sm"
-              variant="quiet"
-              className={capture.id === selectedId ? "active" : ""}
-              aria-pressed={capture.id === selectedId}
-              onClick={() => setSelectedId(capture.id)}
-            >
-              {capture.requestIndex}/{capture.requestCount}
-            </Button>
-          ))}
-        </div>
-      )}
       {detailLoading || !taxonomy
         ? <p className="panel-empty">Loading selected provider request...</p>
-        : <TaxonomyView taxonomy={taxonomy} captureId={selectedId} />}
+        : (
+          <TaxonomyView
+            key={selectedId}
+            taxonomy={taxonomy}
+            captureId={selectedId}
+            captures={captures}
+            onSelectCapture={setSelectedId}
+          />
+        )}
     </div>
   );
 }
