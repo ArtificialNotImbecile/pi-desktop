@@ -1101,6 +1101,8 @@ function mockContent(lastUserText: string, imageCount: number, toolsEnabled: boo
       "",
       "This is a **bold** answer with [a link](https://example.com) and `inline code`.",
       "",
+      "位置：第 **33632** 行，中文回退保持正常。",
+      "",
       "- First point",
       "- Second point with `inline code`",
       "",

@@ -26,6 +26,7 @@ const tasks = [
   { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
   { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
   { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
+  { name: "renderer-font-assets", steps: [["node", "--no-warnings", "tests/unit/renderer-font-assets.mjs"]] },
   { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
   {
     name: "context-capture",
