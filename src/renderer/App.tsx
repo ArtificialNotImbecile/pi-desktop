@@ -14,6 +14,7 @@ import { useActivity } from "./hooks/useActivity";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useCommandPaletteCommands } from "./hooks/useCommandPaletteCommands";
 import { useComposer } from "./hooks/useComposer";
+import { useContextTaxonomyCapture } from "./hooks/useContextTaxonomyCapture";
 import { useFloatingSurfaceDismissal } from "./hooks/useFloatingSurfaceDismissal";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useMemories } from "./hooks/useMemories";
@@ -147,17 +148,12 @@ function App(props: { initialAppSettings: AppSettings }) {
     [activeRightPanelTabId, rightPanelTabs]
   );
   const activeRightPanelMode = activeRightPanelTab?.mode ?? null;
-  const captureContextTaxonomy = navigation.route.name !== "working"
-    && activeRightPanelMode === "context"
-    && !rightPanelCollapsed;
-  useEffect(() => {
-    const threadId = threads.activeThreadId;
-    if (!threadId) return;
-    void getBridge().updateChatContextTaxonomyCapture({ threadId, enabled: captureContextTaxonomy }).catch(() => undefined);
-    return () => {
-      void getBridge().updateChatContextTaxonomyCapture({ threadId, enabled: false }).catch(() => undefined);
-    };
-  }, [captureContextTaxonomy, threads.activeThreadId]);
+  const captureContextTaxonomy = useContextTaxonomyCapture({
+    threadId: threads.activeThreadId,
+    activePanelMode: activeRightPanelMode,
+    rightPanelCollapsed,
+    chatPageRendered: navigation.route.name !== "working"
+  });
   const activeScopeProjectId = threads.activeThread?.projectId ?? activeProjectId;
   const activeProject = useMemo(
     () => projects.projects.find((project) => project.id === activeScopeProjectId) ?? null,
