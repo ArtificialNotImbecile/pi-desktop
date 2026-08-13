@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ChatMessage } from "../../shared/ipc.js";
@@ -72,7 +73,14 @@ export function appendThreadSessionName(db: JasmineDatabase, threadId: string, n
 export function jasmineSessionDir(userDataDir: string, cwd: string): string {
   const resolvedCwd = path.resolve(cwd);
   const encodedCwd = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-  return path.join(getJasminePiAgentDir(userDataDir), "sessions", encodedCwd);
+  // APFS and most Unix filesystems limit one path component to 255 bytes. A
+  // long (or multibyte) cwd can exceed that even while the full path remains
+  // valid. Preserve Pi's readable legacy directory for ordinary workspaces,
+  // but use a stable, collision-resistant component before that boundary.
+  const sessionComponent = Buffer.byteLength(encodedCwd, "utf8") <= 240
+    ? encodedCwd
+    : `--cwd-sha256-${createHash("sha256").update(resolvedCwd).digest("hex")}--`;
+  return path.join(getJasminePiAgentDir(userDataDir), "sessions", sessionComponent);
 }
 
 export function deleteOwnedPiSessionFile(userDataDir: string, sessionFile: string | null | undefined): void {

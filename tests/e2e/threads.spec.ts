@@ -408,10 +408,142 @@ test.describe("Jasmine threads and projects", () => {
 
     await page.waitForTimeout(450);
     const scrollTopWhileRunning = await scroll.evaluate((node) => node.scrollTop);
-    expect(Math.abs(scrollTopWhileRunning - scrollTopAfterWheel)).toBeLessThanOrEqual(96);
+    expect(Math.abs(scrollTopWhileRunning - scrollTopAfterWheel)).toBeLessThanOrEqual(4);
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
     await expect(page.locator(".user-bubble, .assistant-block")).toHaveCount(222);
     const scrollTopAfterRefresh = await scroll.evaluate((node) => node.scrollTop);
-    expect(Math.abs(scrollTopAfterRefresh - scrollTopAfterWheel)).toBeLessThanOrEqual(96);
+    expect(Math.abs(scrollTopAfterRefresh - scrollTopAfterWheel)).toBeLessThanOrEqual(4);
+  });
+
+  test("click-only pointers keep tail follow while drag, keyboard, and scrollbar gestures pause it", async () => {
+    const { page, userDataDir } = harness;
+    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Alternate scroll intent" }));
+    seedLargeThreadMessages(userDataDir, thread.id, 158);
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Alternate scroll intent/ }).click();
+    await expect(page.locator("[data-message-id]")).toHaveCount(158);
+
+    const scroll = page.locator(".message-scroll");
+    // Keep this fixture live for the whole gesture matrix. The ordinary smooth
+    // stream is intentionally short and can settle before a saturated worker
+    // reaches the released/cancelled pointer branches.
+    await page.locator(".rich-composer-editor").fill("return long answer smooth stream scroll intent");
+    await page.getByRole("button", { name: "Send" }).click();
+    const live = page.locator(".assistant-block.live-message").last();
+    await expect(live).toBeVisible();
+
+    const scrollBox = await scroll.boundingBox();
+    expect(scrollBox).not.toBeNull();
+    const bodyX = (scrollBox?.x ?? 0) + (scrollBox?.width ?? 0) / 2;
+    const bodyY = (scrollBox?.y ?? 0) + Math.min(140, (scrollBox?.height ?? 0) / 2);
+    const gutterX = (scrollBox?.x ?? 0) + (scrollBox?.width ?? 0) - 2;
+    const tailGap = () => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
+    const visualTailOffset = () => page.locator(".assistant-block.live-message").evaluate((node) => {
+      const scrollNode = document.querySelector(".message-scroll");
+      if (!(scrollNode instanceof HTMLElement)) return Number.POSITIVE_INFINITY;
+      return Math.max(0, node.getBoundingClientRect().bottom - scrollNode.getBoundingClientRect().bottom);
+    });
+    const liveTextLength = () => live.evaluate((node) => node.textContent?.length ?? 0);
+    const pointer = (type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel", init: Record<string, unknown>) => (
+      scroll.dispatchEvent(type, { bubbles: true, cancelable: true, isPrimary: true, ...init })
+    );
+
+    await expect.poll(visualTailOffset).toBeLessThanOrEqual(24);
+    const beforeClick = await scroll.evaluate((node) => node.scrollTop);
+    const beforeClickScrollHeight = await scroll.evaluate((node) => node.scrollHeight);
+    const beforeClickTextLength = await liveTextLength();
+    // Dispatch on the scroll surface itself. A fixed viewport coordinate can
+    // land on a historical recap toggle as the live tail moves; that control is
+    // intentionally a reading interaction and would correctly pause following.
+    await pointer("pointerdown", { pointerId: 70, pointerType: "mouse", clientX: bodyX, clientY: bodyY, buttons: 1 });
+    await pointer("pointerup", { pointerId: 70, pointerType: "mouse", clientX: bodyX, clientY: bodyY, buttons: 0 });
+    await scroll.dispatchEvent("click", { bubbles: true, cancelable: true, clientX: bodyX, clientY: bodyY });
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeClickTextLength);
+    await expect.poll(() => scroll.evaluate((node) => node.scrollHeight)).toBeGreaterThan(beforeClickScrollHeight + 20);
+    await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(beforeClick + 20);
+    await expect.poll(visualTailOffset).toBeLessThanOrEqual(24);
+
+    // A scrollbar-gutter press is intent before the thumb has visibly moved. Test
+    // it while the run is observably live and before any End-key recovery, so a
+    // concurrent completion/anchor restore cannot masquerade as tail following.
+    const beforeGutterTextLength = await liveTextLength();
+    await pointer("pointerdown", { pointerId: 74, pointerType: "mouse", clientX: gutterX, clientY: bodyY, buttons: 1 });
+    const gutterLockedTop = await scroll.evaluate((node) => node.scrollTop);
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeGutterTextLength);
+    await expect.poll(tailGap).toBeGreaterThan(24);
+    expect(Math.abs(await scroll.evaluate((node) => node.scrollTop) - gutterLockedTop)).toBeLessThanOrEqual(4);
+    await pointer("pointerup", { pointerId: 74, pointerType: "mouse", clientX: gutterX, clientY: bodyY, buttons: 0 });
+
+    await scroll.focus();
+    await scroll.press("End");
+    await expect.poll(tailGap).toBeLessThanOrEqual(24);
+
+    // Releasing or cancelling an ordinary body press clears the candidate gesture:
+    // a later move with the same pointer id must not accidentally pause following.
+    const beforeReleasedMoveTextLength = await liveTextLength();
+    await pointer("pointerdown", { pointerId: 71, pointerType: "touch", clientX: bodyX, clientY: bodyY, buttons: 1 });
+    await pointer("pointerup", { pointerId: 71, pointerType: "touch", clientX: bodyX, clientY: bodyY, buttons: 0 });
+    await pointer("pointermove", { pointerId: 71, pointerType: "touch", clientX: bodyX, clientY: bodyY - 24, buttons: 1 });
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeReleasedMoveTextLength);
+    await expect.poll(visualTailOffset).toBeLessThanOrEqual(24);
+
+    const beforeCancelledMoveTextLength = await liveTextLength();
+    await pointer("pointerdown", { pointerId: 72, pointerType: "touch", clientX: bodyX, clientY: bodyY, buttons: 1 });
+    await pointer("pointercancel", { pointerId: 72, pointerType: "touch", clientX: bodyX, clientY: bodyY, buttons: 0 });
+    await pointer("pointermove", { pointerId: 72, pointerType: "touch", clientX: bodyX, clientY: bodyY - 24, buttons: 1 });
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeCancelledMoveTextLength);
+    await expect.poll(visualTailOffset).toBeLessThanOrEqual(24);
+
+    // Small pointer jitter remains click-like. Crossing the vertical threshold is
+    // an explicit touch-reading gesture and keeps the current viewport fixed.
+    const beforeJitterTextLength = await liveTextLength();
+    await pointer("pointerdown", { pointerId: 73, pointerType: "touch", clientX: bodyX, clientY: bodyY, buttons: 1 });
+    await pointer("pointermove", { pointerId: 73, pointerType: "touch", clientX: bodyX, clientY: bodyY - 5, buttons: 1 });
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeJitterTextLength);
+    await expect.poll(visualTailOffset).toBeLessThanOrEqual(24);
+    await pointer("pointermove", { pointerId: 73, pointerType: "touch", clientX: bodyX, clientY: bodyY - 12, buttons: 1 });
+    const touchLockedTop = await scroll.evaluate((node) => node.scrollTop);
+    const touchLockedTextLength = await liveTextLength();
+    await expect.poll(liveTextLength).toBeGreaterThan(touchLockedTextLength);
+    await expect.poll(tailGap).toBeGreaterThan(24);
+    expect(Math.abs(await scroll.evaluate((node) => node.scrollTop) - touchLockedTop)).toBeLessThanOrEqual(4);
+    await pointer("pointerup", { pointerId: 73, pointerType: "touch", clientX: bodyX, clientY: bodyY - 12, buttons: 0 });
+
+    await scroll.focus();
+    await scroll.press("End");
+    await expect.poll(tailGap).toBeLessThanOrEqual(24);
+
+    await scroll.focus();
+    await page.keyboard.press("PageUp");
+    await expect.poll(() => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeGreaterThan(100);
+    // PageUp itself is a short native smooth scroll. Wait for that user-initiated
+    // motion to finish, then prove a later stream tick cannot restart following.
+    await expect.poll(async () => {
+      const first = await scroll.evaluate((node) => node.scrollTop);
+      await page.waitForTimeout(100);
+      const second = await scroll.evaluate((node) => node.scrollTop);
+      return Math.abs(second - first);
+    }).toBeLessThanOrEqual(4);
+    const pageUpLockedTop = await scroll.evaluate((node) => node.scrollTop);
+    const pageUpLockedTextLength = await liveTextLength();
+    await expect.poll(liveTextLength).toBeGreaterThan(pageUpLockedTextLength);
+    await expect.poll(() => scroll.evaluate(
+      (node, expected) => Math.abs(node.scrollTop - expected),
+      pageUpLockedTop
+    )).toBeLessThanOrEqual(4);
+
+    await scroll.evaluate((node) => { node.scrollTop -= 180; });
+    await page.waitForTimeout(50);
+    const afterScrollbarMove = await scroll.evaluate((node) => node.scrollTop);
+    const beforeScrollbarGrowth = await liveTextLength();
+    await expect.poll(liveTextLength).toBeGreaterThan(beforeScrollbarGrowth);
+    await expect.poll(() => scroll.evaluate((node, expected) => Math.abs(node.scrollTop - expected), afterScrollbarMove)).toBeLessThanOrEqual(4);
+
+    await scroll.evaluate((node) => { node.scrollTop = node.scrollHeight - node.clientHeight; });
+    await scroll.press("End");
+    await expect.poll(() => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(24);
+    await waitForStableAssistant(page, "Long answer paragraph 42", 15_000);
+    await expect.poll(() => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
   });
 });

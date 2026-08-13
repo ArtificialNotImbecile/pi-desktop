@@ -1936,7 +1936,7 @@ select:focus-visible {
   overflow-y: auto;
   /* Scroll position is managed manually (auto-follow, locked-position restore,
      load-older compensation). Browser scroll anchoring fights those writes and
-     causes transient jumps when content-visibility rows commit, so disable it. */
+    causes transient jumps when message layout commits, so disable it. */
   overflow-anchor: none;
   padding: 10px 64px 22px 28px;
   scrollbar-color: var(--scrollbar) transparent;
@@ -1953,6 +1953,14 @@ select:focus-visible {
 
 .message-scroll:hover {
   scrollbar-color: var(--scrollbar-hover) transparent;
+}
+
+/* Keep settled action rows mounted so starting/stopping a run never changes
+   historical message height, while preserving the previous busy-state UX. */
+.message-scroll.is-running .message-actions,
+.message-scroll.is-running .user-message-actions {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .right-panel-tabs {
@@ -2867,6 +2875,7 @@ body.resizing-right-panel {
 .message-stack {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   width: min(900px, 100%);
   min-height: 100%;
@@ -3253,14 +3262,6 @@ body:has(.settings-panel) .message-jump-rail {
 }
 
 .assistant-block + .assistant-block { margin-top: 30px; }
-
-/* Skip rendering + layout work for off-screen settled messages in long threads.
-   Live (streaming) blocks are excluded so their growing height is never estimated. */
-.assistant-block:not(.live-message),
-.user-message-wrap:not(.live-message) {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
-}
 
 .markdown-message {
   display: grid;
@@ -4190,13 +4191,29 @@ body:has(.settings-panel) .message-jump-rail {
 }
 
 .run-recap-details {
-  display: grid;
-  gap: 12px;
-  padding: 10px 0 2px;
+  width: 100%;
+  min-height: 1px;
 }
 
 .run-recap-details[hidden] {
   display: none;
+}
+
+/* Several timeline/detail nodes deliberately stay mounted across live ->
+   settled so their Markdown DOM can be reused. The browser's UA [hidden]
+   rule loses to component display declarations such as .timeline-output;
+   make the hidden contract authoritative for every retained row. */
+.message-timeline [hidden] {
+  display: none !important;
+}
+
+.run-recap-detail-row:empty {
+  display: none;
+}
+
+.run-recap-meta,
+.run-recap-provenance {
+  min-width: 0;
 }
 
 .final-answer {

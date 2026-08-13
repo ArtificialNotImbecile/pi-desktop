@@ -102,6 +102,8 @@ export function ChatPage(props: {
   onEditMessage(message: ChatMessage): void;
   onRemember(message: ChatMessage): void;
   onMessageWheel(deltaY: number): void;
+  onMessageInteraction(): void;
+  onMessageTailIntent(): void;
   onMessageScroll(): void;
   onCloseMemory(): void;
   onRefreshMemories(): void;
@@ -233,6 +235,8 @@ export function ChatPage(props: {
         onRemember={props.onRemember}
         onConfigureProvider={props.onOpenSettings}
         onMessageWheel={props.onMessageWheel}
+        onMessageInteraction={props.onMessageInteraction}
+        onMessageTailIntent={props.onMessageTailIntent}
         onMessageScroll={props.onMessageScroll}
       />
       {props.memoryOpen && (

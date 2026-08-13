@@ -44,7 +44,17 @@ export function useThreads(options: { onError(message: string): void; onResetCha
   // updates (e.g. generated titles) so a running chat does not trigger a full
   // threads:list IPC round trip per event.
   function patchThread(threadId: string, partial: Partial<ChatThread>) {
-    setThreads((current) => current.map((thread) => (thread.id === threadId ? { ...thread, ...partial } : thread)));
+    setThreads((current) => {
+      const index = current.findIndex((thread) => thread.id === threadId);
+      if (index < 0) return current;
+      const thread = current[index];
+      const changed = (Object.keys(partial) as Array<keyof ChatThread>)
+        .some((key) => thread[key] !== partial[key]);
+      if (!changed) return current;
+      const next = [...current];
+      next[index] = { ...thread, ...partial };
+      return next;
+    });
   }
 
   async function refreshThreads(preferredThreadId = activeThreadId) {

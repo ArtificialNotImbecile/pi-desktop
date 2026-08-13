@@ -1,4 +1,4 @@
-import type { ChatStreamDelta, ChatStreamMessage, ChatStreamMessageDelta, ChatTimelineItem } from "./ipc.js";
+import type { ChatStreamDelta, ChatStreamMessage, ChatStreamMessageDelta, ChatTimelineDelta, ChatTimelineItem } from "./ipc.js";
 
 // Delta computation/application for streaming chat updates. The main process
 // computes a delta between consecutive throttled flushes and the renderer
@@ -16,11 +16,86 @@ function sameStreamTimeline(previous: ChatTimelineItem[] | undefined, next: Chat
     if (left.id !== right.id || left.kind !== right.kind) return false;
     if (left.kind === "thinking" && right.kind === "thinking" && left.text !== right.text) return false;
     if (left.kind === "assistant_text" && right.kind === "assistant_text" && left.text !== right.text) return false;
-    if (left.kind === "tool_call" && right.kind === "tool_call" && (left.title !== right.title || left.argumentsJson !== right.argumentsJson || left.toolName !== right.toolName)) return false;
-    if (left.kind === "tool_result" && right.kind === "tool_result" && (left.title !== right.title || left.content !== right.content || left.toolName !== right.toolName || Boolean(left.isError) !== Boolean(right.isError))) return false;
+    if (left.kind === "tool_call" && right.kind === "tool_call" && (left.toolCallId !== right.toolCallId || left.title !== right.title || left.argumentsJson !== right.argumentsJson || left.toolName !== right.toolName)) return false;
+    if (left.kind === "tool_result" && right.kind === "tool_result" && (left.toolCallId !== right.toolCallId || left.title !== right.title || left.content !== right.content || left.toolName !== right.toolName || Boolean(left.isError) !== Boolean(right.isError))) return false;
     if (left.kind === "system" && right.kind === "system" && (left.title !== right.title || left.text !== right.text || left.customType !== right.customType)) return false;
   }
   return true;
+}
+
+function computeTimelineDelta(previous: ChatTimelineItem[] | undefined, current: ChatTimelineItem[] | undefined): ChatTimelineDelta | null {
+  const before = previous ?? [];
+  const after = current ?? [];
+  if (after.length < before.length) return null;
+  const items: ChatTimelineDelta["items"] = [];
+  for (let index = 0; index < after.length; index += 1) {
+    const next = after[index];
+    const prior = before[index];
+    if (!prior || prior.id !== next.id || prior.kind !== next.kind) {
+      items.push({ index, item: next });
+      continue;
+    }
+    if (next.kind === "thinking" && prior.kind === "thinking") {
+      if (next.text !== prior.text) items.push(next.text.startsWith(prior.text)
+        ? { index, textAppend: next.text.slice(prior.text.length) }
+        : { index, item: next });
+      continue;
+    }
+    if (next.kind === "assistant_text" && prior.kind === "assistant_text") {
+      if (next.text !== prior.text) items.push(next.text.startsWith(prior.text)
+        ? { index, textAppend: next.text.slice(prior.text.length) }
+        : { index, item: next });
+      continue;
+    }
+    if (next.kind === "tool_call" && prior.kind === "tool_call") {
+      const stable = next.toolCallId === prior.toolCallId && next.title === prior.title && next.toolName === prior.toolName;
+      if (!stable) items.push({ index, item: next });
+      else if (next.argumentsJson !== prior.argumentsJson) items.push(next.argumentsJson.startsWith(prior.argumentsJson)
+        ? { index, argumentsJsonAppend: next.argumentsJson.slice(prior.argumentsJson.length) }
+        : { index, item: next });
+      continue;
+    }
+    if (next.kind === "tool_result" && prior.kind === "tool_result") {
+      const stable = next.toolCallId === prior.toolCallId
+        && next.title === prior.title
+        && next.toolName === prior.toolName
+        && Boolean(next.isError) === Boolean(prior.isError);
+      if (!stable) items.push({ index, item: next });
+      else if (next.content !== prior.content) items.push(next.content.startsWith(prior.content)
+        ? { index, contentAppend: next.content.slice(prior.content.length) }
+        : { index, item: next });
+      continue;
+    }
+    if (next.kind === "system" && prior.kind === "system") {
+      const stable = next.title === prior.title && next.customType === prior.customType;
+      if (!stable) items.push({ index, item: next });
+      else if (next.text !== prior.text) items.push(next.text.startsWith(prior.text)
+        ? { index, textAppend: next.text.slice(prior.text.length) }
+        : { index, item: next });
+    }
+  }
+  return { itemCount: after.length, items };
+}
+
+function applyTimelineDelta(previous: ChatTimelineItem[] | undefined, delta: ChatTimelineDelta): ChatTimelineItem[] | null {
+  const next = (previous ?? []).slice(0, delta.itemCount);
+  for (const change of delta.items) {
+    if (change.index < 0 || change.index >= delta.itemCount) continue;
+    if (change.item) {
+      next[change.index] = change.item;
+      continue;
+    }
+    const prior = next[change.index];
+    if (!prior) return null;
+    if ((prior.kind === "thinking" || prior.kind === "assistant_text" || prior.kind === "system") && change.textAppend !== undefined) {
+      next[change.index] = { ...prior, text: prior.text + change.textAppend };
+    } else if (prior.kind === "tool_call" && change.argumentsJsonAppend !== undefined) {
+      next[change.index] = { ...prior, argumentsJson: prior.argumentsJson + change.argumentsJsonAppend };
+    } else if (prior.kind === "tool_result" && change.contentAppend !== undefined) {
+      next[change.index] = { ...prior, content: prior.content + change.contentAppend };
+    }
+  }
+  return next.length === delta.itemCount && next.every(Boolean) ? next : null;
 }
 
 // Returns null when a delta cannot represent the transition (shrinking message
@@ -46,7 +121,9 @@ export function computeStreamDelta(previous: ChatStreamMessage[], current: ChatS
       changed = true;
     }
     if (!sameStreamTimeline(prev.timeline, cur.timeline)) {
-      entry.timeline = cur.timeline;
+      const timelineDelta = computeTimelineDelta(prev.timeline, cur.timeline);
+      if (timelineDelta) entry.timelineDelta = timelineDelta;
+      else entry.timeline = cur.timeline;
       changed = true;
     }
     if (changed) messages.push(entry);
@@ -68,7 +145,8 @@ export function applyStreamDelta(base: ChatStreamMessage[], delta: ChatStreamDel
     };
     const attachments = change.attachments ?? prev.attachments;
     if (attachments !== undefined) merged.attachments = attachments;
-    const timeline = change.timeline ?? prev.timeline;
+    const patchedTimeline = change.timelineDelta ? applyTimelineDelta(prev.timeline, change.timelineDelta) : null;
+    const timeline = change.timeline ?? patchedTimeline ?? prev.timeline;
     if (timeline !== undefined) merged.timeline = timeline;
     next[change.index] = merged;
   }

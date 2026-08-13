@@ -10,6 +10,8 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
+  E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES,
+  e2eUserDataDirName,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -40,10 +42,24 @@ import {
   startEmptyThread,
   testProvider,
   type HarnessApp,
+  updateSeededMessageContent,
   waitForAppShellPage,
   waitForChildExit,
   waitForStableAssistant
 } from "./helpers";
+
+test("E2E user data directory names stay bounded and collision-resistant", () => {
+  const fixedUuid = "11111111-2222-4333-8444-555555555555";
+  const sharedPrefix = "running composer queue path boundary ".repeat(8);
+  const first = e2eUserDataDirName(`${sharedPrefix}alpha`, fixedUuid);
+  const second = e2eUserDataDirName(`${sharedPrefix}beta`, fixedUuid);
+  const multibyte = e2eUserDataDirName("渲染队列边界".repeat(80), fixedUuid);
+
+  expect(Buffer.byteLength(first, "utf8")).toBeLessThanOrEqual(E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES);
+  expect(Buffer.byteLength(multibyte, "utf8")).toBeLessThanOrEqual(E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES);
+  expect(first).not.toBe(second);
+  expect(e2eUserDataDirName(`${sharedPrefix}alpha`, randomUUID())).not.toBe(first);
+});
 
 test.describe("Jasmine chat runtime", () => {
   let harness: HarnessApp;
@@ -71,7 +87,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(writeTool).toContainText("writing");
     await expect(writeTool).not.toContainText("wrote -");
     await expect(liveAssistant.locator(".timeline-output")).toContainText("Slow", { timeout: 2000 });
-    await expect(page.locator(".message-actions")).toHaveCount(0);
+    await expect(page.locator(".message-actions:visible")).toHaveCount(0);
 
     const settledAssistant = await waitForStableAssistant(page, "Slow response complete.");
     await expect(settledAssistant.getByLabel("Assistant output")).toContainText("Slow response complete.");
@@ -79,6 +95,948 @@ test.describe("Jasmine chat runtime", () => {
     await expect(settledAssistant.locator(".run-recap-details")).toBeHidden();
     await settledAssistant.getByRole("button", { name: "Show work details" }).click();
     await expect(settledAssistant).toContainText("wrote - 4 lines, 44 bytes");
+  });
+
+  test("a second run shows Thinking before its first live chunk without repainting settled history", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+
+    await page.evaluate(() => {
+      const scope = window as Window & {
+        __JASMINE_FIRST_SETTLEMENT__?: { assistantId: string; renderId: string | null };
+        __JASMINE_FIRST_SETTLEMENT_CLEANUP__?: () => void;
+      };
+      scope.__JASMINE_FIRST_SETTLEMENT_CLEANUP__ = window.jasmine.onChatStream((event) => {
+        if (!event.settlement || scope.__JASMINE_FIRST_SETTLEMENT__) return;
+        const assistant = event.settlement.messages.find((message) => message.role === "assistant");
+        if (assistant) {
+          scope.__JASMINE_FIRST_SETTLEMENT__ = {
+            assistantId: assistant.id,
+            renderId: assistant.renderId ?? null
+          };
+        }
+      });
+    });
+
+    await page.locator(".rich-composer-editor").fill("first settled render identity");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & {
+      __JASMINE_FIRST_SETTLEMENT__?: { assistantId: string; renderId: string | null };
+    }).__JASMINE_FIRST_SETTLEMENT__))).toBe(true);
+    const firstSettlement = await page.evaluate(() => {
+      const scope = window as Window & {
+        __JASMINE_FIRST_SETTLEMENT__?: { assistantId: string; renderId: string | null };
+        __JASMINE_FIRST_SETTLEMENT_CLEANUP__?: () => void;
+      };
+      scope.__JASMINE_FIRST_SETTLEMENT_CLEANUP__?.();
+      return scope.__JASMINE_FIRST_SETTLEMENT__;
+    });
+    expect(firstSettlement).toBeDefined();
+    expect(firstSettlement?.renderId).toMatch(/^stream-/);
+
+    await page.evaluate((assistantId) => {
+      const scope = window as Window & {
+        __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number>;
+        __JASMINE_FIRST_ASSISTANT_NODE__?: Element;
+        __JASMINE_SECOND_RUN_MONITOR__?: {
+          settlementSeen: boolean;
+          sampledFrames: number;
+          postSettlementThinkingObserved: boolean;
+          postSettlementThinkingInsertions: number;
+        };
+        __JASMINE_SECOND_RUN_CLEANUP__?: () => void;
+      };
+      const firstAssistant = document.querySelector(`[data-message-id="${CSS.escape(assistantId)}"]`);
+      if (!firstAssistant) throw new Error("The first settled assistant is missing.");
+      scope.__JASMINE_FIRST_ASSISTANT_NODE__ = firstAssistant;
+      scope.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ = {};
+
+      const monitor = {
+        settlementSeen: false,
+        sampledFrames: 0,
+        postSettlementThinkingObserved: false,
+        postSettlementThinkingInsertions: 0
+      };
+      scope.__JASMINE_SECOND_RUN_MONITOR__ = monitor;
+      const placeholderSelector = ".message-stack > .assistant-block.thinking";
+      const containsThinkingPlaceholder = (node: Node) => node instanceof Element && (
+        node.matches(placeholderSelector) || Boolean(node.querySelector(placeholderSelector))
+      );
+      const observer = new MutationObserver((records) => {
+        if (!monitor.settlementSeen) return;
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (!containsThinkingPlaceholder(node)) continue;
+            monitor.postSettlementThinkingInsertions += 1;
+            monitor.postSettlementThinkingObserved = true;
+          }
+        }
+      });
+      observer.observe(document.querySelector(".message-stack") ?? document.body, { childList: true, subtree: true });
+      const unsubscribe = window.jasmine.onChatStream((event) => {
+        if (!event.settlement || monitor.settlementSeen) return;
+        monitor.settlementSeen = true;
+        const sample = () => {
+          monitor.sampledFrames += 1;
+          if (document.querySelector(placeholderSelector)) monitor.postSettlementThinkingObserved = true;
+          if (monitor.sampledFrames < 8) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+      scope.__JASMINE_SECOND_RUN_CLEANUP__ = () => {
+        observer.disconnect();
+        unsubscribe();
+      };
+    }, firstSettlement!.assistantId);
+
+    await page.locator(".rich-composer-editor").fill("slow response slow timeline second run placeholder boundary");
+    const historicalUserEdit = page.locator(".user-message-wrap").first()
+      .getByRole("button", { name: "Edit message", includeHidden: true });
+    const historicalRetry = page.locator(".assistant-block").first()
+      .getByRole("button", { name: "Regenerate this response", includeHidden: true });
+    await page.locator(".assistant-block").first().getByRole("button", { name: "Message actions" }).click();
+    await expect(page.locator(".message-menu")).toBeVisible();
+    await page.evaluate(() => {
+      const scope = window as Window & {
+        __JASMINE_BUSY_MENU_STATE__?: { count: number; allDisabled: boolean };
+      };
+      const scroll = document.querySelector(".message-scroll");
+      if (!scroll) throw new Error("Message scroll is missing.");
+      const observer = new MutationObserver(() => {
+        if (!scroll.classList.contains("is-running")) return;
+        const items = Array.from(document.querySelectorAll<HTMLButtonElement>(".message-menu .ui-menu-item"));
+        scope.__JASMINE_BUSY_MENU_STATE__ = {
+          count: items.length,
+          allDisabled: items.every((item) => item.disabled)
+        };
+        observer.disconnect();
+      });
+      observer.observe(scroll, { attributes: true, attributeFilter: ["class"] });
+    });
+    // A synthetic submit does not send the pointer-down that normally closes a
+    // floating menu. Starting the run itself must close and disable that portal.
+    await page.getByRole("button", { name: "Send" }).evaluate((button: HTMLButtonElement) => button.click());
+
+    // The mock provider waits 750ms before publishing its first live chunk. The
+    // prior settled answer still has a stream renderId, but only the active tail
+    // may suppress this placeholder.
+    const thinkingPlaceholder = page.locator(".message-stack > .assistant-block.thinking");
+    await expect(thinkingPlaceholder).toBeVisible({ timeout: 500 });
+    await expect(thinkingPlaceholder).toContainText("Thinking");
+    await expect(thinkingPlaceholder.locator(".loading-dots > i")).toHaveCount(3);
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
+    // Mutation observers run after React's layout effects and before the next
+    // paint, so this captures the first busy commit rather than racing the
+    // portal's 160ms exit animation through Playwright round trips.
+    const busyMenuState = await page.evaluate(() => (
+      window as Window & { __JASMINE_BUSY_MENU_STATE__?: { count: number; allDisabled: boolean } }
+    ).__JASMINE_BUSY_MENU_STATE__);
+    expect(busyMenuState).toEqual({ count: 3, allDisabled: true });
+
+    await expect(page.locator(".assistant-block.live-message").last()).toBeVisible({ timeout: 2_000 });
+    await expect(thinkingPlaceholder).toHaveCount(0);
+    await expect(page.locator(".message-menu")).toBeHidden();
+    const userActionRows = page.locator(".user-message-actions");
+    const assistantActionRows = page.locator(".message-actions");
+    await expect(userActionRows).toHaveCount(2);
+    await expect(assistantActionRows).toHaveCount(2);
+    await expect(userActionRows.first()).toBeHidden();
+    await expect(userActionRows.last()).toBeHidden();
+    await expect(assistantActionRows.first()).toBeHidden();
+    await expect(assistantActionRows.last()).toBeHidden();
+    await expect(historicalUserEdit).toBeDisabled();
+    await expect(historicalRetry).toBeDisabled();
+    await expect(page.locator(".user-message-actions button")).toHaveCount(2);
+    await expect(page.locator(".message-actions > button, .message-actions > .message-more > button")).toHaveCount(6);
+    expect(await page.locator(".user-message-actions button, .message-actions > button, .message-actions > .message-more > button")
+      .evaluateAll((buttons) => buttons.every((button) => (button as HTMLButtonElement).disabled))).toBe(true);
+    await historicalUserEdit.evaluate((button) => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await historicalRetry.evaluate((button) => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await expect(page.locator(".edit-banner")).toHaveCount(0);
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(1);
+    await waitForStableAssistant(page, "Slow response complete.", 10_000);
+    await expect(historicalUserEdit).toBeEnabled();
+    await expect(historicalRetry).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => (
+      (window as Window & { __JASMINE_SECOND_RUN_MONITOR__?: { sampledFrames: number } })
+        .__JASMINE_SECOND_RUN_MONITOR__?.sampledFrames ?? 0
+    ))).toBe(8);
+
+    const result = await page.evaluate((assistantId) => {
+      const scope = window as Window & {
+        __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number>;
+        __JASMINE_FIRST_ASSISTANT_NODE__?: Element;
+        __JASMINE_SECOND_RUN_MONITOR__?: {
+          settlementSeen: boolean;
+          sampledFrames: number;
+          postSettlementThinkingObserved: boolean;
+          postSettlementThinkingInsertions: number;
+        };
+        __JASMINE_SECOND_RUN_CLEANUP__?: () => void;
+      };
+      const monitor = scope.__JASMINE_SECOND_RUN_MONITOR__;
+      const sameFirstAssistantNode = scope.__JASMINE_FIRST_ASSISTANT_NODE__
+        === document.querySelector(`[data-message-id="${CSS.escape(assistantId)}"]`);
+      const firstAssistantRenders = scope.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?.[assistantId] ?? 0;
+      scope.__JASMINE_SECOND_RUN_CLEANUP__?.();
+      return { ...monitor, sameFirstAssistantNode, firstAssistantRenders };
+    }, firstSettlement!.assistantId);
+
+    expect(result.settlementSeen).toBe(true);
+    expect(result.postSettlementThinkingObserved).toBe(false);
+    expect(result.postSettlementThinkingInsertions).toBe(0);
+    expect(result.sameFirstAssistantNode).toBe(true);
+    expect(result.firstAssistantRenders).toBe(0);
+    await expect(thinkingPlaceholder).toHaveCount(0);
+  });
+
+  test("a first send from an unmaterialized chat keeps its optimistic row through thread selection", async () => {
+    const { page } = harness;
+    const prompt = "slow response first unmaterialized chat continuity";
+
+    // Opening a project enters /chat/new without materializing a ChatThread.
+    // Submit must create/select that thread and stage the user row atomically.
+    await page.getByRole("button", { name: "Open Folder..." }).first().click();
+    await expect(page.locator(".project-row", { hasText: "local-project" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      (window as Window & {
+        __jasmineHarness?: { snapshot(): { app: { activeThreadId: string | null } } };
+      }).__jasmineHarness?.snapshot().app.activeThreadId ?? null
+    ))).toBeNull();
+
+    await page.evaluate((text) => {
+      const stack = document.querySelector(".message-stack");
+      if (!stack) throw new Error("Message stack is missing.");
+      const scope = window as Window & {
+        __JASMINE_FIRST_SEND_CONTINUITY__?: {
+          prompt: string;
+          sawNode: boolean;
+          removals: number;
+          firstNode: Element | null;
+          observer: MutationObserver;
+        };
+      };
+      const state = {
+        prompt: text,
+        sawNode: false,
+        removals: 0,
+        firstNode: null as Element | null,
+        observer: null as unknown as MutationObserver
+      };
+      const findUser = (node: Node): Element | null => {
+        if (!(node instanceof Element)) return null;
+        const candidate = node.matches(".user-message-wrap")
+          ? node
+          : node.querySelector(".user-message-wrap");
+        return candidate?.textContent?.includes(text) ? candidate : null;
+      };
+      state.observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const added of record.addedNodes) {
+            const user = findUser(added);
+            if (user && !state.firstNode) {
+              state.firstNode = user;
+              state.sawNode = true;
+            }
+          }
+          for (const removed of record.removedNodes) {
+            if (state.firstNode && (removed === state.firstNode || removed.contains(state.firstNode))) {
+              state.removals += 1;
+            }
+          }
+        }
+      });
+      state.observer.observe(stack, { childList: true, subtree: true });
+      scope.__JASMINE_FIRST_SEND_CONTINUITY__ = state;
+    }, prompt);
+
+    await page.locator(".rich-composer-editor").fill(prompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    const optimisticUser = page.locator(".user-message-wrap", { hasText: prompt });
+    await expect(optimisticUser).toBeVisible();
+    const optimisticId = await optimisticUser.getAttribute("data-message-id");
+    expect(optimisticId).toMatch(/^pending-/);
+
+    await waitForStableAssistant(page, "Slow response complete.");
+    await expect(page.locator(".user-message-wrap", { hasText: prompt })).toBeVisible();
+    const continuity = await page.evaluate((text) => {
+      const scope = window as Window & {
+        __JASMINE_FIRST_SEND_CONTINUITY__?: {
+          sawNode: boolean;
+          removals: number;
+          firstNode: Element | null;
+          observer: MutationObserver;
+        };
+      };
+      const state = scope.__JASMINE_FIRST_SEND_CONTINUITY__;
+      const current = Array.from(document.querySelectorAll(".user-message-wrap"))
+        .find((node) => node.textContent?.includes(text));
+      state?.observer.disconnect();
+      return {
+        sawNode: state?.sawNode ?? false,
+        removals: state?.removals ?? -1,
+        sameNode: Boolean(state?.firstNode && state.firstNode === current && state.firstNode.isConnected)
+      };
+    }, prompt);
+    expect(continuity).toEqual({ sawNode: true, removals: 0, sameNode: true });
+    await expect(page.locator(".error-strip")).toBeHidden();
+  });
+
+  test("operation-specific pre-chunk abort settlements preserve loaded history and stable DOM identities", async () => {
+    const originalUserDataDir = harness.userDataDir;
+    await quitElectron(harness.app);
+    await rm(originalUserDataDir, { recursive: true, force: true });
+    harness = await launchJasmine("abort-settlement-continuity", undefined, {
+      JASMINE_E2E_CHAT_GENERATION_DELAY_MS: "1500"
+    });
+    const { page, userDataDir } = harness;
+    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Abort settlement continuity" }));
+    seedLargeThreadMessages(userDataDir, thread.id, 620);
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Abort settlement continuity/ }).click();
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(160);
+
+    while (await page.locator(".message-stack [data-message-id]").count() < 620) {
+      const before = await page.locator(".message-stack [data-message-id]").count();
+      await page.locator(".load-older-messages").click();
+      await expect.poll(() => page.locator(".message-stack [data-message-id]").count()).toBeGreaterThan(before);
+    }
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(620);
+    await expect(page.locator(".message-stack [data-message-id]").first()).toHaveAttribute("data-message-id", "large-0000");
+
+    const prompt = "slow response abort before first chunk continuity";
+    await page.locator(".rich-composer-editor").fill(prompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    const optimisticUser = page.locator(".user-message-wrap", { hasText: prompt });
+    await expect(optimisticUser).toBeVisible();
+    await expect(optimisticUser).toHaveAttribute("data-message-id", /^pending-/);
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
+
+    // Wait only until main has persisted the user row. The mock provider then
+    // remains in its 750 ms pre-chunk delay, giving stop a deterministic window.
+    await expect.poll(() => page.evaluate(async ({ threadId, content }) => {
+      const messages = await window.jasmine.listMessages({ threadId, limit: 1 });
+      return messages.at(-1)?.content === content;
+    }, { threadId: thread.id, content: prompt }), { timeout: 500, intervals: [10, 20, 20] }).toBe(true);
+
+    await page.evaluate((content) => {
+      const scope = window as Window & {
+        __JASMINE_ABORT_CONTINUITY__?: {
+          firstHistory: Element;
+          optimisticUser: Element;
+          removals: number;
+          settlement: { replaceAfterMessageId: string | null; messageCount: number; renderId: string | null } | null;
+          observer: MutationObserver;
+          unsubscribe: () => void;
+        };
+      };
+      const firstHistory = document.querySelector("[data-message-id='large-0000']");
+      const optimistic = Array.from(document.querySelectorAll(".user-message-wrap"))
+        .find((node) => node.textContent?.includes(content));
+      const stack = document.querySelector(".message-stack");
+      if (!firstHistory || !optimistic || !stack) throw new Error("Continuity fixtures are missing.");
+      const state = {
+        firstHistory,
+        optimisticUser: optimistic,
+        removals: 0,
+        settlement: null as { replaceAfterMessageId: string | null; messageCount: number; renderId: string | null } | null,
+        observer: null as unknown as MutationObserver,
+        unsubscribe: () => undefined
+      };
+      state.observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const removed of record.removedNodes) {
+            if (
+              removed === state.optimisticUser
+              || removed.contains(state.optimisticUser)
+              || removed === state.firstHistory
+              || removed.contains(state.firstHistory)
+            ) state.removals += 1;
+          }
+        }
+      });
+      state.observer.observe(stack, { childList: true, subtree: true });
+      state.unsubscribe = window.jasmine.onChatStream((event) => {
+        if (event.status !== "aborted" || !event.settlement) return;
+        state.settlement = {
+          replaceAfterMessageId: event.settlement.replaceAfterMessageId ?? null,
+          messageCount: event.settlement.messages.length,
+          renderId: event.settlement.messages.at(-1)?.renderId ?? null
+        };
+      });
+      scope.__JASMINE_ABORT_CONTINUITY__ = state;
+    }, prompt);
+
+    await page.getByRole("button", { name: "Stop response" }).click();
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & {
+      __JASMINE_ABORT_CONTINUITY__?: { settlement: unknown };
+    }).__JASMINE_ABORT_CONTINUITY__?.settlement))).toBe(true);
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(621);
+    await expect(page.locator(".message-stack [data-message-id]").first()).toHaveAttribute("data-message-id", "large-0000");
+
+    const continuity = await page.evaluate((content) => {
+      const scope = window as Window & {
+        __JASMINE_ABORT_CONTINUITY__?: {
+          firstHistory: Element;
+          optimisticUser: Element;
+          removals: number;
+          settlement: { replaceAfterMessageId: string | null; messageCount: number; renderId: string | null } | null;
+          observer: MutationObserver;
+          unsubscribe: () => void;
+        };
+      };
+      const state = scope.__JASMINE_ABORT_CONTINUITY__;
+      const currentUser = Array.from(document.querySelectorAll(".user-message-wrap"))
+        .find((node) => node.textContent?.includes(content));
+      const result = {
+        sameFirstHistory: state?.firstHistory === document.querySelector("[data-message-id='large-0000']"),
+        sameUser: state?.optimisticUser === currentUser,
+        removals: state?.removals ?? -1,
+        settlement: state?.settlement ?? null,
+        currentUserId: currentUser?.getAttribute("data-message-id") ?? null
+      };
+      state?.observer.disconnect();
+      state?.unsubscribe();
+      return result;
+    }, prompt);
+    expect(continuity.sameFirstHistory).toBe(true);
+    expect(continuity.sameUser).toBe(true);
+    expect(continuity.removals).toBe(0);
+    expect(continuity.currentUserId).not.toMatch(/^pending-/);
+    expect(continuity.settlement).toEqual({
+      replaceAfterMessageId: "large-0619",
+      messageCount: 1,
+      renderId: expect.stringMatching(/^pending-/)
+    });
+
+    type AbortSettlementSnapshot = {
+      replaceAfterMessageId: string | null;
+      replaceFromMessageId: string | null;
+      messages: Array<{ id: string; renderId: string | null }>;
+    };
+    const armAbortSettlement = async () => {
+      await page.evaluate(() => {
+        const scope = window as Window & {
+          __JASMINE_OPERATION_ABORT__?: {
+            settlement: {
+              replaceAfterMessageId: string | null;
+              replaceFromMessageId: string | null;
+              messages: Array<{ id: string; renderId: string | null }>;
+            } | null;
+            unsubscribe: () => void;
+          };
+        };
+        scope.__JASMINE_OPERATION_ABORT__?.unsubscribe();
+        const state = {
+          settlement: null as {
+            replaceAfterMessageId: string | null;
+            replaceFromMessageId: string | null;
+            messages: Array<{ id: string; renderId: string | null }>;
+          } | null,
+          unsubscribe: () => undefined
+        };
+        state.unsubscribe = window.jasmine.onChatStream((event) => {
+          if (event.status !== "aborted" || !event.settlement) return;
+          state.settlement = {
+            replaceAfterMessageId: event.settlement.replaceAfterMessageId ?? null,
+            replaceFromMessageId: event.settlement.replaceFromMessageId ?? null,
+            messages: event.settlement.messages.map((message) => ({
+              id: message.id,
+              renderId: message.renderId ?? null
+            }))
+          };
+        });
+        scope.__JASMINE_OPERATION_ABORT__ = state;
+      });
+    };
+    const takeAbortSettlement = async (): Promise<AbortSettlementSnapshot> => {
+      await expect.poll(() => page.evaluate(() => Boolean((window as Window & {
+        __JASMINE_OPERATION_ABORT__?: { settlement: unknown };
+      }).__JASMINE_OPERATION_ABORT__?.settlement))).toBe(true);
+      return page.evaluate(() => {
+        const scope = window as Window & {
+          __JASMINE_OPERATION_ABORT__?: {
+            settlement: AbortSettlementSnapshot | null;
+            unsubscribe: () => void;
+          };
+        };
+        const state = scope.__JASMINE_OPERATION_ABORT__;
+        state?.unsubscribe();
+        if (!state?.settlement) throw new Error("Abort settlement is missing.");
+        return state.settlement;
+      });
+    };
+
+    await armAbortSettlement();
+    const retryTarget = page.locator("[data-message-id='large-0619']");
+    // The chat follower may still be completing its bounded tail animation;
+    // invoke the always-mounted action without waiting for hover stability.
+    await retryTarget.getByRole("button", { name: "Regenerate this response" }).click({ force: true });
+    await page.getByRole("button", { name: "Stop response" }).click();
+    const retrySettlement = await takeAbortSettlement();
+    expect(retrySettlement).toEqual({
+      replaceAfterMessageId: "large-0618",
+      replaceFromMessageId: "large-0619",
+      messages: [
+        { id: "large-0619", renderId: expect.stringMatching(/^stream-/) },
+        { id: continuity.currentUserId, renderId: expect.stringMatching(/^stream-/) }
+      ]
+    });
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(621);
+    await expect(page.locator(".message-stack [data-message-id]").first()).toHaveAttribute("data-message-id", "large-0000");
+    await expect(page.getByRole("button", { name: "Stop response" })).toHaveCount(0);
+
+    const editedUser = page.locator("[data-message-id='large-0618']");
+    await editedUser.evaluate((node) => {
+      (window as Window & { __JASMINE_ABORT_EDIT_NODE__?: Element }).__JASMINE_ABORT_EDIT_NODE__ = node;
+    });
+    await editedUser.getByRole("button", { name: "Edit message" }).click({ force: true });
+    await expect(page.locator(".edit-banner")).toContainText("Editing message");
+    await page.locator(".rich-composer-editor").fill("edited request aborted before generation");
+    await armAbortSettlement();
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Stop response" }).click();
+    const editSettlement = await takeAbortSettlement();
+    expect(editSettlement).toEqual({
+      replaceAfterMessageId: "large-0617",
+      replaceFromMessageId: "large-0618",
+      messages: [{ id: "large-0618", renderId: null }]
+    });
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(619);
+    expect(await page.evaluate(() => (
+      (window as Window & { __JASMINE_ABORT_EDIT_NODE__?: Element }).__JASMINE_ABORT_EDIT_NODE__
+      === document.querySelector("[data-message-id='large-0618']")
+    ))).toBe(true);
+    await expect(page.locator(".error-strip")).toBeHidden();
+  });
+
+  test("switching threads never paints the old rows under the new active selection", async () => {
+    const { page } = harness;
+    const alphaPrompt = "paint switch alpha boundary";
+    const betaPrompt = "paint switch beta boundary";
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(alphaPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(betaPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const titles = await page.evaluate(async ({ alpha, beta }) => {
+      const threads = await window.jasmine.listThreads();
+      const alphaThread = threads.find((thread) => thread.title.includes(alpha));
+      const betaThread = threads.find((thread) => thread.title.includes(beta));
+      if (!alphaThread || !betaThread) throw new Error("Paint-switch threads are missing.");
+      return { alpha: alphaThread.title, beta: betaThread.title };
+    }, { alpha: alphaPrompt, beta: betaPrompt });
+    await page.getByRole("button", { name: new RegExp(alphaPrompt, "i") }).first().click();
+    await expect(page.locator(".message-stack")).toContainText(alphaPrompt);
+
+    await page.evaluate(({ alpha, beta, betaTitle }) => {
+      const scope = window as Window & {
+        __JASMINE_THREAD_PAINT_MONITOR__?: {
+          frames: number;
+          mismatchFrames: number;
+          betaContentFrames: number;
+          finished: boolean;
+        };
+      };
+      const monitor = { frames: 0, mismatchFrames: 0, betaContentFrames: 0, finished: false };
+      scope.__JASMINE_THREAD_PAINT_MONITOR__ = monitor;
+      const sample = () => {
+        monitor.frames += 1;
+        const activeTitle = document.querySelector(".thread-row.active .thread-item > span")?.textContent ?? "";
+        const stackText = document.querySelector(".message-stack")?.textContent ?? "";
+        const betaSelected = activeTitle.includes(betaTitle);
+        if (betaSelected && stackText.includes(alpha)) monitor.mismatchFrames += 1;
+        if (betaSelected && stackText.includes(beta)) monitor.betaContentFrames += 1;
+        if (monitor.betaContentFrames >= 4 || monitor.frames >= 600) {
+          monitor.finished = true;
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }, { alpha: alphaPrompt, beta: betaPrompt, betaTitle: titles.beta });
+
+    await page.getByRole("button", { name: new RegExp(betaPrompt, "i") }).first().click();
+    await expect(page.locator(".message-stack")).toContainText(betaPrompt);
+    await expect.poll(() => page.evaluate(() => (
+      (window as Window & {
+        __JASMINE_THREAD_PAINT_MONITOR__?: { finished: boolean };
+      }).__JASMINE_THREAD_PAINT_MONITOR__?.finished ?? false
+    ))).toBe(true);
+    const monitor = await page.evaluate(() => (
+      (window as Window & {
+        __JASMINE_THREAD_PAINT_MONITOR__?: {
+          frames: number;
+          mismatchFrames: number;
+          betaContentFrames: number;
+          finished: boolean;
+        };
+      }).__JASMINE_THREAD_PAINT_MONITOR__
+    ));
+    expect(monitor?.betaContentFrames).toBeGreaterThanOrEqual(4);
+    expect(monitor?.mismatchFrames).toBe(0);
+  });
+
+  test("provider send failures preserve rendered history and cannot write an old thread page into a new selection", async () => {
+    const { page } = harness;
+    const alphaPrompt = "provider failure alpha history";
+    const betaPrompt = "provider failure beta history";
+    const stableFailurePrompt = "working failure stable provider reconcile";
+    const staleFailurePrompt = "working failure stale provider reconcile";
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(alphaPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(betaPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const ids = await page.evaluate(async ({ alpha, beta }) => {
+      const threads = await window.jasmine.listThreads();
+      const alphaThread = threads.find((thread) => thread.title.includes(alpha));
+      const betaThread = threads.find((thread) => thread.title.includes(beta));
+      if (!alphaThread || !betaThread) throw new Error("Provider-failure threads are missing.");
+      return { alpha: alphaThread.id, beta: betaThread.id };
+    }, { alpha: alphaPrompt, beta: betaPrompt });
+    await page.getByRole("button", { name: new RegExp(alphaPrompt, "i") }).first().click();
+    await expect(page.locator(".message-stack")).toContainText(alphaPrompt);
+
+    const historyIds = await page.locator(".message-stack [data-message-id]").evaluateAll((nodes) => (
+      nodes.map((node) => node.getAttribute("data-message-id")).filter((id): id is string => Boolean(id))
+    ));
+    expect(historyIds).toHaveLength(2);
+    await page.evaluate((messageIds) => {
+      const scope = window as Window & {
+        __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number>;
+        __JASMINE_FAILURE_HISTORY_NODES__?: Element[];
+        __JASMINE_FAILURE_USER_NODE__?: Element;
+      };
+      scope.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ = {};
+      scope.__JASMINE_FAILURE_HISTORY_NODES__ = messageIds.map((id) => {
+        const node = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+        if (!node) throw new Error(`Historical message ${id} is missing.`);
+        return node;
+      });
+    }, historyIds);
+
+    // Delay only the post-failure database response (after it has read SQLite),
+    // leaving time to retain the optimistic node reference before reconciliation.
+    await page.evaluate((threadId) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [threadId]: [900] };
+    }, ids.alpha);
+    await page.locator(".rich-composer-editor").fill(stableFailurePrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    const optimisticUser = page.locator(".user-message-wrap", { hasText: stableFailurePrompt });
+    await expect(optimisticUser).toBeVisible();
+    await optimisticUser.evaluate((node) => {
+      (window as Window & { __JASMINE_FAILURE_USER_NODE__?: Element }).__JASMINE_FAILURE_USER_NODE__ = node;
+    });
+    await expect(page.locator(".assistant-block.error-message")).toContainText("Mock Working failure.");
+
+    const stableResult = await page.evaluate(({ messageIds, prompt }) => {
+      const scope = window as Window & {
+        __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number>;
+        __JASMINE_FAILURE_HISTORY_NODES__?: Element[];
+        __JASMINE_FAILURE_USER_NODE__?: Element;
+      };
+      const historyNodes = scope.__JASMINE_FAILURE_HISTORY_NODES__ ?? [];
+      const currentHistory = messageIds.map((id) => document.querySelector(`[data-message-id="${CSS.escape(id)}"]`));
+      const currentUser = Array.from(document.querySelectorAll(".user-message-wrap"))
+        .find((node) => node.textContent?.includes(prompt));
+      return {
+        historyRenders: messageIds.map((id) => scope.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?.[id] ?? 0),
+        sameHistoryNodes: historyNodes.every((node, index) => node === currentHistory[index] && node.isConnected),
+        sameUserNode: Boolean(scope.__JASMINE_FAILURE_USER_NODE__
+          && scope.__JASMINE_FAILURE_USER_NODE__ === currentUser
+          && scope.__JASMINE_FAILURE_USER_NODE__.isConnected)
+      };
+    }, { messageIds: historyIds, prompt: stableFailurePrompt });
+    expect(stableResult.historyRenders).toEqual([0, 0]);
+    expect(stableResult.sameHistoryNodes).toBe(true);
+    expect(stableResult.sameUserNode).toBe(true);
+
+    // Exercise the same failure read again, but navigate after it has captured
+    // A's page. Its delayed response must fail the epoch/thread guard on B.
+    await page.evaluate((threadId) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [threadId]: [2_200] };
+    }, ids.alpha);
+    await page.locator(".rich-composer-editor").fill(staleFailurePrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".user-message-wrap", { hasText: staleFailurePrompt })).toBeVisible();
+    await expect.poll(() => page.evaluate((threadId) => (
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[threadId]?.length ?? -1
+    ), ids.alpha)).toBe(0);
+    await page.getByRole("button", { name: new RegExp(betaPrompt, "i") }).first().click();
+    await expect(page.locator(".message-stack")).toContainText(betaPrompt);
+    await page.waitForTimeout(2_500);
+    await expect(page.locator(".message-stack")).toContainText(betaPrompt);
+    await expect(page.locator(".message-stack")).not.toContainText(alphaPrompt);
+    await expect(page.locator(".message-stack")).not.toContainText(staleFailurePrompt);
+    await expect(page.locator(".error-strip")).toBeHidden();
+  });
+
+  test("provider failure reconciliation preserves an explicitly loaded historical prefix and reading position", async () => {
+    const { page, userDataDir } = harness;
+    const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Large provider failure boundary" }));
+    seedLargeThreadMessages(userDataDir, thread.id, 321);
+    updateSeededMessageContent(userDataDir, "large-0100", "working failure early loaded retry boundary");
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Large provider failure boundary/ }).click();
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(160);
+    while (await page.locator(".message-stack [data-message-id]").count() < 321) {
+      const before = await page.locator(".message-stack [data-message-id]").count();
+      await page.locator(".load-older-messages").click();
+      await expect.poll(() => page.locator(".message-stack [data-message-id]").count()).toBeGreaterThan(before);
+    }
+
+    // Retrying an early assistant truncates the optimistic renderer state to
+    // its user anchor. That anchor is outside a fixed latest-160 page, while the
+    // provider fails before main deletes anything; reconciliation must restore
+    // all 321 authoritative DB rows, including the omitted middle segment.
+    await page.locator("[data-message-id='large-0101']").getByRole("button", { name: "Regenerate this response" }).click();
+    const scroll = page.locator(".message-scroll");
+    await scroll.evaluate((node) => { node.scrollTop = 2_400; });
+    await scroll.dispatchEvent("wheel", { deltaY: -80 });
+    const before = await page.evaluate(() => {
+      const first = document.querySelector("[data-message-id='large-0000']");
+      const scrollNode = document.querySelector(".message-scroll");
+      if (!first || !(scrollNode instanceof HTMLElement)) throw new Error("Large failure fixtures are missing.");
+      (window as Window & { __JASMINE_LARGE_FAILURE_FIRST__?: Element }).__JASMINE_LARGE_FAILURE_FIRST__ = first;
+      return { scrollTop: scrollNode.scrollTop };
+    });
+
+    await expect(page.locator(".assistant-block.error-message")).toContainText("Mock Working failure.");
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(322);
+    await expect(page.locator(".message-stack [data-message-id]").first()).toHaveAttribute("data-message-id", "large-0000");
+
+    const after = await page.evaluate(() => {
+      const first = document.querySelector("[data-message-id='large-0000']");
+      const scrollNode = document.querySelector(".message-scroll");
+      const remembered = (window as Window & { __JASMINE_LARGE_FAILURE_FIRST__?: Element }).__JASMINE_LARGE_FAILURE_FIRST__;
+      if (!first || !(scrollNode instanceof HTMLElement)) throw new Error("Large failure result is missing.");
+      return {
+        sameFirst: remembered === first && first.isConnected,
+        scrollTop: scrollNode.scrollTop
+      };
+    });
+    expect(after.sameFirst).toBe(true);
+    expect(before.scrollTop).toBeGreaterThan(0);
+    expect(Math.abs(after.scrollTop - before.scrollTop)).toBeLessThanOrEqual(1);
+  });
+
+  test("a promoted delayed initial load keeps an older identical prompt without painting a third copy", async () => {
+    const { page } = harness;
+    const repeatedPrompt = "same prompt promoted load identity";
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(repeatedPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    const threadId = await page.evaluate(async (title) => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
+      if (!thread) throw new Error("Repeated-prompt history is missing.");
+      return thread.id;
+    }, repeatedPrompt);
+
+    await startEmptyThread(page);
+    await page.evaluate((id) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
+    }, threadId);
+    await page.getByRole("button", { name: new RegExp(repeatedPrompt, "i") }).first().click();
+    await expect.poll(() => page.evaluate((id) => (
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
+    ), threadId)).toBe(0);
+    await page.evaluate((text) => {
+      const scope = window as Window & {
+        __JASMINE_REPEATED_PROMPT_MAX__?: number;
+        __JASMINE_REPEATED_PROMPT_OBSERVER__?: MutationObserver;
+      };
+      const sample = () => {
+        const count = Array.from(document.querySelectorAll(".user-message-wrap"))
+          .filter((node) => node.textContent?.includes(text)).length;
+        scope.__JASMINE_REPEATED_PROMPT_MAX__ = Math.max(scope.__JASMINE_REPEATED_PROMPT_MAX__ ?? 0, count);
+      };
+      scope.__JASMINE_REPEATED_PROMPT_MAX__ = 0;
+      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__ = new MutationObserver(sample);
+      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__.observe(
+        document.querySelector(".message-stack") ?? document.body,
+        { childList: true, subtree: true }
+      );
+      sample();
+    }, repeatedPrompt);
+    await page.locator(".rich-composer-editor").fill(repeatedPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const repeatedUsers = page.locator(".user-message-wrap", { hasText: repeatedPrompt });
+    await expect(repeatedUsers).toHaveCount(2);
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4, { timeout: 4_000 });
+    await expect(repeatedUsers).toHaveCount(2);
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4);
+    await expect(repeatedUsers).toHaveCount(2);
+    const maxRepeatedUsers = await page.evaluate(() => {
+      const scope = window as Window & {
+        __JASMINE_REPEATED_PROMPT_MAX__?: number;
+        __JASMINE_REPEATED_PROMPT_OBSERVER__?: MutationObserver;
+      };
+      scope.__JASMINE_REPEATED_PROMPT_OBSERVER__?.disconnect();
+      return scope.__JASMINE_REPEATED_PROMPT_MAX__ ?? -1;
+    });
+    expect(maxRepeatedUsers).toBe(2);
+  });
+
+  test("send, retry, edit, queue, and stop publish ordered persisted stream settlements", async () => {
+    const { page } = harness;
+    const result = await page.evaluate(async () => {
+      const thread = await window.jasmine.createThread({ title: "Stream settlement protocol" });
+      const events: Array<Parameters<Parameters<typeof window.jasmine.onChatStream>[0]>[0]> = [];
+      const unsubscribe = window.jasmine.onChatStream((event) => events.push(event));
+      const request = (requestId: string, content: string) => ({
+        requestId,
+        threadId: thread.id,
+        content,
+        attachments: [],
+        messages: [],
+        toolsEnabled: true
+      });
+      const waitForRunning = async (requestId: string) => {
+        const deadline = Date.now() + 10_000;
+        while (!events.some((event) => event.requestId === requestId && event.status === "running" && (event.liveMessages || event.delta))) {
+          if (Date.now() > deadline) throw new Error(`No running stream event for ${requestId}`);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      };
+
+      try {
+        const sendId = `settlement-send-${crypto.randomUUID()}`;
+        const sent = await window.jasmine.sendChatMessage(request(sendId, "settlement initial request"));
+
+        const retryId = `settlement-retry-${crypto.randomUUID()}`;
+        const retried = await window.jasmine.retryChatMessage({
+          requestId: retryId,
+          threadId: thread.id,
+          messageId: sent.assistantMessage.id,
+          toolsEnabled: true
+        });
+
+        const editId = `settlement-edit-${crypto.randomUUID()}`;
+        const edited = await window.jasmine.editChatMessage({
+          requestId: editId,
+          threadId: thread.id,
+          messageId: sent.userMessage.id,
+          content: "settlement edited request",
+          attachments: [],
+          toolsEnabled: true
+        });
+
+        const queueId = `settlement-queue-${crypto.randomUUID()}`;
+        const queuedRun = window.jasmine.sendChatMessage(request(queueId, "slow response settlement queued run"));
+        await window.jasmine.queueChatMessage({
+          requestId: queueId,
+          threadId: thread.id,
+          mode: "followUp",
+          content: "settlement queued follow up",
+          attachments: []
+        });
+        const queued = await queuedRun;
+
+        const stopId = `settlement-stop-${crypto.randomUUID()}`;
+        const stoppedRun = window.jasmine.sendChatMessage(request(stopId, "slow timeline settlement stop"));
+        await waitForRunning(stopId);
+        if (!await window.jasmine.cancelChatMessage(stopId)) throw new Error("Stop request was not accepted.");
+        const stopped = await stoppedRun;
+
+        // Give any asynchronous title callback or stray runtime callback a chance
+        // to publish; no running event may arrive after a settlement.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return {
+          requestIds: { sendId, retryId, editId, queueId, stopId },
+          responseIds: {
+            send: [sent.userMessage.id, sent.assistantMessage.id],
+            retry: retried.assistantMessage.id,
+            edit: [edited.userMessage.id, edited.assistantMessage.id],
+            queue: queued.assistantMessage.id,
+            stop: stopped.assistantMessage.id
+          },
+          events: events.map((event) => ({
+            requestId: event.requestId,
+            status: event.status,
+            settlement: event.settlement ? {
+              replaceAfterMessageId: event.settlement.replaceAfterMessageId ?? null,
+              replaceFromMessageId: event.settlement.replaceFromMessageId ?? null,
+              messages: event.settlement.messages.map((message) => ({
+                id: message.id,
+                role: message.role,
+                content: message.content,
+                renderId: message.renderId ?? null
+              }))
+            } : null
+          }))
+        };
+      } finally {
+        unsubscribe();
+      }
+    });
+
+    const settlementFor = (requestId: string) => result.events.find((event) => (
+      event.requestId === requestId && event.settlement !== null
+    ));
+    const assertNoLateRunning = (requestId: string) => {
+      const settlementIndex = result.events.findIndex((event) => event.requestId === requestId && event.settlement !== null);
+      expect(settlementIndex).toBeGreaterThanOrEqual(0);
+      expect(result.events.slice(settlementIndex + 1).some((event) => event.requestId === requestId && event.status === "running")).toBe(false);
+    };
+
+    const sent = settlementFor(result.requestIds.sendId);
+    expect(sent?.status).toBe("done");
+    expect(sent?.settlement?.replaceAfterMessageId).toBeNull();
+    expect(sent?.settlement?.messages.map((message) => message.id)).toEqual(result.responseIds.send);
+    expect(sent?.settlement?.messages.map((message) => message.renderId)).toEqual([
+      `pending-${result.requestIds.sendId}-0`,
+      `stream-${result.requestIds.sendId}-0`
+    ]);
+
+    const retried = settlementFor(result.requestIds.retryId);
+    expect(retried?.status).toBe("done");
+    expect(retried?.settlement?.replaceAfterMessageId).toBe(result.responseIds.send[0]);
+    expect(retried?.settlement?.replaceFromMessageId).toBe(result.responseIds.send[1]);
+    expect(retried?.settlement?.messages.map((message) => message.role)).toEqual(["assistant"]);
+    expect(retried?.settlement?.messages.at(-1)?.id).toBe(result.responseIds.retry);
+    expect(retried?.settlement?.messages.at(-1)?.renderId).toBe(`stream-${result.requestIds.retryId}-0`);
+
+    const edited = settlementFor(result.requestIds.editId);
+    expect(edited?.status).toBe("done");
+    expect(edited?.settlement?.messages.map((message) => message.id)).toEqual(result.responseIds.edit);
+    expect(edited?.settlement?.messages[0]?.renderId).toBeNull();
+    expect(edited?.settlement?.messages.at(-1)?.renderId).toBe(`stream-${result.requestIds.editId}-0`);
+
+    const queued = settlementFor(result.requestIds.queueId);
+    expect(queued?.status).toBe("done");
+    expect(queued?.settlement?.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(queued?.settlement?.messages[0]?.renderId).toBe(`pending-${result.requestIds.queueId}-0`);
+    expect(queued?.settlement?.messages.slice(1).map((message) => message.renderId)).toEqual([
+      `stream-${result.requestIds.queueId}-0`,
+      `stream-${result.requestIds.queueId}-1`,
+      `stream-${result.requestIds.queueId}-2`
+    ]);
+    expect(queued?.settlement?.messages.at(-1)?.id).toBe(result.responseIds.queue);
+
+    const stopped = settlementFor(result.requestIds.stopId);
+    expect(stopped?.status).toBe("aborted");
+    expect(stopped?.settlement?.messages.at(-1)?.id).toBe(result.responseIds.stop);
+    expect(stopped?.settlement?.messages.at(-1)?.renderId).toBe(`stream-${result.requestIds.stopId}-0`);
+
+    for (const requestId of Object.values(result.requestIds)) assertNoLateRunning(requestId);
   });
 
   test("window destroyed mid-stream does not crash the main process", async () => {
@@ -166,16 +1124,14 @@ test.describe("Jasmine chat runtime", () => {
 
   test("running composer queues editable follow-ups, deletes pending rows, steers after queueing, and ignores nearby non-control clicks", async () => {
     const { page, userDataDir } = harness;
-    // An existing thread rather than a new chat, matching the queue-rail spec
-    // above. On CI the send registered -- the user bubble rendered -- but the
-    // composer never showed "Stop response", so the run state did not reach it
-    // while a brand-new chat was still settling its thread id. That race is
-    // worth its own fix; queueing, editing, deleting, steering, and persisted
-    // order are what this spec is for, and none of them need a fresh chat.
+    // This deliberately long title also guards the macOS failure where the E2E
+    // data directory plus Pi's encoded cwd exceeded one component's byte limit.
+    expect(Buffer.byteLength(path.basename(userDataDir), "utf8")).toBeLessThanOrEqual(E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES);
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "slow response slow timeline queue base" }));
     await page.reload();
     await page.waitForSelector(".app-shell");
     await page.getByRole("button", { name: /slow response slow timeline queue base/ }).click();
+    await expect(page.locator(".thread-row.active", { hasText: "slow response slow timeline queue base" })).toHaveCount(1);
 
     await page.locator(".rich-composer-editor").fill("slow response slow timeline queue base");
     await page.getByRole("button", { name: "Send" }).click();
@@ -183,11 +1139,13 @@ test.describe("Jasmine chat runtime", () => {
     // bubble first keeps "the send never registered" distinguishable from "the
     // reply already finished".
     await expect(page.locator(".user-bubble")).toHaveCount(1);
-    // runState only turns "running" once the first stream event lands, and the
-    // mock holds the reply before streaming, so the button appears a beat after
-    // the send. The default 5s expectation was measuring host speed, not the
-    // composer; the run stays in flight until the queue drains.
+    // Stop appears optimistically with renderer run state. Wait for a real
+    // assistant stream update as well, proving main has entered the generation
+    // whose queue controls this spec exercises. The adjacent queue-rail test
+    // retains coverage for queueing before the first assistant chunk.
     await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(".assistant-block.live-message").last()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
 
     await page.locator(".rich-composer-editor").fill("queued follow up request");
     await page.getByRole("button", { name: "Queue message" }).click();
@@ -294,6 +1252,416 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.getByRole("button", { name: /slow response first thread/i })).toBeVisible();
     await page.getByRole("button", { name: /slow response first thread/i }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
+  });
+
+  test("A to B to A message loads cannot overwrite a live settlement", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("alpha epoch baseline");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill("beta epoch baseline");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const ids = await page.evaluate(async () => {
+      const threads = await window.jasmine.listThreads();
+      const alpha = threads.find((thread) => thread.title.includes("alpha epoch baseline"));
+      const beta = threads.find((thread) => thread.title.includes("beta epoch baseline"));
+      if (!alpha || !beta) throw new Error("Epoch test threads are missing.");
+      return { alpha: alpha.id, beta: beta.id };
+    });
+
+    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
+    await page.locator(".rich-composer-editor").fill("slow response slow timeline alpha settlement");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
+
+    // Each delay is applied after messages:list has already read SQLite. Both A
+    // pages therefore contain only the persisted user row and arrive after the
+    // final assistant settlement. The first A and the B response are stale by
+    // epoch; the final A response must be reconciled with the settlement.
+    await page.evaluate(({ alpha, beta }) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = {
+        [alpha]: [5_000, 5_200],
+        [beta]: [4_800]
+      };
+    }, ids);
+    await page.getByRole("button", { name: /beta epoch baseline/i }).first().click();
+    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
+    await page.getByRole("button", { name: /beta epoch baseline/i }).first().click();
+    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
+
+    await waitForStableAssistant(page, "Slow response complete.", 12_000);
+    await page.waitForTimeout(5_500);
+    await expect(page.locator(".message-stack")).toContainText("alpha epoch baseline");
+    await expect(page.locator(".message-stack")).toContainText("slow response slow timeline alpha settlement");
+    await expect(page.locator(".message-stack")).toContainText("Slow response complete.");
+    await expect(page.locator(".message-stack")).not.toContainText("beta epoch baseline");
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
+    await expect(page.locator(".error-strip")).toBeHidden();
+  });
+
+  test("a delayed same-thread load merges history with a newly started live run", async () => {
+    const { page } = harness;
+    const historyPrompt = "same-thread delayed history baseline";
+    const livePrompt = "slow response slow timeline same-thread load race";
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(historyPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const threadId = await page.evaluate(async (title) => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
+      if (!thread) throw new Error("Same-thread load-race history is missing.");
+      return thread.id;
+    }, historyPrompt);
+
+    await startEmptyThread(page);
+    await page.evaluate((id) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
+    }, threadId);
+    await page.getByRole("button", { name: /same-thread delayed history baseline/i }).first().click();
+
+    // The harness shifts only after messages:list has read SQLite, so zero here
+    // proves the delayed response is an old pre-run snapshot.
+    await expect.poll(() => page.evaluate((id) => (
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
+    ), threadId)).toBe(0);
+
+    await page.locator(".rich-composer-editor").fill(livePrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const optimisticUser = page.locator(".user-message-wrap", { hasText: livePrompt });
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    await expect(optimisticUser).toBeVisible();
+    await expect(liveAssistant).toBeVisible();
+    const optimisticId = await optimisticUser.getAttribute("data-message-id");
+    const liveId = await liveAssistant.getAttribute("data-message-id");
+    expect(optimisticId).toMatch(/^pending-/);
+    expect(liveId).toMatch(/^stream-/);
+
+    // The stale page returns while generation is still live. It must supply the
+    // historical baseline without replacing either new-run row.
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4, { timeout: 4_000 });
+    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
+    await expect(page.locator(`[data-message-id='${optimisticId}']`)).toBeVisible();
+    await expect(page.locator(`[data-message-id='${liveId}']`)).toBeVisible();
+    await expect(liveAssistant).toBeVisible();
+
+    await waitForStableAssistant(page, "Slow response complete.", 12_000);
+    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
+    await expect(page.locator(".message-stack")).toContainText(livePrompt);
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4);
+    await expect(page.locator(".error-strip")).toBeHidden();
+
+    const persisted = await page.evaluate(async (id) => (
+      await window.jasmine.listMessages(id)
+    ).map((message) => ({ role: message.role, content: message.content })), threadId);
+    expect(persisted).toEqual([
+      { role: "user", content: historyPrompt },
+      { role: "assistant", content: "Mock reply from Jasmine." },
+      { role: "user", content: livePrompt },
+      { role: "assistant", content: "Slow response complete." }
+    ]);
+  });
+
+  test("a delayed large initial page prepends without displacing an auto-followed live tail", async () => {
+    const { page, userDataDir } = harness;
+    await page.setViewportSize({ width: 1024, height: 668 });
+    const historyTitle = "Delayed large prepend viewport boundary";
+    const livePrompt = "return long answer smooth stream delayed large prepend viewport";
+
+    await startEmptyThread(page);
+    const thread = await page.evaluate((title) => window.jasmine.createThread({ title }), historyTitle);
+    seedLargeThreadMessages(userDataDir, thread.id, 160);
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.evaluate((threadId) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [threadId]: [2_500] };
+    }, thread.id);
+    await page.getByRole("button", { name: historyTitle }).first().click();
+    await expect.poll(() => page.evaluate((threadId) => (
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[threadId]?.length ?? -1
+    ), thread.id)).toBe(0);
+
+    await page.locator(".rich-composer-editor").fill(livePrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    await expect(liveAssistant).toBeVisible();
+    await liveAssistant.evaluate((liveNode) => {
+      type ViewportSample = {
+        historyLoaded: boolean;
+        scrollTop: number;
+        anchorViewportTop: number;
+        tailBottomOffset: number;
+        tailVisible: boolean;
+        naturalTailViewportTop: number;
+      };
+      type PrependMonitor = {
+        frames: ViewportSample[];
+        postMutation: { before: ViewportSample; after: ViewportSample } | null;
+        prependSamplePending: boolean;
+        disconnected: boolean;
+        replaced: boolean;
+        observer: MutationObserver;
+        frameId: number;
+      };
+      const scope = window as Window & { __JASMINE_DELAYED_PREPEND_MONITOR__?: PrependMonitor };
+      const scroll = document.querySelector<HTMLElement>(".message-scroll");
+      const stack = document.querySelector<HTMLElement>(".message-stack");
+      const userNode = liveNode.previousElementSibling;
+      if (!scroll || !stack || !(liveNode instanceof HTMLElement)) {
+        throw new Error("Delayed-prepend viewport fixture is missing.");
+      }
+      if (!(userNode instanceof HTMLElement)) throw new Error("Delayed-prepend user anchor is missing.");
+      const liveMessageId = liveNode.dataset.messageId;
+      const userMessageId = userNode.dataset.messageId;
+      if (!liveMessageId || !userMessageId) throw new Error("Delayed-prepend message identity is missing.");
+      const measure = (): ViewportSample => {
+        const currentLiveNode = document.querySelector<HTMLElement>(`[data-message-id="${liveMessageId}"]`);
+        const currentUserNode = document.querySelector<HTMLElement>(`[data-message-id="${userMessageId}"]`);
+        if (!currentLiveNode || !currentUserNode) throw new Error("Delayed-prepend message identity disconnected.");
+        const scrollRect = scroll.getBoundingClientRect();
+        const tailRect = currentLiveNode.getBoundingClientRect();
+        const anchorRect = currentUserNode.getBoundingClientRect();
+        const actions = currentLiveNode.querySelector<HTMLElement>(":scope > .message-actions");
+        if (!actions) throw new Error("Delayed-prepend natural tail is missing.");
+        const actionsRect = actions.getBoundingClientRect();
+        const monitor = scope.__JASMINE_DELAYED_PREPEND_MONITOR__;
+        if (monitor && (currentLiveNode !== liveNode || currentUserNode !== userNode)) monitor.replaced = true;
+        return {
+          historyLoaded: Boolean(document.querySelector("[data-message-id='large-0000']")),
+          scrollTop: scroll.scrollTop,
+          anchorViewportTop: anchorRect.top - scrollRect.top,
+          tailBottomOffset: Math.max(0, tailRect.bottom - scrollRect.bottom),
+          tailVisible: tailRect.bottom > scrollRect.top && tailRect.top < scrollRect.bottom,
+          naturalTailViewportTop: actionsRect.top - scrollRect.top
+        };
+      };
+      const monitor: PrependMonitor = {
+        frames: [],
+        postMutation: null,
+        prependSamplePending: false,
+        disconnected: false,
+        replaced: false,
+        observer: new MutationObserver(() => undefined),
+        frameId: 0
+      };
+      const observer = new MutationObserver(() => {
+        if (monitor.postMutation || monitor.prependSamplePending
+          || !document.querySelector("[data-message-id='large-0000']")) return;
+        monitor.prependSamplePending = true;
+        // The hook's message layout effect has already compensated the anchor
+        // in this commit. Sample in the following microtask so this assertion
+        // observes the final pre-paint state for the prepend boundary.
+        queueMicrotask(() => {
+          const before = [...monitor.frames].reverse().find((sample) => !sample.historyLoaded);
+          if (before && liveNode.isConnected) monitor.postMutation = { before, after: measure() };
+          monitor.prependSamplePending = false;
+        });
+      });
+      monitor.observer = observer;
+      observer.observe(stack, { childList: true });
+      const sampleFrame = () => {
+        if (!liveNode.isConnected) {
+          monitor.disconnected = true;
+          return;
+        }
+        if (!liveNode.classList.contains("live-message")) return;
+        // Reading layout in a microtask after the animation callback keeps the
+        // sample on the same paint boundary while including pre-paint observers.
+        queueMicrotask(() => {
+          if (liveNode.isConnected && liveNode.classList.contains("live-message")) {
+            monitor.frames.push(measure());
+          }
+        });
+        monitor.frameId = requestAnimationFrame(sampleFrame);
+      };
+      monitor.frameId = requestAnimationFrame(sampleFrame);
+      scope.__JASMINE_DELAYED_PREPEND_MONITOR__ = monitor;
+    });
+
+    await expect(page.locator("[data-message-id^='large-']")).toHaveCount(160, { timeout: 5_000 });
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & {
+      __JASMINE_DELAYED_PREPEND_MONITOR__?: { postMutation: unknown };
+    }).__JASMINE_DELAYED_PREPEND_MONITOR__?.postMutation))).toBe(true);
+    await waitForStableAssistant(page, "Long answer paragraph 42", 12_000);
+
+    const continuity = await page.evaluate(() => {
+      type ViewportSample = {
+        historyLoaded: boolean;
+        scrollTop: number;
+        anchorViewportTop: number;
+        tailBottomOffset: number;
+        tailVisible: boolean;
+        naturalTailViewportTop: number;
+      };
+      const monitor = (window as Window & {
+        __JASMINE_DELAYED_PREPEND_MONITOR__?: {
+          frames: ViewportSample[];
+          postMutation: { before: ViewportSample; after: ViewportSample } | null;
+          disconnected: boolean;
+          replaced: boolean;
+          observer: MutationObserver;
+          frameId: number;
+        };
+      }).__JASMINE_DELAYED_PREPEND_MONITOR__;
+      if (!monitor?.postMutation) throw new Error("Delayed prepend was not sampled.");
+      monitor.observer.disconnect();
+      cancelAnimationFrame(monitor.frameId);
+
+      let maxSmoothFrameAdvance = 0;
+      let prependFrameScrollAdvance = 0;
+      let prependFrameTailDrift = 0;
+      let prependTransitions = 0;
+      for (let index = 1; index < monitor.frames.length; index += 1) {
+        const previous = monitor.frames[index - 1];
+        const current = monitor.frames[index];
+        const scrollAdvance = current.scrollTop - previous.scrollTop;
+        if (previous.historyLoaded !== current.historyLoaded) {
+          prependTransitions += 1;
+          prependFrameScrollAdvance = Math.max(prependFrameScrollAdvance, scrollAdvance);
+          prependFrameTailDrift = Math.max(
+            prependFrameTailDrift,
+            Math.abs(current.anchorViewportTop - previous.anchorViewportTop)
+          );
+        } else {
+          maxSmoothFrameAdvance = Math.max(maxSmoothFrameAdvance, scrollAdvance);
+        }
+      }
+      return {
+        framesBeforePrepend: monitor.frames.filter((sample) => !sample.historyLoaded).length,
+        framesAfterPrepend: monitor.frames.filter((sample) => sample.historyLoaded).length,
+        prependTransitions,
+        prependFrameScrollAdvance,
+        prependFrameTailDrift,
+        mutationTailDrift: Math.abs(
+          monitor.postMutation.after.anchorViewportTop - monitor.postMutation.before.anchorViewportTop
+        ),
+        mutationTailVisible: monitor.postMutation.after.tailVisible,
+        mutationNaturalTailDrift: Math.abs(
+          monitor.postMutation.after.naturalTailViewportTop - monitor.postMutation.before.naturalTailViewportTop
+        ),
+        maxTailBottomOffset: Math.max(0, ...monitor.frames.map((sample) => sample.tailBottomOffset)),
+        allTailFramesVisible: monitor.frames.every((sample) => sample.tailVisible),
+        maxSmoothFrameAdvance,
+        disconnected: monitor.disconnected,
+        replaced: monitor.replaced
+      };
+    });
+
+    expect(continuity.framesBeforePrepend).toBeGreaterThan(0);
+    expect(continuity.framesAfterPrepend).toBeGreaterThan(0);
+    expect(continuity.prependTransitions).toBe(1);
+    expect(continuity.prependFrameScrollAdvance).toBeGreaterThan(1_000);
+    expect(continuity.mutationTailVisible).toBe(true);
+    expect(continuity.allTailFramesVisible).toBe(true);
+    // The comparison spans one painted frame, so it may include one ordinary
+    // follower step. Without prepend compensation this drift is ~20,000px;
+    // with compensation it remains within the same 16px visual budget.
+    expect(continuity.mutationTailDrift).toBeLessThanOrEqual(17);
+    expect(continuity.mutationNaturalTailDrift).toBeLessThanOrEqual(17);
+    expect(continuity.prependFrameTailDrift).toBeLessThanOrEqual(17);
+    expect(continuity.maxTailBottomOffset).toBeLessThanOrEqual(96);
+    expect(continuity.maxSmoothFrameAdvance).toBeLessThanOrEqual(17);
+    expect(continuity.disconnected).toBe(false);
+    expect(continuity.replaced).toBe(false);
+  });
+
+  test("a rapid second run invalidates the initial page promoted to the first run", async () => {
+    const { page } = harness;
+    const historyPrompt = "rapid promotion history baseline";
+    const firstPrompt = "rapid promotion first run";
+    const secondPrompt = "slow response slow timeline rapid promotion second run";
+
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(historyPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    const threadId = await page.evaluate(async (title) => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
+      if (!thread) throw new Error("Rapid-promotion history is missing.");
+      return thread.id;
+    }, historyPrompt);
+
+    await startEmptyThread(page);
+    await page.evaluate((id) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
+    }, threadId);
+    await page.getByRole("button", { name: /rapid promotion history baseline/i }).first().click();
+    await expect.poll(() => page.evaluate((id) => (
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
+    ), threadId)).toBe(0);
+
+    // Run one settles while the selected thread's original database page is
+    // still delayed. Run two has a stable anchor that old page never observed,
+    // so it must invalidate (not inherit) that promoted list response.
+    await page.locator(".rich-composer-editor").fill(firstPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+    await page.locator(".rich-composer-editor").fill(secondPrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    const secondLive = page.locator(".assistant-block.live-message").last();
+    await expect(secondLive).toBeVisible();
+
+    // The stale page arrives during run two. All three user/assistant pairs must
+    // remain mounted; otherwise the late initial load erased both newer runs.
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(6, { timeout: 4_000 });
+    await expect(secondLive).toBeVisible();
+    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
+    await expect(page.locator(".message-stack")).toContainText(firstPrompt);
+    await expect(page.locator(".message-stack")).toContainText(secondPrompt);
+
+    await waitForStableAssistant(page, "Slow response complete.", 12_000);
+    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(6);
+    await expect(page.locator(".error-strip")).toBeHidden();
+  });
+
+  test("paged retry removes a stale page-first assistant when its anchor is outside the delayed page", async () => {
+    const { page, userDataDir } = harness;
+    const threads = await page.evaluate(async () => ({
+      alpha: await window.jasmine.createThread({ title: "Paged retry alpha" }),
+      beta: await window.jasmine.createThread({ title: "Paged retry beta" })
+    }));
+    // The latest page contains rows 1..160: its first row is the assistant being
+    // retried, while the retained user anchor at row 0 is just outside the page.
+    seedLargeThreadMessages(userDataDir, threads.alpha.id, 161);
+    updateSeededMessageContent(
+      userDataDir,
+      "large-0000",
+      "slow response slow timeline paged retry boundary"
+    );
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /Paged retry alpha/ }).click();
+    const staleTarget = page.locator("[data-message-id='large-0001']");
+    await expect(staleTarget).toBeVisible();
+    await expect(page.locator(".message-stack [data-message-id]").first()).toHaveAttribute("data-message-id", "large-0001");
+
+    await page.evaluate((threadId) => {
+      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [threadId]: [5_000] };
+    }, threads.alpha.id);
+    await staleTarget.getByRole("button", { name: "Regenerate this response" }).click();
+    await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
+
+    // The A page is read before the slow retry commits, then delivered after its
+    // settlement. Its missing anchor must fall back to replaceFromMessageId and
+    // remove the stable stale target instead of rendering both replies.
+    await page.getByRole("button", { name: /Paged retry beta/ }).click();
+    await expect(page.locator(".empty-state")).toBeVisible();
+    await page.getByRole("button", { name: /Paged retry alpha/ }).click();
+    await waitForStableAssistant(page, "Slow response complete.", 12_000);
+    await page.waitForTimeout(5_500);
+
+    await expect(page.locator("[data-message-id='large-0001']")).toHaveCount(0);
+    await expect(page.locator(".assistant-block:not(.live-message)")).toHaveCount(1);
+    await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
+    await expect(page.locator(".message-stack")).not.toContainText("large import message 2");
+    await expect(page.locator(".error-strip")).toBeHidden();
   });
 
   test("running response can be stopped without canceling background thread work", async () => {
@@ -421,7 +1789,7 @@ test.describe("Jasmine chat runtime", () => {
 
     await page.locator(".rich-composer-editor").fill("second branch slow timeline");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".message-actions")).toHaveCount(0);
+    await expect(page.locator(".message-actions:visible")).toHaveCount(0);
     await waitForStableAssistant(page, "Second branch reply.");
     await expect(page.locator(".user-bubble")).toHaveCount(2);
     await expect(page.locator(".assistant-block")).toHaveCount(2);
@@ -453,6 +1821,10 @@ test.describe("Jasmine chat runtime", () => {
     await page.getByRole("button", { name: "Send" }).click();
     await waitForStableAssistant(page, "Second branch reply.");
 
+    await page.locator(".user-message-wrap").first().evaluate((node) => {
+      (window as typeof window & { __JASMINE_EDIT_USER_NODE__?: Element }).__JASMINE_EDIT_USER_NODE__ = node;
+    });
+
     await page.locator(".user-message-wrap").first().hover();
     await page.locator(".user-message-wrap").first().getByRole("button", { name: "Edit message" }).click();
     await expect(page.locator(".edit-banner")).toContainText("Editing message");
@@ -465,6 +1837,10 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".assistant-block")).toHaveCount(1);
     await expect(page.locator(".user-bubble").first()).toContainText("first branch edited");
     await waitForStableAssistant(page, "First branch reply.");
+    expect(await page.evaluate(() => (
+      (window as typeof window & { __JASMINE_EDIT_USER_NODE__?: Element }).__JASMINE_EDIT_USER_NODE__
+      === document.querySelector(".user-message-wrap")
+    ))).toBe(true);
     await expect(page.locator(".message-stack")).not.toContainText("second branch");
     await expect(page.locator(".message-stack")).not.toContainText("Second branch reply.");
     const threadId = await page.evaluate(async () => (await window.jasmine.listThreads()).find((thread) => thread.title.includes("first branch"))?.id);

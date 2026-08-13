@@ -246,7 +246,8 @@ test.describe("Jasmine providers and models", () => {
     const liveAssistant = page.locator(".assistant-block.live-message").last();
     await expect(liveAssistant).toBeVisible();
     await expect(liveAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
-    await expect(page.locator(".message-actions")).toHaveCount(0);
+    await expect(liveAssistant.locator(".message-actions")).toBeHidden();
+    await expect(liveAssistant.locator(".message-actions")).toHaveCSS("pointer-events", "none");
     await expect(liveAssistant.locator(".thinking-markdown")).toContainText("Need to inspect");
     await expect(liveAssistant.locator(".tool-run-item").first()).toContainText("reading");
 

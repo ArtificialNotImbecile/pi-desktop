@@ -107,6 +107,7 @@ const chatTimelineItemSchema = z.union([
   z.object({
     id: z.string(),
     kind: z.literal("tool_call"),
+    toolCallId: z.string().optional(),
     toolName: z.string(),
     title: z.string(),
     argumentsJson: z.string()
@@ -114,6 +115,7 @@ const chatTimelineItemSchema = z.union([
   z.object({
     id: z.string(),
     kind: z.literal("tool_result"),
+    toolCallId: z.string().optional(),
     toolName: z.string(),
     title: z.string(),
     content: z.string(),

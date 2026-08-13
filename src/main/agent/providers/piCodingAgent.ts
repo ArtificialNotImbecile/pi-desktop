@@ -295,6 +295,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   }
 
   const trackedQueue = createTrackedQueue(input.onQueueUpdate);
+  const timelineIdentities = new PiTimelineIdentityRegistry();
   const steeringTasks = new Set<Promise<void>>();
   let latestUpdate: PiCodingAgentChatResult = { content: "", timeline: [], webSearchUsed: [] };
   let currentPromptLinked = false;
@@ -324,7 +325,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       sessionManager.getEntries().slice(previousEntryCount),
       "",
       currentPromptText,
-      trackedQueue.deliveredMessages()
+      trackedQueue.deliveredMessages(),
+      timelineIdentities
     );
     const pendingMessages: Array<[string, RuntimeGeneratedMessage]> = [];
     for (const [id, pending] of pendingDeliveredMessages) {
@@ -350,7 +352,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const emitLiveUpdate = () => {
     if (!input.onUpdate) return;
     const liveMessages = computeLiveMessages();
-    const trailingAssistant = lastAssistantMessage(liveMessages);
+    const trailingMessage = liveMessages.at(-1);
+    const trailingAssistant = trailingMessage?.role === "assistant" ? trailingMessage : undefined;
     latestUpdate = {
       content: trailingAssistant?.content ?? "",
       timeline: trailingAssistant?.timeline ?? [],
@@ -372,6 +375,10 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       images: await imageContent(queuedImages),
       streamingBehavior: mode
     });
+    // Pi may resolve a queued prompt normally when session.abort() stops it.
+    // Preserve the runtime abort contract so the stopped queued turn is still
+    // reconciled instead of falling through as a successful user-only result.
+    if (input.signal?.aborted) throw abortError();
     if (inFlightFollowsDeliveredId === queued.id) {
       inFlightFollowsDeliveredId = null;
       inFlightTimeline = null;
@@ -382,7 +389,10 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     let task: Promise<void>;
     task = sendQueuedMessage(queued, "steer")
       .catch((error) => {
-        trackedQueue.remove(queued.id);
+        // Once a steer has been delivered its user row is authoritative. Keep
+        // it for abort reconciliation; otherwise a stop before Pi commits the
+        // user entry can silently erase the already-painted turn.
+        if (!input.signal?.aborted) trackedQueue.remove(queued.id);
         throw error;
       })
       .finally(() => {
@@ -417,7 +427,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
         if (isQueueUpdateEvent(event)) return;
         const eventType = streamEventType(event);
         if (eventType !== "message_update" && eventType !== "message_end") return;
-        const update = eventToLiveUpdate(event);
+        const update = eventToLiveUpdate(event, timelineIdentities);
         if (update && update.timeline.length > 0) inFlightTimeline = update.timeline;
         emitLiveUpdate();
       })
@@ -442,8 +452,14 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       initialPrompt,
       abortPromise
     ]);
-    if (!inFlightFollowsDeliveredId) inFlightTimeline = null;
+    // A queued steer can be held by an input extension until the initial agent
+    // run becomes idle, then start as a separate prompt. Clear the completed
+    // turn's live timeline at that idle boundary so it cannot be folded after
+    // the delivered user as a duplicate "new" assistant before the steer emits
+    // its first token.
+    if (session.isIdle || !inFlightFollowsDeliveredId) inFlightTimeline = null;
     await Promise.allSettled(Array.from(steeringTasks));
+    if (input.signal?.aborted) throw abortError();
     while (trackedQueue.hasPendingFollowUps()) {
       const queued = trackedQueue.shiftNextFollowUp();
       if (!queued) break;
@@ -451,9 +467,9 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     }
     const newEntries = sessionManager.getEntries().slice(previousEntryCount);
     linkCurrentPromptEntry(newEntries);
-    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content);
+    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
     const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
-    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages());
+    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
     return {
       content,
       timeline,
@@ -462,24 +478,48 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     };
   } catch (error) {
     if (input.signal?.aborted) {
-      const content = (latestUpdate.content || assistantTextFromTimeline(latestUpdate.timeline) || "Response stopped.").trim();
+      const fallbackContent = (latestUpdate.content || assistantTextFromTimeline(latestUpdate.timeline) || "Response stopped.").trim();
       const newEntries = sessionManager.getEntries().slice(previousEntryCount);
       linkCurrentPromptEntry(newEntries);
-      const timeline = liveTimelineFromSession(sessionManager, previousEntryCount, content, [], latestUpdate.timeline);
-      const stoppedTimeline: ChatTimelineItem[] = [
-        ...timeline,
-        {
-          id: "user-abort",
-          kind: "system",
-          title: "Stopped",
-          text: "The response was stopped by the user."
-        }
-      ];
+      const fallbackTimeline = latestUpdate.liveMessages?.length
+        ? latestUpdate.timeline
+        : liveTimelineFromSession(
+            sessionManager,
+            previousEntryCount,
+            fallbackContent,
+            [],
+            latestUpdate.timeline,
+            timelineIdentities
+          );
+      const stoppedItem: ChatTimelineItem = {
+        id: "user-abort",
+        kind: "system",
+        title: "Stopped",
+        text: "The response was stopped by the user."
+      };
+      const sessionMessages = sessionEntriesToMessages(
+        newEntries,
+        fallbackContent,
+        currentPromptText,
+        trackedQueue.deliveredMessages(),
+        timelineIdentities
+      );
+      const generatedMessages = stoppedGeneratedMessages(
+        sessionMessages,
+        latestUpdate.liveMessages,
+        fallbackContent,
+        fallbackTimeline,
+        stoppedItem
+      );
+      // stoppedGeneratedMessages always leaves an assistant as the final row.
+      // Derive the reply summary from that authoritative row so a queued user
+      // cannot make the previous turn's answer look like the stopped result.
+      const stoppedAssistant = generatedMessages[generatedMessages.length - 1];
       return {
-        content,
-        timeline: stoppedTimeline,
+        content: stoppedAssistant.content,
+        timeline: stoppedAssistant.timeline ?? [stoppedItem],
         webSearchUsed: derivedWebSearchResults(newEntries),
-        generatedMessages: sessionEntriesToMessages(newEntries, content, currentPromptText, trackedQueue.deliveredMessages())
+        generatedMessages
       };
     }
     throw error;
@@ -871,7 +911,7 @@ async function timelineToPiMessages(message: ChatSendRequest["messages"][number]
       continue;
     }
     if (item.kind === "tool_call") {
-      const callId = item.id || `${item.toolName}-${toolCallIdsByName.size + 1}`;
+      const callId = item.toolCallId || item.id || `${item.toolName}-${toolCallIdsByName.size + 1}`;
       latestToolCallId = callId;
       const queue = toolCallIdsByName.get(item.toolName) ?? [];
       queue.push(callId);
@@ -887,7 +927,9 @@ async function timelineToPiMessages(message: ChatSendRequest["messages"][number]
     }
     if (item.kind === "tool_result") {
       flushAssistant(assistantBlocksIncludeToolCall ? "toolUse" : "stop");
-      const toolCallId = shiftToolCallId(toolCallIdsByName, item.toolName) ?? latestToolCallId ?? item.id;
+      const toolCallId = consumeToolCallId(toolCallIdsByName, item.toolName, item.toolCallId)
+        ?? latestToolCallId
+        ?? item.id;
       output.push({
         role: "toolResult",
         toolCallId,
@@ -930,6 +972,21 @@ function shiftToolCallId(toolCallIdsByName: Map<string, string[]>, toolName: str
   const value = queue.shift();
   if (queue.length === 0) toolCallIdsByName.delete(toolName);
   return value;
+}
+
+function consumeToolCallId(
+  toolCallIdsByName: Map<string, string[]>,
+  toolName: string,
+  preferredId?: string
+): string | undefined {
+  if (!preferredId) return shiftToolCallId(toolCallIdsByName, toolName);
+  const queue = toolCallIdsByName.get(toolName);
+  if (queue) {
+    const index = queue.indexOf(preferredId);
+    if (index >= 0) queue.splice(index, 1);
+    if (queue.length === 0) toolCallIdsByName.delete(toolName);
+  }
+  return preferredId;
 }
 
 function parseToolArguments(value: string): Record<string, unknown> {
@@ -1228,8 +1285,80 @@ function restoreTimelineCustomEntries(sessionManager: SessionManager, timeline: 
   }
 }
 
-function sessionEntriesToTimeline(entries: SessionEntry[], fallbackText: string): ChatTimelineItem[] {
-  const timeline = entries.flatMap((entry) => entryToTimeline(entry));
+/**
+ * Pi emits message_update/message_end before SessionManager assigns an entry id.
+ * Keep a run-scoped identity for the message object so every timeline block can
+ * retain the same React key after that message is persisted. The deterministic
+ * base also makes a freshly loaded session stable; the ordinal only disambiguates
+ * providers that reuse response ids or messages created in the same millisecond.
+ */
+class PiTimelineIdentityRegistry {
+  private readonly messageIds = new WeakMap<object, string>();
+  private readonly nextOrdinalByBase = new Map<string, number>();
+  private activeLiveMessage: { id: string; role: string } | null = null;
+
+  forLiveMessage(message: Record<string, unknown>, phase: "message_update" | "message_end"): string {
+    const role = stringValue(message.role, "message");
+    let id = this.messageIds.get(message);
+    if (!id && this.activeLiveMessage?.role === role) {
+      // Pi streams one message at a time. Reuse the active identity even when a
+      // provider fills response metadata late or the event carries a new wrapper.
+      id = this.activeLiveMessage.id;
+    }
+    if (!id) id = this.allocate(message);
+    this.messageIds.set(message, id);
+
+    if (phase === "message_end") {
+      if (this.activeLiveMessage?.id === id) this.activeLiveMessage = null;
+    } else {
+      this.activeLiveMessage = { id, role };
+    }
+    return id;
+  }
+
+  forPersistedMessage(message: Record<string, unknown>): string {
+    const existing = this.messageIds.get(message);
+    if (existing) return existing;
+    const id = this.allocate(message);
+    this.messageIds.set(message, id);
+    return id;
+  }
+
+  private allocate(message: Record<string, unknown>): string {
+    const base = piTimelineMessageIdentityBase(message);
+    const ordinal = this.nextOrdinalByBase.get(base) ?? 0;
+    this.nextOrdinalByBase.set(base, ordinal + 1);
+    return ordinal === 0 ? base : `${base}:${ordinal + 1}`;
+  }
+}
+
+function piTimelineMessageIdentityBase(message: Record<string, unknown>): string {
+  const role = timelineIdentityPart(stringValue(message.role, "message"));
+  const timestamp = timelineIdentityPart(identityScalar(message.timestamp, "no-timestamp"));
+  const provider = timelineIdentityPart(stringValue(message.provider, "no-provider"));
+  const model = timelineIdentityPart(stringValue(message.model, "no-model"));
+  const responseOrCallId = timelineIdentityPart(
+    stringValue(message.responseId, "") || stringValue(message.toolCallId, "") || "no-response"
+  );
+  return `pi-message:${role}:${timestamp}:${provider}:${model}:${responseOrCallId}`;
+}
+
+function identityScalar(value: unknown, fallback: string): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return fallback;
+}
+
+function timelineIdentityPart(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function sessionEntriesToTimeline(
+  entries: SessionEntry[],
+  fallbackText: string,
+  identities: PiTimelineIdentityRegistry
+): ChatTimelineItem[] {
+  const timeline = entries.flatMap((entry) => entryToTimeline(entry, identities));
   if (timeline.some((item) => item.kind === "assistant_text")) return timeline;
   if (!fallbackText.trim()) return timeline;
   return [
@@ -1246,7 +1375,8 @@ function sessionEntriesToMessages(
   entries: SessionEntry[],
   fallbackText: string,
   initialPromptText: string,
-  deliveredQueuedMessages: TrackedQueuedMessage[]
+  deliveredQueuedMessages: TrackedQueuedMessage[],
+  identities: PiTimelineIdentityRegistry
 ): RuntimeGeneratedMessage[] {
   const output: RuntimeGeneratedMessage[] = [];
   let skippedInitialPrompt = false;
@@ -1288,7 +1418,7 @@ function sessionEntriesToMessages(
       continue;
     }
 
-    const timeline = entryToTimeline(entry);
+    const timeline = entryToTimeline(entry, identities);
     if (timeline.length > 0) {
       pendingAssistantEntryId ??= entry.id;
       pendingTimeline = mergeTimelineItems(pendingTimeline, timeline);
@@ -1331,11 +1461,62 @@ function liveTimelineFromSession(
   previousEntryCount: number,
   fallbackText: string,
   updateTimeline: ChatTimelineItem[],
-  previousTimeline: ChatTimelineItem[]
+  previousTimeline: ChatTimelineItem[],
+  identities: PiTimelineIdentityRegistry
 ): ChatTimelineItem[] {
-  const entriesTimeline = sessionEntriesToTimeline(sessionManager.getEntries().slice(previousEntryCount), fallbackText);
-  if (entriesTimeline.length > 0) return entriesTimeline;
-  return mergeTimelineItems(previousTimeline, updateTimeline);
+  const entriesTimeline = sessionEntriesToTimeline(sessionManager.getEntries().slice(previousEntryCount), "", identities);
+  const merged = mergeTimelineItems(entriesTimeline, mergeTimelineItems(previousTimeline, updateTimeline));
+  if (merged.some((item) => item.kind === "assistant_text") || !fallbackText.trim()) return merged;
+  return [
+    ...merged,
+    {
+      id: "assistant-output",
+      kind: "assistant_text",
+      text: fallbackText.trim()
+    }
+  ];
+}
+
+function stoppedGeneratedMessages(
+  sessionMessages: RuntimeGeneratedMessage[],
+  liveMessages: RuntimeGeneratedMessage[] | undefined,
+  fallbackContent: string,
+  fallbackTimeline: ChatTimelineItem[],
+  stoppedItem: ChatTimelineItem
+): RuntimeGeneratedMessage[] {
+  const usesLiveSnapshot = Boolean(liveMessages?.length);
+  const messages = (usesLiveSnapshot ? liveMessages! : sessionMessages).map((message) => ({
+    ...message,
+    ...(message.attachments ? { attachments: [...message.attachments] } : {}),
+    ...(message.timeline ? { timeline: [...message.timeline] } : {})
+  }));
+  // Only the trailing assistant can belong to the in-flight turn. A delivered
+  // queued user is intentionally visible before Pi emits that turn's first
+  // assistant update; reaching back past it would attach Stopped to the prior
+  // completed answer instead of creating a result for the queued turn.
+  const assistantIndex = messages.at(-1)?.role === "assistant"
+    ? messages.length - 1
+    : -1;
+
+  if (assistantIndex >= 0) {
+    const assistant = messages[assistantIndex];
+    messages[assistantIndex] = {
+      ...assistant,
+      content: assistant.content.trim() || fallbackContent,
+      timeline: mergeTimelineItems(
+        assistant.timeline?.length ? assistant.timeline : fallbackTimeline,
+        [stoppedItem]
+      )
+    };
+    return messages;
+  }
+
+  messages.push({
+    role: "assistant",
+    content: "Response stopped.",
+    timeline: [stoppedItem]
+  });
+  return messages;
 }
 
 function streamEventType(event: unknown): string | undefined {
@@ -1362,13 +1543,6 @@ function foldInFlightTimeline(messages: RuntimeGeneratedMessage[], timeline: Cha
   });
 }
 
-function lastAssistantMessage(messages: RuntimeGeneratedMessage[]): RuntimeGeneratedMessage | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "assistant") return messages[index];
-  }
-  return undefined;
-}
-
 function assistantTextFromTimeline(timeline: ChatTimelineItem[]): string {
   return timeline
     .filter((item): item is Extract<ChatTimelineItem, { kind: "assistant_text" }> => item.kind === "assistant_text")
@@ -1393,7 +1567,7 @@ function mergeTimelineItems(existing: ChatTimelineItem[], incoming: ChatTimeline
   return merged;
 }
 
-function entryToTimeline(entry: SessionEntry): ChatTimelineItem[] {
+function entryToTimeline(entry: SessionEntry, identities: PiTimelineIdentityRegistry): ChatTimelineItem[] {
   if (entry.type === "thinking_level_change") {
     return [{
       id: entry.id,
@@ -1449,14 +1623,7 @@ function entryToTimeline(entry: SessionEntry): ChatTimelineItem[] {
 
   const message = entry.message as unknown as Record<string, unknown>;
   if (message.role === "toolResult") {
-    return [{
-      id: entry.id,
-      kind: "tool_result",
-      toolName: stringValue(message.toolName, "tool"),
-      title: stringValue(message.toolName, "Tool result"),
-      content: contentToText(message.content),
-      isError: Boolean(message.isError)
-    }];
+    return messageToTimeline(identities.forPersistedMessage(message), message, "");
   }
   if (message.role === "bashExecution") {
     return [{
@@ -1479,48 +1646,21 @@ function entryToTimeline(entry: SessionEntry): ChatTimelineItem[] {
   }
   if (message.role !== "assistant") return [];
 
-  const content = Array.isArray(message.content) ? message.content : [];
-  return content.flatMap((block, index): ChatTimelineItem[] => {
-    if (!block || typeof block !== "object") return [];
-    const value = block as Record<string, unknown>;
-    if (value.type === "thinking") {
-      return [{
-        id: `${entry.id}-${index}`,
-        kind: "thinking",
-        text: stringValue(value.thinking, "")
-      } satisfies ChatTimelineItem];
-    }
-    if (value.type === "toolCall") {
-      const name = stringValue(value.name, "tool");
-      return [{
-        id: stringValue(value.id, `${entry.id}-${index}`),
-        kind: "tool_call",
-        toolName: name,
-        title: name,
-        argumentsJson: safeJson(value.arguments)
-      } satisfies ChatTimelineItem];
-    }
-    if (value.type === "text") {
-      const text = stringValue(value.text, "");
-      if (!text.trim()) return [];
-      return [{
-        id: `${entry.id}-${index}`,
-        kind: "assistant_text",
-        text
-      } satisfies ChatTimelineItem];
-    }
-    return [];
-  });
+  return messageToTimeline(identities.forPersistedMessage(message), message, "");
 }
 
-function eventToLiveUpdate(event: unknown): PiCodingAgentChatResult | null {
+function eventToLiveUpdate(event: unknown, identities: PiTimelineIdentityRegistry): PiCodingAgentChatResult | null {
   if (!event || typeof event !== "object") return null;
   const value = event as Record<string, unknown>;
   if (value.type !== "message_update" && value.type !== "message_end") return null;
   const message = value.message as Record<string, unknown> | undefined;
   if (!message) return null;
   const content = message.role === "assistant" ? contentToText(message.content) : "";
-  const timeline = messageToTimeline(String(value.type), message, content);
+  const timeline = messageToTimeline(
+    identities.forLiveMessage(message, value.type),
+    message,
+    content
+  );
   if (!content.trim() && timeline.length === 0) return null;
   return { content, timeline, webSearchUsed: [] };
 }
@@ -1601,9 +1741,11 @@ function toFetchedWebSearchResult(item: unknown): WebSearchResult | null {
 
 function messageToTimeline(idPrefix: string, message: Record<string, unknown>, fallbackText: string): ChatTimelineItem[] {
   if (message.role === "toolResult") {
+    const toolCallId = stringValue(message.toolCallId, "");
     return [{
       id: `${idPrefix}-tool-result`,
       kind: "tool_result",
+      ...(toolCallId ? { toolCallId } : {}),
       toolName: stringValue(message.toolName, "tool"),
       title: stringValue(message.toolName, "Tool result"),
       content: contentToText(message.content),
@@ -1625,9 +1767,11 @@ function messageToTimeline(idPrefix: string, message: Record<string, unknown>, f
     }
     if (value.type === "toolCall") {
       const name = stringValue(value.name, "tool");
+      const toolCallId = stringValue(value.id, "");
       return [{
         id: `${idPrefix}-tool-call-${index}`,
         kind: "tool_call",
+        ...(toolCallId ? { toolCallId } : {}),
         toolName: name,
         title: name,
         argumentsJson: safeJson(value.arguments)

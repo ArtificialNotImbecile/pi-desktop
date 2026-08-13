@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import type { AppLanguage } from "../../../shared/ipc";
 import { useI18n } from "../../i18n";
 import { ChevronDownIcon } from "../icons/Icons";
@@ -9,10 +9,13 @@ export function RunRecap(props: {
   status: RunRecapStatus;
   elapsedMs?: number;
   defaultExpanded: boolean;
-  children: ReactNode;
+  expanded?: boolean;
+  onExpandedChange?(expanded: boolean): void;
+  controlledIds?: string[];
 }) {
   const { language, t } = useI18n();
-  const [expanded, setExpanded] = useState(props.defaultExpanded);
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(props.defaultExpanded);
+  const expanded = props.expanded ?? uncontrolledExpanded;
   const detailsId = useId();
   const duration = formatElapsedDuration(props.elapsedMs, language);
   const label = recapLabel(props.status, duration, t);
@@ -23,16 +26,18 @@ export function RunRecap(props: {
         type="button"
         className="run-recap-toggle"
         aria-expanded={expanded}
-        aria-controls={detailsId}
+        aria-controls={[detailsId, ...(props.controlledIds ?? [])].join(" ")}
         aria-label={expanded ? t("message.hideWorkDetails") : t("message.showWorkDetails")}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => {
+          const next = !expanded;
+          setUncontrolledExpanded(next);
+          props.onExpandedChange?.(next);
+        }}
       >
         <span className="run-recap-label">{label}</span>
         <ChevronDownIcon />
       </button>
-      <div id={detailsId} className="run-recap-details" hidden={!expanded}>
-        {props.children}
-      </div>
+      <div id={detailsId} className="run-recap-details" hidden={!expanded} />
     </section>
   );
 }

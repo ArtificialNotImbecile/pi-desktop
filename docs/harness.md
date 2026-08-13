@@ -44,7 +44,9 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `updater.spec.ts`: About version state plus manual check, download, and restart-to-install transitions.
 - `panels.spec.ts`: memory, activity, search, terminal, deterministic file-change artifacts/diffs/previews, and context.
 - `integrations.spec.ts`: skills, prompts, Pi packages, and retired built-in migration.
-- `rendering.spec.ts`: markdown, timelines, tool summaries, images, and actions.
+- `rendering.spec.ts`: markdown, timelines, tool summaries, images, actions, long-history render isolation, and tail-follow completion.
+- `streaming-markdown.spec.ts`: cumulative Markdown chunk stability, late tool classification, and continuously growing fenced code.
+- `message-jump-rail.spec.ts`: stable jump-target observation and a layout-read-free scroll hot path.
 - `spotlight.spec.ts`: global Spotlight launcher.
 - `working.spec.ts`: task-state routing, controls, viewed-chat hidden/minimized notifications and unread fallback, and card geometry.
 - `permissions.spec.ts`: permission-mode persistence, project scope, approval decisions, sender binding, reload, and cancellation.

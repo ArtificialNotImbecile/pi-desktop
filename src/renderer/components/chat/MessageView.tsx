@@ -1,17 +1,17 @@
-import { memo, useRef, useState } from "react";
+import { createContext, memo, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatMessage, ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
 import { MessageTimeline } from "./MessageTimeline";
 import { useI18n } from "../../i18n";
 import { MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
-import { MarkdownMessage } from "./MarkdownMessage";
-import { RunRecap, type RunRecapStatus } from "./RunRecap";
+import type { RunRecapStatus } from "./RunRecap";
 
 declare global {
   interface Window {
     __JASMINE_HARNESS_ENABLED__?: boolean;
     __JASMINE_MESSAGE_VIEW_RENDERS__?: number;
+    __JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__?: Record<string, number>;
   }
 }
 type MessageViewProps = {
@@ -21,19 +21,26 @@ type MessageViewProps = {
   onRetry: (message: ChatMessage) => void;
   onEdit: (message: ChatMessage) => void;
   onRemember: (message: ChatMessage) => void;
-  actionsDisabled?: boolean;
 };
+
+const MessageActionsDisabledContext = createContext(false);
+
+export function MessageActionsStateProvider(props: { disabled: boolean; children: ReactNode }) {
+  return (
+    <MessageActionsDisabledContext.Provider value={props.disabled}>
+      {props.children}
+    </MessageActionsDisabledContext.Provider>
+  );
+}
 
 // Memoized so that during streaming only the live (changing) message re-renders.
 // Settled messages keep a stable `message` object reference (see applyStreamEvent),
 // and the callbacks passed in are stabilized by MessageList, so a shallow prop
 // comparison keeps every settled bubble out of the per-chunk reconcile.
 export const MessageView = memo(function MessageView(props: MessageViewProps) {
-  recordHarnessRender();
+  recordHarnessRender(props.message.id);
   const { t } = useI18n();
   const [previewImage, setPreviewImage] = useState<NonNullable<ChatMessage["attachments"]>[number] | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const isLive = props.message.id.startsWith("stream-");
 
   if (props.message.role === "user") {
@@ -64,13 +71,7 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
             )}
             <span>{props.message.content}</span>
           </div>
-          {!isLive && !props.actionsDisabled && (
-            <div className="user-message-actions">
-              <button type="button" onClick={() => props.onEdit(props.message)} title={t("message.editMessage")} aria-label={t("message.editMessage")}>
-                <EditIcon />
-              </button>
-            </div>
-          )}
+          <UserMessageActions message={props.message} onEdit={props.onEdit} />
         </div>
         {previewImage?.previewDataUrl && (
           <ImageLightbox attachment={previewImage} onClose={() => setPreviewImage(null)} />
@@ -84,100 +85,175 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
   const runMeta = runMetaFromTimeline(timeline, modelLabel);
   const visibleTimeline = timeline.filter((item) => !isRunMetaSystemItem(item) && !isHiddenExtensionStateItem(item));
   const runStatus = runStatusFromMessage(props.message, visibleTimeline);
-
-  if (isLive) {
-    return (
-      <article className="assistant-block live-message" data-message-id={props.message.id}>
-        <RunMetaLine runMeta={runMeta} responseModelLabel={t("message.responseModel")} />
-        <MessageTimeline items={visibleTimeline} onCopyCode={props.onCopyCode} live modelId={runMeta.model} />
-        <RunProvenance message={props.message} />
-      </article>
-    );
-  }
-
-  const presentation = partitionSettledTimeline(visibleTimeline);
-  const finalText = presentation.finalText || fallbackFinalText(props.message, runStatus);
-  const detailsTimeline = presentation.details.filter((item) => !isRunMetaSystemItem(item));
+  const presentation = isLive ? null : partitionSettledTimeline(visibleTimeline);
+  const finalText = presentation?.finalText || (isLive ? "" : fallbackFinalText(props.message, runStatus));
+  const detailsTimeline = presentation?.details.filter((item) => !isRunMetaSystemItem(item)) ?? [];
   const hasProvenance = hasRunProvenance(props.message);
-  const hasRecap = detailsTimeline.length > 0
+  const hasRecap = !isLive && (detailsTimeline.length > 0
     || Boolean(runMeta.model)
     || Boolean(runMeta.reasoningEffort)
     || hasProvenance
     || props.message.elapsedMs !== undefined
-    || runStatus !== "success";
-  const actionMessage = finalText && finalText !== props.message.content
-    ? { ...props.message, content: finalText }
+    || runStatus !== "success");
+  const displayedFinalText = finalText || (!hasRecap && !isLive ? props.message.content.trim() : "");
+  const fallbackFinalItem = !isLive && presentation?.finalItems.length === 0 && displayedFinalText
+    ? {
+        id: `${props.message.renderId ?? props.message.id}-fallback-output`,
+        kind: "assistant_text" as const,
+        text: displayedFinalText
+      }
+    : undefined;
+  const actionMessage = displayedFinalText && displayedFinalText !== props.message.content
+    ? { ...props.message, content: displayedFinalText }
     : props.message;
 
   return (
     <article
-      className={`assistant-block ${props.message.status === "error" ? "error-message" : ""}`}
+      className={`assistant-block ${isLive ? "live-message" : ""} ${props.message.status === "error" ? "error-message" : ""}`}
       data-message-id={props.message.id}
       data-run-id={props.message.runId}
     >
-      {hasRecap && (
-        <RunRecap
-          status={runStatus}
-          elapsedMs={props.message.elapsedMs}
-          defaultExpanded={runStatus !== "success" || !finalText}
-        >
-          <RunMetaLine runMeta={runMeta} responseModelLabel={t("message.responseModel")} />
-          {detailsTimeline.length > 0 && (
-            <MessageTimeline items={detailsTimeline} onCopyCode={props.onCopyCode} modelId={runMeta.model} />
-          )}
-          {hasProvenance && <RunProvenance message={props.message} />}
-        </RunRecap>
-      )}
-      {finalText && (
-        <section className="timeline-output final-answer" aria-label="Assistant output">
-          <MarkdownMessage content={finalText} onCopyCode={props.onCopyCode} />
-        </section>
-      )}
-      {!hasRecap && !finalText && props.message.content.trim() && (
-        <section className="timeline-output final-answer" aria-label="Assistant output">
-          <MarkdownMessage content={props.message.content} onCopyCode={props.onCopyCode} />
-        </section>
-      )}
-      {!props.actionsDisabled && (
-        <div className="message-actions">
-          <button type="button" onClick={() => props.onCopy(actionMessage)} title={t("message.copy")} aria-label={t("message.copy")}>
-            <CopyIcon />
-          </button>
-          <button type="button" onClick={() => props.onRetry(props.message)} title={t("message.regenerate")} aria-label={t("message.regenerate")}>
-            <RefreshIcon />
-          </button>
-          <div className="message-more">
-            <button
-              ref={moreButtonRef}
-              type="button"
-              onClick={() => setMenuOpen((open) => !open)}
-              title={t("message.actions")}
-              aria-label={t("message.actions")}
-              aria-expanded={menuOpen}
-            >
-              <MoreIcon />
-            </button>
-            <MenuSurface anchorRef={moreButtonRef} open={menuOpen} onOpenChange={setMenuOpen} placement="top-end" minWidth={168} maxWidth={220} maxHeight={180} className="message-menu">
-              <MenuItem leftIcon={<CopyIcon />} onClick={() => { props.onCopy(actionMessage); setMenuOpen(false); }}>
-                {t("message.copy")}
-              </MenuItem>
-              <MenuItem leftIcon={<RefreshIcon />} onClick={() => { props.onRetry(props.message); setMenuOpen(false); }}>
-                {t("message.retryFromHere")}
-              </MenuItem>
-              <MenuItem leftIcon={<BrainIcon />} onClick={() => { props.onRemember(actionMessage); setMenuOpen(false); }}>
-                {t("message.rememberThis")}
-              </MenuItem>
-            </MenuSurface>
-          </div>
-        </div>
-      )}
+      {isLive && <RunMetaLine key="live-run-meta" runMeta={runMeta} responseModelLabel={t("message.responseModel")} />}
+      <MessageTimeline
+        key="timeline"
+        cacheScope={`${props.message.threadId}:${props.message.renderId ?? props.message.id}`}
+        items={visibleTimeline}
+        onCopyCode={props.onCopyCode}
+        live={isLive}
+        modelId={runMeta.model}
+        settled={isLive ? undefined : {
+          finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
+          fallbackFinalItem,
+          recap: hasRecap ? {
+            status: runStatus,
+            elapsedMs: props.message.elapsedMs,
+            defaultExpanded: Boolean(props.message.preserveRunDetails) || runStatus !== "success" || !displayedFinalText,
+            header: <RunMetaLine runMeta={runMeta} responseModelLabel={t("message.responseModel")} />,
+            footer: hasProvenance ? <RunProvenance message={props.message} /> : undefined
+          } : undefined
+        }}
+      />
+      {isLive && <RunProvenance key="live-provenance" message={props.message} />}
+      <AssistantMessageActions
+        message={props.message}
+        actionMessage={actionMessage}
+        onCopy={props.onCopy}
+        onRetry={props.onRetry}
+        onRemember={props.onRemember}
+      />
     </article>
   );
-});
+}, areMessageViewPropsEqual);
 
-function recordHarnessRender(): void {
+function UserMessageActions(props: { message: ChatMessage; onEdit(message: ChatMessage): void }) {
+  const { t } = useI18n();
+  const disabled = useContext(MessageActionsDisabledContext);
+  return (
+    <div className="user-message-actions" aria-hidden={disabled || undefined}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => props.onEdit(props.message)}
+        title={t("message.editMessage")}
+        aria-label={t("message.editMessage")}
+      >
+        <EditIcon />
+      </button>
+    </div>
+  );
+}
+
+function AssistantMessageActions(props: {
+  message: ChatMessage;
+  actionMessage: ChatMessage;
+  onCopy(message: ChatMessage): void;
+  onRetry(message: ChatMessage): void;
+  onRemember(message: ChatMessage): void;
+}) {
+  const { t } = useI18n();
+  const disabled = useContext(MessageActionsDisabledContext);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // First commit the disabled state into the portal, then close it before
+  // paint. The exit animation therefore retains disabled menu items instead
+  // of a stale enabled snapshot for its final 160ms.
+  useLayoutEffect(() => {
+    if (disabled && menuOpen) setMenuOpen(false);
+  }, [disabled, menuOpen]);
+
+  return (
+    <div className="message-actions" aria-hidden={disabled || undefined}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => props.onCopy(props.actionMessage)}
+        title={t("message.copy")}
+        aria-label={t("message.copy")}
+      >
+        <CopyIcon />
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => props.onRetry(props.message)}
+        title={t("message.regenerate")}
+        aria-label={t("message.regenerate")}
+      >
+        <RefreshIcon />
+      </button>
+      <div className="message-more">
+        <button
+          ref={moreButtonRef}
+          type="button"
+          disabled={disabled}
+          onClick={() => setMenuOpen((open) => !open)}
+          title={t("message.actions")}
+          aria-label={t("message.actions")}
+          aria-expanded={!disabled && menuOpen}
+        >
+          <MoreIcon />
+        </button>
+        <MenuSurface
+          anchorRef={moreButtonRef}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          placement="top-end"
+          minWidth={168}
+          maxWidth={220}
+          maxHeight={180}
+          className="message-menu"
+        >
+          <MenuItem disabled={disabled} leftIcon={<CopyIcon />} onClick={() => { props.onCopy(props.actionMessage); setMenuOpen(false); }}>
+            {t("message.copy")}
+          </MenuItem>
+          <MenuItem disabled={disabled} leftIcon={<RefreshIcon />} onClick={() => { props.onRetry(props.message); setMenuOpen(false); }}>
+            {t("message.retryFromHere")}
+          </MenuItem>
+          <MenuItem disabled={disabled} leftIcon={<BrainIcon />} onClick={() => { props.onRemember(props.actionMessage); setMenuOpen(false); }}>
+            {t("message.rememberThis")}
+          </MenuItem>
+        </MenuSurface>
+      </div>
+    </div>
+  );
+}
+
+function areMessageViewPropsEqual(previous: MessageViewProps, next: MessageViewProps): boolean {
+  return previous.message === next.message
+    && previous.onCopy === next.onCopy
+    && previous.onCopyCode === next.onCopyCode
+    && previous.onRetry === next.onRetry
+    && previous.onEdit === next.onEdit
+    && previous.onRemember === next.onRemember;
+}
+
+function recordHarnessRender(messageId: string): void {
   if (typeof window === "undefined" || !window.__JASMINE_HARNESS_ENABLED__) return;
   window.__JASMINE_MESSAGE_VIEW_RENDERS__ = (window.__JASMINE_MESSAGE_VIEW_RENDERS__ ?? 0) + 1;
+  const byId = window.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ ?? {};
+  byId[messageId] = (byId[messageId] ?? 0) + 1;
+  window.__JASMINE_MESSAGE_VIEW_RENDERS_BY_ID__ = byId;
 }
 
 function normalizeTimeline(message: ChatMessage): ChatTimelineItem[] {
@@ -273,7 +349,11 @@ function hasRunProvenance(message: ChatMessage): boolean {
   );
 }
 
-function partitionSettledTimeline(items: ChatTimelineItem[]): { details: ChatTimelineItem[]; finalText: string } {
+function partitionSettledTimeline(items: ChatTimelineItem[]): {
+  details: ChatTimelineItem[];
+  finalItems: Array<Extract<ChatTimelineItem, { kind: "assistant_text" }>>;
+  finalText: string;
+} {
   let suffixEnd = items.length - 1;
   while (suffixEnd >= 0 && isTerminalStatusItem(items[suffixEnd])) suffixEnd -= 1;
 
@@ -286,11 +366,12 @@ function partitionSettledTimeline(items: ChatTimelineItem[]): { details: ChatTim
 
   const finalItems = items.slice(suffixStart + 1, suffixEnd + 1)
     .filter((item): item is Extract<ChatTimelineItem, { kind: "assistant_text" }> => item.kind === "assistant_text" && Boolean(item.text.trim()));
-  if (finalItems.length === 0) return { details: items, finalText: "" };
+  if (finalItems.length === 0) return { details: items, finalItems: [], finalText: "" };
 
   const finalIds = new Set(finalItems.map((item) => item.id));
   return {
     details: items.filter((item) => !finalIds.has(item.id)),
+    finalItems,
     finalText: finalItems.map((item) => item.text.trim()).join("\n\n")
   };
 }

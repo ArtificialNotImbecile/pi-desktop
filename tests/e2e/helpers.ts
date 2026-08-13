@@ -1,7 +1,7 @@
 import { expect } from "@playwright/test";
 import { _electron as electron, type CDPSession, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -589,6 +589,16 @@ export function seedLargeThreadMessages(userDataDir: string, threadId: string, c
   }
 }
 
+export function updateSeededMessageContent(userDataDir: string, messageId: string, content: string): void {
+  const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare("UPDATE chat_messages SET content = ? WHERE id = ?").run(content, messageId);
+  } finally {
+    db.close();
+  }
+}
+
 export function seedMarkdownThreadMessages(userDataDir: string, threadId: string, count: number): void {
   const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
   const db = new DatabaseSync(dbPath);
@@ -727,8 +737,28 @@ export function baseLaunchEnv(userDataDir: string, extra: Record<string, string>
   };
 }
 
+export const E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES = 96;
+
+export function e2eUserDataDirName(label: string, uniqueId = randomUUID()): string {
+  // Pi's session directory includes an encoded copy of the workspace cwd. A
+  // full Playwright title here can therefore make that later component exceed
+  // macOS's 255-byte limit. Keep a readable prefix, retain title identity in a
+  // stable hash, and retain per-launch uniqueness in the UUID.
+  const readableLabel = label
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "")
+    .slice(0, 40) || "jasmine-e2e";
+  const labelHash = createHash("sha256").update(label).digest("hex").slice(0, 12);
+  const name = `${readableLabel}-${labelHash}-${uniqueId}`;
+  if (Buffer.byteLength(name, "utf8") > E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES) {
+    throw new Error("E2E user data directory component exceeded its portable byte limit.");
+  }
+  return name;
+}
+
 export async function launchJasmine(label: string, existingUserDataDir?: string, extraEnv: Record<string, string> = {}): Promise<HarnessApp> {
-  const userDataDir = existingUserDataDir ?? path.join(rootDir, ".tmp", "e2e", `${label}-${randomUUID()}`);
+  const userDataDir = existingUserDataDir ?? path.join(rootDir, ".tmp", "e2e", e2eUserDataDirName(label));
   if (!existingUserDataDir) await rm(userDataDir, { recursive: true, force: true });
   await mkdir(userDataDir, { recursive: true });
   const redSquarePath = await createRedSquarePng(userDataDir);
