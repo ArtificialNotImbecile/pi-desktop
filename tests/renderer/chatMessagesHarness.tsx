@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { act, render } from "@testing-library/react";
 import type { ChatThread } from "../../src/shared/ipc";
+import { createChatStreamSettlement } from "../../src/shared/streamSettlement";
 import { useChatMessages } from "../../src/renderer/hooks/useChatMessages";
 import { installFakeBridge, type FakeBridge } from "./fakeBridge";
 
@@ -42,6 +43,12 @@ export type ChatHarness = {
 export type RunHandle = {
   requestId: string;
   threadId: string;
+  /** The user row persisted by main for this run. */
+  userMessage: ChatHook["messages"][number];
+  /** Resolves when useChatMessages has completed its send lifecycle. */
+  completion: Promise<boolean>;
+  /** Resolves the bridge send response and waits for hook cleanup. */
+  complete(assistantMessage: ChatHook["messages"][number]): Promise<void>;
   /** Emits a `running` event carrying the given live assistant text. */
   stream(text: string): Promise<void>;
   /**
@@ -82,7 +89,7 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
   function Probe(props: { initial: ChatThread | null }) {
     const [activeThread, setActiveThread] = useState(props.initial);
     setThread = setActiveThread;
-    hook = useChatMessages({
+    const currentHook = useChatMessages({
       activeThread,
       async refreshThreads(threadId) {
         refreshThreads.calls.push(threadId);
@@ -91,14 +98,20 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
         patchThread.calls.push({ threadId, partial });
       }
     });
-    commits.push({
-      threadId: activeThread?.id ?? null,
-      contents: hook.messages.map((message) => message.content)
+    hook = currentHook;
+    // Record after React commits, not while it is rendering. A render can be
+    // abandoned or batched away; neither can ever produce the transient DOM
+    // state that these snapshots are used to guard.
+    useLayoutEffect(() => {
+      commits.push({
+        threadId: activeThread?.id ?? null,
+        contents: currentHook.messages.map((message) => message.content)
+      });
     });
     // The scroll container the hook drives. jsdom reports zero for every
     // measurement, which is fine: these tests assert message state, and scroll
     // position assertions stay in E2E where layout is real.
-    return <div className="message-scroll" ref={hook.messageScrollRef} />;
+    return <div className="message-scroll" ref={currentHook.messageScrollRef} />;
   }
 
   let view: ReturnType<typeof render> | null = null;
@@ -131,6 +144,19 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
     async startRun(text) {
       const sendsBefore = bridge.calls.sendChatMessage.length;
       let sending: Promise<boolean> | null = null;
+      let resolveSend: ((response: {
+        userMessage: ChatHook["messages"][number];
+        assistantMessage: ChatHook["messages"][number];
+        content: string;
+        model: string;
+        elapsedMs: number;
+      }) => void) | null = null;
+      // A real bridge send resolves only after the provider run finishes. Keep
+      // it pending here too; resolving immediately starts the hook's 250ms
+      // missing-settlement fallback during an otherwise healthy live run.
+      bridge.setSendBehavior(() => new Promise((resolve) => {
+        resolveSend = resolve;
+      }));
       await act(async () => {
         sending = harness.current().sendMessage(text);
         // Let the optimistic row commit without awaiting the send: it does not
@@ -141,6 +167,8 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
       if (!sent || bridge.calls.sendChatMessage.length === sendsBefore) {
         throw new Error(`sendMessage("${text}") never reached the bridge.`);
       }
+      const completion = sending;
+      if (!completion) throw new Error(`sendMessage("${text}") did not return its completion promise.`);
       const { threadId } = sent;
       const requestId = sent.requestId;
       if (!requestId) throw new Error("Send reached the bridge without a requestId.");
@@ -153,9 +181,27 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
         content: text
       });
       let replyIndex = 0;
+      async function completeSend(assistantMessage: ChatHook["messages"][number]) {
+        if (!resolveSend) throw new Error(`sendMessage("${text}") has no pending bridge response.`);
+        const resolve = resolveSend;
+        resolveSend = null;
+        resolve({
+          userMessage: persistedUser,
+          assistantMessage,
+          content: assistantMessage.content,
+          model: "fake-model",
+          elapsedMs: 0
+        });
+        await act(async () => {
+          await completion;
+        });
+      }
       return {
         requestId,
         threadId,
+        userMessage: persistedUser,
+        completion,
+        complete: completeSend,
         async stream(liveText) {
           await bridge.emit({
             requestId,
@@ -172,16 +218,18 @@ export async function renderChatMessages(initialThread: ChatThread | null = null
             requestId,
             threadId,
             status: "done",
-            // The run's authoritative tail is the user turn plus its answer,
-            // which is what the main process publishes.
-            settlement: {
-              ...(replaceAfterMessageId ? { replaceAfterMessageId } : {}),
-              messages: [persistedUser, persisted]
-            }
+            // Use the same constructor as main. Besides the authoritative
+            // persisted rows, it carries the optimistic/live render identities
+            // that let React patch those rows without remounting them.
+            settlement: createChatStreamSettlement(
+              requestId,
+              replaceAfterMessageId,
+              [persistedUser],
+              [persisted],
+              true
+            )
           });
-          await act(async () => {
-            await sending;
-          });
+          await completeSend(persisted);
         }
       };
     },

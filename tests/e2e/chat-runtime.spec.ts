@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -11,7 +10,6 @@ import {
   createPromptTemplateFixture,
   createRedSquarePng,
   E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES,
-  e2eUserDataDirName,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -47,19 +45,6 @@ import {
   waitForChildExit,
   waitForStableAssistant
 } from "./helpers";
-
-test("E2E user data directory names stay bounded and collision-resistant", () => {
-  const fixedUuid = "11111111-2222-4333-8444-555555555555";
-  const sharedPrefix = "running composer queue path boundary ".repeat(8);
-  const first = e2eUserDataDirName(`${sharedPrefix}alpha`, fixedUuid);
-  const second = e2eUserDataDirName(`${sharedPrefix}beta`, fixedUuid);
-  const multibyte = e2eUserDataDirName("渲染队列边界".repeat(80), fixedUuid);
-
-  expect(Buffer.byteLength(first, "utf8")).toBeLessThanOrEqual(E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES);
-  expect(Buffer.byteLength(multibyte, "utf8")).toBeLessThanOrEqual(E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES);
-  expect(first).not.toBe(second);
-  expect(e2eUserDataDirName(`${sharedPrefix}alpha`, randomUUID())).not.toBe(first);
-});
 
 test.describe("Jasmine chat runtime", () => {
   let harness: HarnessApp;
@@ -1175,97 +1160,11 @@ test.describe("Jasmine chat runtime", () => {
     expect(piSessionText).not.toContain("queued delete request");
   });
 
-  test("running response completion does not overwrite another active thread", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-
-    await page.locator(".rich-composer-editor").fill("slow response first thread slow timeline");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block.live-message")).toBeVisible();
-
-    await page.getByRole("button", { name: "New chat" }).first().click();
-    await expect(page.locator(".empty-state")).toBeVisible();
-    await page.locator(".rich-composer-editor").fill("fast second thread");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".message-stack")).toContainText("fast second thread");
-    await expect(page.locator(".message-stack")).not.toContainText("slow response first thread");
-
-    await expect(page.getByRole("button", { name: /slow response first thread/i })).toBeVisible();
-    await page.getByRole("button", { name: /slow response first thread/i }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
-  });
-
   // "A to B to A message loads cannot overwrite a live settlement" moved to
   // tests/renderer/chatMessageReconciliation.test.tsx. It provoked the ordering
   // with three ~5s __JASMINE_MESSAGE_LOAD_DELAYS__ waits plus a 5.5s settle, for
   // 12.3s a run; the renderer version holds and releases the in-flight replies
   // explicitly, so the ordering under test is the ordering that runs.
-
-  test("a delayed same-thread load merges history with a newly started live run", async () => {
-    const { page } = harness;
-    const historyPrompt = "same-thread delayed history baseline";
-    const livePrompt = "slow response slow timeline same-thread load race";
-
-    await startEmptyThread(page);
-    await page.locator(".rich-composer-editor").fill(historyPrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-
-    const threadId = await page.evaluate(async (title) => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
-      if (!thread) throw new Error("Same-thread load-race history is missing.");
-      return thread.id;
-    }, historyPrompt);
-
-    await startEmptyThread(page);
-    await page.evaluate((id) => {
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = { [id]: [2_200] };
-    }, threadId);
-    await page.getByRole("button", { name: /same-thread delayed history baseline/i }).first().click();
-
-    // The harness shifts only after messages:list has read SQLite, so zero here
-    // proves the delayed response is an old pre-run snapshot.
-    await expect.poll(() => page.evaluate((id) => (
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__?.[id]?.length ?? -1
-    ), threadId)).toBe(0);
-
-    await page.locator(".rich-composer-editor").fill(livePrompt);
-    await page.getByRole("button", { name: "Send" }).click();
-
-    const optimisticUser = page.locator(".user-message-wrap", { hasText: livePrompt });
-    const liveAssistant = page.locator(".assistant-block.live-message").last();
-    await expect(optimisticUser).toBeVisible();
-    await expect(liveAssistant).toBeVisible();
-    const optimisticId = await optimisticUser.getAttribute("data-message-id");
-    const liveId = await liveAssistant.getAttribute("data-message-id");
-    expect(optimisticId).toMatch(/^pending-/);
-    expect(liveId).toMatch(/^stream-/);
-
-    // The stale page returns while generation is still live. It must supply the
-    // historical baseline without replacing either new-run row.
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4, { timeout: 4_000 });
-    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
-    await expect(page.locator(`[data-message-id='${optimisticId}']`)).toBeVisible();
-    await expect(page.locator(`[data-message-id='${liveId}']`)).toBeVisible();
-    await expect(liveAssistant).toBeVisible();
-
-    await waitForStableAssistant(page, "Slow response complete.", 12_000);
-    await expect(page.locator(".message-stack")).toContainText(historyPrompt);
-    await expect(page.locator(".message-stack")).toContainText(livePrompt);
-    await expect(page.locator(".message-stack [data-message-id]")).toHaveCount(4);
-    await expect(page.locator(".error-strip")).toBeHidden();
-
-    const persisted = await page.evaluate(async (id) => (
-      await window.jasmine.listMessages(id)
-    ).map((message) => ({ role: message.role, content: message.content })), threadId);
-    expect(persisted).toEqual([
-      { role: "user", content: historyPrompt },
-      { role: "assistant", content: "Mock reply from Jasmine." },
-      { role: "user", content: livePrompt },
-      { role: "assistant", content: "Slow response complete." }
-    ]);
-  });
 
   test("a delayed large initial page prepends without displacing an auto-followed live tail", async () => {
     const { page, userDataDir } = harness;
@@ -1583,7 +1482,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(pageAfterReopen.locator(".assistant-block").last()).toContainText("Slow response complete.");
   });
 
-  test("provider calls stay auditable through IPC while trace chrome is absent from chat", async () => {
+  test("provider traces stay auditable without exposing trace chrome or Jasmine-owned web search", async () => {
     const { page } = harness;
     await startEmptyThread(page);
 
@@ -1612,10 +1511,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.getByRole("button", { name: "Open trace" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Trace panel" })).toHaveCount(0);
     await expect(page.locator(".trace-panel")).toBeHidden();
-  });
 
-  test("no web search is traced under Jasmine's own name", async () => {
-    const { page } = harness;
     await startEmptyThread(page);
 
     // Web access belongs to the pi-web-access package now, so a turn must never

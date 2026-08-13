@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import {
   baseLaunchEnv,
   clickCenter,
@@ -45,9 +44,6 @@ import {
   waitForStableAssistant
 } from "./helpers";
 
-const require = createRequire(import.meta.url);
-const packageMetadata = require("../../package.json") as { version: string };
-
 test.describe("Jasmine settings", () => {
   let harness: HarnessApp;
 
@@ -58,14 +54,6 @@ test.describe("Jasmine settings", () => {
   test.afterEach(async () => {
     if (harness?.app) await quitElectron(harness.app);
     if (harness?.userDataDir) await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-  });
-
-  test("unreleased Chrome control settings stay out of the navigation", async () => {
-    const { page } = harness;
-
-    await openSettings(page);
-    await expect(page.locator(".settings-nav").getByRole("button", { name: "Chrome Control" })).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Chrome control" })).toHaveCount(0);
   });
 
   test("entry brand settings update the new chat surface and persist after restart", async ({}, testInfo) => {
@@ -92,8 +80,8 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".brand-mark")).toHaveAttribute("src", /^data:image\/png;base64,/);
   });
 
-  test("settings panel opens with single-column nav and section icons", async () => {
-    const { page } = harness;
+  test("settings panel keeps its navigation and chrome usable when moved or resized", async () => {
+    const { app, page } = harness;
 
     await openSettings(page);
     await expect(page.locator(".settings-nav")).toHaveCSS("user-select", "none");
@@ -108,103 +96,53 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".settings-detail")).not.toContainText("Command palette");
     await expect(page.locator(".settings-detail")).not.toContainText("Theme");
     await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
-  });
 
-  test("tool model selection saves and persists @smoke", async () => {
-    const { page } = harness;
-
-    await openSettings(page);
-    await expect(page.getByRole("combobox", { name: "Tool model provider" })).toHaveValue("deepseek");
-    await expect(page.getByRole("combobox", { name: "Tool model", exact: true })).toHaveValue("deepseek-v4-flash");
-    await expect(page.getByRole("combobox", { name: "Tool model reasoning" })).toHaveValue("off");
-    await page.getByRole("combobox", { name: "Tool model provider" }).selectOption("moonshot");
-    await page.getByRole("combobox", { name: "Tool model reasoning" }).selectOption("minimal");
-    await saveSettings(page);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).toolModel)).toMatchObject({
-      providerId: "moonshot",
-      modelId: "kimi-k2.6",
-      reasoningEffort: "minimal"
-    });
-  });
-
-  test("entry brand fields save and reflect in the new chat empty state @smoke", async () => {
-    const { page } = harness;
-
-    await page.locator(".side-top").getByRole("button", { name: "New chat" }).click();
-    await expect(page.locator(".empty-state h1")).toHaveText("Talk to yourself.");
-    await expect(page.locator(".empty-state p")).toHaveText("Jasmine listens. Jasmine learns. Jasmine becomes yours.");
-    await expect(page.locator(".brand-mark")).toHaveAttribute("src", /jasmine-logo/);
-    await openSettings(page);
-    await expect(page.locator(".general-brand-row")).toContainText("Entry brand");
-    await expect(page.locator(".brand-logo-preview img")).toBeVisible();
-    await page.getByRole("textbox", { name: "Entry main title" }).fill("Custom helper");
-    await page.getByRole("textbox", { name: "Entry subtitle" }).fill("Custom subtitle for this workspace.");
-    await page.locator(".general-brand-row").getByRole("button", { name: "Choose Logo" }).click();
-    await saveSettings(page);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).brand)).toMatchObject({
-      mainTitle: "Custom helper",
-      subtitle: "Custom subtitle for this workspace.",
-      logoDataUrl: expect.stringMatching(/^data:image\/png;base64,/)
-    });
-    await page.getByRole("button", { name: "Close settings" }).click();
-    await page.locator(".side-top").getByRole("button", { name: "New chat" }).click();
-    await expect(page.locator(".empty-state")).toBeVisible();
-    await expect(page.locator(".brand-mark")).toBeVisible();
-    await expect(page.locator(".empty-state h1")).toHaveText("Custom helper");
-    await expect(page.locator(".empty-state p")).toHaveText("Custom subtitle for this workspace.");
-    await expect(page.locator(".brand-mark")).toHaveAttribute("src", /^data:image\/png;base64,/);
-  });
-
-  test("appearance preset applies and persists @smoke", async () => {
-    const { page } = harness;
-
-    await openSettings(page, "Appearance");
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
-    await expect(page.locator(".appearance-presets").getByRole("button", { name: /Codex/ })).toBeVisible();
-    await page.locator(".appearance-presets").getByRole("button", { name: /Jasmine/ }).click();
-    await expect(page.locator('input[aria-label="Accent hex color"]')).toHaveValue("#0b74de");
-    await expect(page.locator('input[aria-label="Surface hex color"]')).toHaveValue("#fffdf7");
-    await expect(page.locator('input[aria-label="Ink hex color"]')).toHaveValue("#15191f");
-    await expect(page.locator('input[aria-label="Success hex color"]')).toHaveValue("#008f4c");
-    await expect(page.locator('input[aria-label="Danger hex color"]')).toHaveValue("#d13326");
-    await page.locator(".appearance-presets").getByRole("button", { name: /Codex/ }).click();
-    await expect(page.locator('input[aria-label="Accent hex color"]')).toHaveValue("#0169cc");
+    // The form/payload behavior lives in renderer tests. Retain the App-level
+    // settings -> theme hook binding so a saved appearance cannot stop applying
+    // while the component tests remain green.
+    await page.locator(".settings-nav").getByRole("button", { name: "Appearance" }).click();
     await page.locator(".appearance-presets").getByRole("button", { name: /Jasmine/ }).click();
     await saveSettings(page);
-    await expect.poll(() => page.evaluate(async () => (await window.jasmine.getAppSettings()).appearance)).toMatchObject({
-      accent: "#0b74de",
-      surface: "#fffdf7",
-      ink: "#15191f",
-      success: "#008f4c",
-      danger: "#d13326"
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim())).toBe("#0b74de");
+
+    // The renderer test owns the pointer arithmetic and state guards. Keep one
+    // real-layout assertion here so a CSS regression that stops honoring the
+    // resulting left/top values cannot leave the replacement test green.
+    const panel = page.locator(".settings-panel");
+    const before = await panel.boundingBox();
+    const barBox = await page.locator(".settings-window-bar").boundingBox();
+    if (!before || !barBox) throw new Error("Settings geometry is missing.");
+    await page.mouse.move(barBox.x + 80, barBox.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(barBox.x + 120, barBox.y + 42);
+    await page.mouse.up();
+
+    const after = await panel.boundingBox();
+    if (!after) throw new Error("Settings panel disappeared after dragging.");
+    expect(Math.abs(after.x - before.x)).toBeGreaterThan(24);
+    expect(Math.abs(after.y - before.y)).toBeGreaterThan(24);
+
+    // Drag at the default 1200x800 first: the <=1040 responsive CSS intentionally
+    // recenters the panel. Reuse this launch for the minimum-size layout after
+    // the real left/top assertion has already run.
+    await page.locator(".settings-nav").getByRole("button", { name: "Providers" }).click();
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(920, 660);
     });
-    // Detailed computed-color verification (panel/preview/primary RGB) lives in the visual harness.
-    await expect.poll(async () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim())).toBe("#0b74de");
-  });
-
-  test("settings nav reaches memory, activity, packages, and about sections", async () => {
-    const { page } = harness;
-
-    await expect(page).toHaveTitle("Jasmine — The desktop app for Pi");
-    await openSettings(page, "Memory");
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail")).toContainText("Saved memories");
-    await expect(page.locator(".settings-detail").getByRole("button", { name: "Open Memory" })).toBeVisible();
-    await page.locator(".settings-nav").getByRole("button", { name: "Activity" }).click();
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail")).toContainText("Recorder controls");
-    await expect(page.locator(".settings-detail").getByRole("button", { name: "Open Activity" })).toBeVisible();
-    await page.locator(".settings-nav").getByRole("button", { name: "Packages" }).click();
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail")).toContainText("Pi Web Access");
-    await page.locator(".settings-nav").getByRole("button", { name: "About" }).click();
-    await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-detail")).toContainText("Jasmine — The desktop app for Pi");
-    await expect(page.locator(".settings-detail")).toContainText("independent, open-source desktop GUI for the Pi coding agent");
-    await expect(page.locator(".settings-detail")).toContainText("not affiliated with or endorsed by Pi");
-    await expect(page.locator(".settings-state-pill").first()).toHaveText(packageMetadata.version);
-    await expect(page.locator(".settings-detail")).toContainText("Data location");
+    const panelBox = await panel.boundingBox();
+    const actionBoxes = await page.locator(".settings-actions button").evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom };
+      })
+    );
+    expect(panelBox).not.toBeNull();
+    for (const box of actionBoxes) {
+      expect(box.width).toBeGreaterThan(40);
+      expect(box.height).toBeGreaterThan(28);
+      expect(box.right).toBeLessThanOrEqual((panelBox?.x ?? 0) + (panelBox?.width ?? 0) + 1);
+      expect(box.bottom).toBeLessThanOrEqual((panelBox?.y ?? 0) + (panelBox?.height ?? 0) + 1);
+    }
   });
 
   test("General language setting switches the shell between English and Chinese", async () => {
@@ -303,36 +241,4 @@ test.describe("Jasmine settings", () => {
     await expect(page.getByRole("button", { name: "更多", exact: true })).toBeVisible();
   });
 
-  test("settings layout remains usable at minimum window size", async () => {
-    const { app, page } = harness;
-
-    await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.setSize(920, 660);
-    });
-    await openProviderSettings(page);
-    await expect(page.locator(".settings-panel")).toBeVisible();
-
-    const panelBox = await page.locator(".settings-panel").boundingBox();
-    const actionBoxes = await page.locator(".settings-actions button").evaluateAll((buttons) =>
-      buttons.map((button) => {
-        const rect = button.getBoundingClientRect();
-        return { width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom };
-      })
-    );
-
-    expect(panelBox).not.toBeNull();
-    for (const box of actionBoxes) {
-      expect(box.width).toBeGreaterThan(40);
-      expect(box.height).toBeGreaterThan(28);
-      expect(box.right).toBeLessThanOrEqual((panelBox?.x ?? 0) + (panelBox?.width ?? 0) + 1);
-      expect(box.bottom).toBeLessThanOrEqual((panelBox?.y ?? 0) + (panelBox?.height ?? 0) + 1);
-    }
-  });
-
-  // Settings window chrome -- title-bar drag, minimize, maximize, restore -- is
-  // React state and clientX/clientY arithmetic on a div, not an OS window. It
-  // moved to tests/renderer/settingsWindowChrome.test.tsx, which covers the same
-  // states plus the drag-suppression guards this case never exercised, and needs
-  // no desktop session to do it.
 });

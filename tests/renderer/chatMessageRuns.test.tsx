@@ -25,6 +25,12 @@ describe("chat message runs", () => {
     await fast.settle("Mock reply from Jasmine.");
 
     expect(harness.renderedContent()).toContain("fast second thread");
+    expect(harness.current().messages.find((message) => message.content === "fast second thread")).toMatchObject({
+      renderId: `pending-${fast.requestId}-0`
+    });
+    expect(harness.current().messages.find((message) => message.content === "Mock reply from Jasmine.")).toMatchObject({
+      renderId: `stream-${fast.requestId}-0`
+    });
     expect(harness.renderedContent()).not.toContain("slow response first thread");
     expect(harness.renderedContent()).not.toContain("thinking on alpha");
 
@@ -57,10 +63,20 @@ describe("chat message runs", () => {
 
     const second = await harness.startRun("rapid promotion second run");
     await second.stream("streaming the second run");
+    expect(harness.renderedContent()).toContain("streaming the second run");
 
     await releaseInitialPage();
 
-    // All three turns survive the late page: it erased neither newer run.
+    // All three turns survive the late page: it erased neither newer run. The
+    // two assistant rows are asserted before run two settles, because its final
+    // settlement can restore only its own answer and mask either loss.
+    expect(harness.current().messages).toHaveLength(6);
+    expect(harness.renderedIds()).toContain(`${first.requestId}-reply-1`);
+    expect(harness.current().messages).toContainEqual(expect.objectContaining({
+      id: `stream-${second.requestId}-0`,
+      role: "assistant",
+      content: "streaming the second run"
+    }));
     for (const text of [
       "rapid promotion history baseline",
       "rapid promotion first run",
@@ -88,8 +104,10 @@ describe("chat message runs", () => {
 
     // The same text is sent again while the opening page is still in flight, so
     // content alone cannot distinguish the old turn from the new optimistic one.
+    const commitOffset = harness.commits().length;
     const run = await harness.startRun(repeated);
     await releaseInitialPage();
+    expect(harness.renderedContent().filter((content) => content === repeated)).toHaveLength(2);
     await run.settle("Second reply.", "old-reply");
 
     const copies = harness.renderedContent().filter((content) => content === repeated);
@@ -97,5 +115,14 @@ describe("chat message runs", () => {
     expect(harness.renderedContent()).toContain("Mock reply from Jasmine.");
     expect(harness.renderedContent()).toContain("Second reply.");
     expect(new Set(harness.renderedIds()).size).toBe(harness.renderedIds().length);
+
+    // A final-state assertion misses a third copy that is briefly committed and
+    // then removed by settlement. The harness records only committed renders.
+    const committedCopyCounts = harness.commits()
+      .slice(commitOffset)
+      .filter(({ threadId }) => threadId === "alpha")
+      .map(({ contents }) => contents.filter((content) => content === repeated).length);
+    expect(committedCopyCounts).toContain(2);
+    expect(Math.max(...committedCopyCounts)).toBe(2);
   });
 });

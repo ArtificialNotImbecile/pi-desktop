@@ -25,6 +25,7 @@ import { useSkills } from "./hooks/useSkills";
 import { useSpotlightCommandBridge } from "./hooks/useSpotlightCommandBridge";
 import { useStableCallbacks } from "./hooks/useStableCallbacks";
 import { useThreadDraftPersistence } from "./hooks/useThreadDraftPersistence";
+import { nextTerminalTabTitle } from "./components/chat/rightPanelTabs";
 import { useThreads } from "./hooks/useThreads";
 import { useToast } from "./hooks/useToast";
 import { useThemeAppearance } from "./hooks/useThemeAppearance";
@@ -979,19 +980,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     if (rightPanelTabs.length === 0) return;
     setRightPanelCollapsed(true);
   }
-}
-
-function nextTerminalTabTitle(openTabs: RightPanelTab[]): string {
-  const used = new Set<number>();
-  for (const tab of openTabs) {
-    if (tab.mode !== "terminal") continue;
-    const match = /^Terminal(?: (\d+))?$/.exec(tab.title);
-    if (!match) continue;
-    used.add(match[1] ? Number(match[1]) : 1);
-  }
-  let index = 1;
-  while (used.has(index)) index += 1;
-  return index === 1 ? "Terminal" : `Terminal ${index}`;
 }
 
 export default App;

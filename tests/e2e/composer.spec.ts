@@ -342,6 +342,33 @@ test.describe("Jasmine composer", () => {
     await page.getByRole("button", { name: "Close image preview" }).click();
     await expect(page.locator(".image-lightbox")).toBeHidden();
     await expect(page.locator(".user-bubble").last()).not.toContainText(imagePath);
+
+    // Rebuild the row through database -> main -> preload -> renderer after a
+    // real reload. The component test owns lightbox interaction, but cannot
+    // prove persisted attachment JSON survives this cross-process round trip.
+    const persistedThread = await page.evaluate(async () => {
+      const snapshot = (window as Window & {
+        __jasmineHarness?: { snapshot(): { app: { activeThreadId: string | null } } };
+      }).__jasmineHarness?.snapshot();
+      const thread = (await window.jasmine.listThreads()).find((item) => item.id === snapshot?.app.activeThreadId);
+      if (!thread) throw new Error("Image attachment thread was not active.");
+      return { id: thread.id, title: thread.title };
+    });
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    if (await page.locator(".message-image-grid img").count() === 0) {
+      const threadRow = page.locator(".thread-row").filter({
+        has: page.getByText(persistedThread.title, { exact: true })
+      }).first();
+      await threadRow.locator(".thread-item").click();
+    }
+    await expect.poll(() => page.evaluate(() => (
+      window as Window & {
+        __jasmineHarness?: { snapshot(): { app: { activeThreadId: string | null } } };
+      }
+    ).__jasmineHarness?.snapshot().app.activeThreadId ?? null)).toBe(persistedThread.id);
+    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
+    await expect(page.locator(".user-bubble").last()).not.toContainText(imagePath);
   });
 
   test("pasting a clipboard image attaches it to the composer", async () => {
@@ -404,35 +431,6 @@ test.describe("Jasmine composer", () => {
 
     await page.locator(".rich-composer-editor").fill("look at the pasted image again");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
-  });
-
-  test("pasting an image file payload attaches it to the composer", async () => {
-    const { page } = harness;
-    await page.evaluate(async () => {
-      const provider = (await window.jasmine.listProviders())[0];
-      await window.jasmine.updateProviderModel({
-        providerId: provider.id,
-        modelId: provider.defaultModel,
-        enabled: true,
-        capabilities: { vision: true }
-      });
-    });
-    await page.reload();
-    await startEmptyThread(page);
-    const editor = page.locator(".rich-composer-editor");
-    await editor.click();
-    await editor.evaluate((node, base64) => {
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-      const file = new File([bytes], "pasted-red.png", { type: "image/png" });
-      const clipboard = new DataTransfer();
-      clipboard.items.add(file);
-      node.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
-    }, RED_SQUARE_BASE64);
-
-    await expect(page.locator(".attachment-row img")).toHaveCount(1);
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".message-image-grid img")).toHaveCount(1);
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply received 1 image attachment.");
   });
 

@@ -1,17 +1,44 @@
 // Runs all unit test files in parallel with per-file pass/fail reporting.
 // Serial `a && b && c` chaining hid which file failed and made the suite
-// ~2x slower than its slowest file.
+// ~2x slower than its slowest file. The root build compiles all extension
+// packages first, so this runner executes their post-build checks directly.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const requiredBuildArtifacts = [
+  path.join("dist", "main", "main"),
+  path.join("src", "main", "agent", "extensions", "contextCapture", "dist", "index.js"),
+  path.join("src", "main", "agent", "extensions", "permissionGate", "dist", "index.js"),
+  path.join("src", "main", "agent", "extensions", "fileChanges", "dist", "index.js")
+];
+const missingBuildArtifacts = requiredBuildArtifacts.filter((artifact) => !existsSync(path.join(rootDir, artifact)));
 
-if (!existsSync(path.join(rootDir, "dist", "main", "main"))) {
-  console.error("Unit tests import compiled output from dist/. Run `npm run build` first.");
+if (missingBuildArtifacts.length > 0) {
+  console.error([
+    "Unit tests import compiled output from the root application and extension packages.",
+    "Run `npm run build` first. Missing:",
+    ...missingBuildArtifacts.map((artifact) => `- ${artifact}`)
+  ].join("\n"));
   process.exit(1);
+}
+
+function packageTestFiles(packagePath) {
+  const testDir = path.join(rootDir, packagePath, "tests");
+  return readdirSync(testDir)
+    .filter((name) => name.endsWith(".test.mjs"))
+    .sort()
+    .map((name) => path.join(packagePath, "tests", name));
+}
+
+function packageTestStep(packagePath, testFiles) {
+  return {
+    command: "node",
+    args: ["--test", ...testFiles],
+    cwd: path.join(rootDir, packagePath)
+  };
 }
 
 const tasks = [
@@ -26,34 +53,42 @@ const tasks = [
   { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
   { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
   { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
+  { name: "unit-runner", steps: [["node", "--no-warnings", "tests/unit/unit-runner.mjs"]] },
+  { name: "test-infrastructure", steps: [["node", "--no-warnings", "tests/unit/test-infrastructure.mjs"]] },
   { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
   {
     name: "context-capture",
     steps: [
-      [npmCommand, "--prefix", "src/main/agent/extensions/contextCapture", "run", "build"],
       ["node", "--no-warnings", "scripts/smoke-context-capture-package.mjs"]
     ]
   },
   {
     name: "permission-gate",
     steps: [
-      [npmCommand, "--prefix", "src/main/agent/extensions/permissionGate", "test"]
+      packageTestStep(path.join("src", "main", "agent", "extensions", "permissionGate"), ["tests/permission-gate.test.mjs"])
     ]
   },
   {
     name: "file-changes",
     steps: [
-      [npmCommand, "--prefix", "src/main/agent/extensions/fileChanges", "test"]
+      packageTestStep(
+        path.join("src", "main", "agent", "extensions", "fileChanges"),
+        packageTestFiles(path.join("src", "main", "agent", "extensions", "fileChanges"))
+          .map((testFile) => path.relative(path.join("src", "main", "agent", "extensions", "fileChanges"), testFile))
+      )
     ]
   }
 ];
 
-function runStep([command, ...args]) {
+function runStep(step) {
   return new Promise((resolve) => {
+    const { command, args, cwd } = Array.isArray(step)
+      ? { command: step[0], args: step.slice(1), cwd: rootDir }
+      : step;
     // Node on Windows refuses to spawn .cmd shims without a shell (CVE-2024-27980).
     const child = command.endsWith(".cmd")
-      ? spawn([command, ...args].join(" "), { cwd: rootDir, shell: true, windowsHide: true })
-      : spawn(command, args, { cwd: rootDir, windowsHide: true });
+      ? spawn([command, ...args].join(" "), { cwd, shell: true, windowsHide: true })
+      : spawn(command, args, { cwd, windowsHide: true });
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { output += chunk; });

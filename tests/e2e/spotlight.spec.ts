@@ -17,17 +17,19 @@ type SpotlightHarness = {
 };
 
 test.describe("Spotlight quick launcher", () => {
-  test("searches threads and routes commands to the main window", async () => {
+  test("searches, routes commands, dismisses, and reopens the main window from the tray", async () => {
     const harness = await launchJasmine("spotlight");
     const { app, page } = harness;
 
     try {
-      // Seed a thread so "recent" and search have data.
-      const threadId = await page.evaluate(async () => {
+      // Seed threads so search, recent items, and tray routing all have data.
+      const { threadId, trayThreadId } = await page.evaluate(async () => {
         const thread = await window.jasmine.createThread({ title: "Spotlight Alpha Thread" });
-        return thread.id;
+        const trayThread = await window.jasmine.createThread({ title: "Tray Reopen Thread" });
+        return { threadId: thread.id, trayThreadId: trayThread.id };
       });
       expect(threadId).toBeTruthy();
+      expect(trayThreadId).toBeTruthy();
 
       // Open the Spotlight window (global shortcut cannot be sent in headless Playwright).
       await showSpotlight(app);
@@ -83,24 +85,32 @@ test.describe("Spotlight quick launcher", () => {
       await expect(page.locator(".rich-composer-editor")).toBeFocused();
       await page.keyboard.type("spotlight focus draft");
       await expect(page.locator(".rich-composer-editor")).toContainText("spotlight focus draft");
-    } finally {
-      await quitJasmine(app);
-      await app.close().catch(() => undefined);
-      await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
 
-  test("routes commands and reopens the main window after it is closed to the tray", async () => {
-    const harness = await launchJasmine("spotlight-after-close");
-    const { app, page } = harness;
+      // Escape dismisses Spotlight without losing the main window.
+      await showSpotlight(app);
+      const escapeSpotlight = await waitForSpotlightPage(app, 10_000);
+      await expectOffscreenWindowsToStayInBackground(app);
+      await expect(escapeSpotlight.locator(".spotlight-card")).toBeVisible();
+      await escapeSpotlight.locator(".spotlight-input input").press("Escape");
+      await expect.poll(() => isSpotlightVisible(app)).toBe(false);
+      await expect(page.locator(".app-shell")).toBeVisible();
 
-    try {
-      // Seed a thread so the spotlight has a routable target.
-      const threadId = await page.evaluate(async () => {
-        const thread = await window.jasmine.createThread({ title: "Tray Reopen Thread" });
-        return thread.id;
+      // A regular app open hides an already visible launcher.
+      await showSpotlight(app);
+      const openMainSpotlight = await waitForSpotlightPage(app, 10_000);
+      await expectOffscreenWindowsToStayInBackground(app);
+      await expect(openMainSpotlight.locator(".spotlight-card")).toBeVisible();
+
+      await app.evaluate(() => {
+        const hook = (globalThis as { __jasmineTray?: { openMain(): void } }).__jasmineTray;
+        hook?.openMain();
       });
-      expect(threadId).toBeTruthy();
+
+      await expect.poll(() => isSpotlightVisible(app)).toBe(false);
+      await expect(page.locator(".app-shell")).toBeVisible();
+      await expect
+        .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
+        .toBe(true);
 
       // Close the window via the title-bar control; it must hide to the tray,
       // not destroy the window or quit the app.
@@ -115,9 +125,10 @@ test.describe("Spotlight quick launcher", () => {
       // The global launcher still works while the window is hidden, and routing
       // a command must reopen and focus the main window on that thread.
       await showSpotlight(app);
-      const spotlight = await waitForSpotlightPage(app, 10_000);
+      const traySpotlight = await waitForSpotlightPage(app, 10_000);
+      await expectOffscreenWindowsToStayInBackground(app);
       const routeBeforeClick = await page.evaluate(() => window.__jasmineHarness?.snapshot()?.app?.navigation?.path ?? "");
-      await clickSpotlightChrome(spotlight);
+      await clickSpotlightChrome(traySpotlight);
       await expect
         .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
         .toBe(false);
@@ -126,59 +137,15 @@ test.describe("Spotlight quick launcher", () => {
       ).toBe(routeBeforeClick);
       await expect.poll(() => isSpotlightVisible(app)).toBe(true);
 
-      await spotlight.locator('.command-menu-row:has-text("Tray Reopen Thread")').click();
+      await traySpotlight.locator('.command-menu-row:has-text("Tray Reopen Thread")').click();
 
       await expect
         .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
         .toBe(true);
       await expect.poll(async () =>
         page.evaluate(() => window.__jasmineHarness?.snapshot()?.app?.navigation?.path ?? "")
-      ).toContain(threadId);
+      ).toContain(trayThreadId);
       await expect.poll(() => isSpotlightVisible(app)).toBe(false);
-    } finally {
-      await quitJasmine(app);
-      await app.close().catch(() => undefined);
-      await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  test("regular app open hides an already visible launcher", async () => {
-    const harness = await launchJasmine("spotlight-open-main");
-    const { app, page } = harness;
-
-    try {
-      await showSpotlight(app);
-      const spotlight = await waitForSpotlightPage(app, 10_000);
-      await expect(spotlight.locator(".spotlight-card")).toBeVisible();
-
-      await app.evaluate(() => {
-        const hook = (globalThis as { __jasmineTray?: { openMain(): void } }).__jasmineTray;
-        hook?.openMain();
-      });
-
-      await expect.poll(() => isSpotlightVisible(app)).toBe(false);
-      await expect(page.locator(".app-shell")).toBeVisible();
-      await expect
-        .poll(() => app.evaluate(() => Boolean((globalThis as Record<string, any>).__jasmineTray?.isMainVisible?.())))
-        .toBe(true);
-    } finally {
-      await quitJasmine(app);
-      await app.close().catch(() => undefined);
-      await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  test("closes on Escape without losing the main window", async () => {
-    const harness = await launchJasmine("spotlight-escape");
-    const { app, page } = harness;
-
-    try {
-      await showSpotlight(app);
-      const spotlight = await waitForSpotlightPage(app, 10_000);
-      await expect(spotlight.locator(".spotlight-card")).toBeVisible();
-      await spotlight.locator(".spotlight-input input").press("Escape");
-      await expect.poll(() => isSpotlightVisible(app)).toBe(false);
-      await expect(page.locator(".app-shell")).toBeVisible();
     } finally {
       await quitJasmine(app);
       await app.close().catch(() => undefined);

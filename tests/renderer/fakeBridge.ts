@@ -1,5 +1,6 @@
 import { act } from "@testing-library/react";
 import type {
+  AppUpdateState,
   ChatEditRequest,
   ChatMessage,
   ChatQueueDeleteRequest,
@@ -10,7 +11,8 @@ import type {
   ChatSendRequest,
   ChatStreamEvent,
   JasmineApi,
-  MessageListRequest
+  MessageListRequest,
+  ThreadDraftUpdateRequest
 } from "../../src/shared/ipc";
 
 let nextRowId = 0;
@@ -33,6 +35,30 @@ export async function flushFrames(count = 6): Promise<void> {
 }
 
 type StoredMessage = ChatMessage & { __rowid: number };
+
+type ModeledBridgeApi = Pick<
+  JasmineApi,
+  | "platform"
+  | "listMessages"
+  | "sendChatMessage"
+  | "retryChatMessage"
+  | "editChatMessage"
+  | "cancelChatMessage"
+  | "queueChatMessage"
+  | "updateQueuedChatMessage"
+  | "deleteQueuedChatMessage"
+  | "steerQueuedChatMessage"
+  | "onChatStream"
+  | "getAppUpdateState"
+  | "checkForAppUpdate"
+  | "downloadAppUpdate"
+  | "installAppUpdate"
+  | "openAppUpdateDownloadPage"
+  | "onAppUpdateStateChanged"
+  | "listExecutableDiscovery"
+  | "getThreadDraft"
+  | "updateThreadDraft"
+>;
 
 export type FakeBridge = {
   bridge: JasmineApi;
@@ -65,17 +91,39 @@ export type FakeBridge = {
     editChatMessage: ChatEditRequest[];
     cancelChatMessage: string[];
     queueChatMessage: ChatQueueRequest[];
+    updateQueuedChatMessage: ChatQueueUpdateRequest[];
+    deleteQueuedChatMessage: ChatQueueDeleteRequest[];
+    steerQueuedChatMessage: ChatQueueSteerRequest[];
+    getThreadDraft: string[];
+    updateThreadDraft: ThreadDraftUpdateRequest[];
   };
   /** Overrides the next `sendChatMessage` outcome (e.g. a provider failure). */
-  setSendBehavior(behavior: (request: ChatSendRequest) => Promise<unknown>): void;
+  setSendBehavior(behavior: JasmineApi["sendChatMessage"]): void;
+  /** Replaces draft reads so a test can hold hydration deterministically. */
+  setGetThreadDraftBehavior(behavior: JasmineApi["getThreadDraft"]): void;
 };
 
 export function createFakeBridge(): FakeBridge {
   const threads = new Map<string, StoredMessage[]>();
   const streamListeners = new Set<(event: ChatStreamEvent) => void>();
+  const appUpdateListeners = new Set<(state: AppUpdateState) => void>();
   const heldListMessages: Array<{ resolve(value: ChatMessage[]): void; snapshot: ChatMessage[] }> = [];
   let holdCount = 0;
-  let sendBehavior: ((request: ChatSendRequest) => Promise<unknown>) | null = null;
+  let sendBehavior: JasmineApi["sendChatMessage"] | null = null;
+  let getThreadDraftBehavior: JasmineApi["getThreadDraft"] = async () => "";
+  const appUpdateState: AppUpdateState = {
+    phase: "idle",
+    supported: true,
+    installMode: "automatic",
+    currentVersion: "0.3.4",
+    availableVersion: null,
+    progressPercent: null,
+    bytesPerSecond: null,
+    transferredBytes: null,
+    totalBytes: null,
+    lastCheckedAt: null,
+    error: null
+  };
 
   const calls: FakeBridge["calls"] = {
     listMessages: [],
@@ -83,7 +131,12 @@ export function createFakeBridge(): FakeBridge {
     retryChatMessage: [],
     editChatMessage: [],
     cancelChatMessage: [],
-    queueChatMessage: []
+    queueChatMessage: [],
+    updateQueuedChatMessage: [],
+    deleteQueuedChatMessage: [],
+    steerQueuedChatMessage: [],
+    getThreadDraft: [],
+    updateThreadDraft: []
   };
 
   function store(threadId: string): StoredMessage[] {
@@ -113,6 +166,26 @@ export function createFakeBridge(): FakeBridge {
     return rest;
   }
 
+  function responseMessage(
+    threadId: string,
+    id: string,
+    role: ChatMessage["role"],
+    content: string
+  ): ChatMessage {
+    return {
+      id,
+      threadId,
+      role,
+      content,
+      createdAt: new Date(1_800_000_000_000 + nextRowId * 1_000).toISOString(),
+      status: "sent"
+    };
+  }
+
+  function emptyQueue() {
+    return { followUp: [], steering: [] };
+  }
+
   /**
    * Mirrors src/main/db/repositories/messages.ts: order by (createdAt, rowid),
    * take the newest `limit` at or before the cursor, return ascending.
@@ -136,6 +209,7 @@ export function createFakeBridge(): FakeBridge {
   }
 
   const chatApi = {
+    platform: "win32" as NodeJS.Platform,
     listMessages(request: string | MessageListRequest): Promise<ChatMessage[]> {
       const normalized: MessageListRequest = typeof request === "string" ? { threadId: request } : request;
       calls.listMessages.push(normalized);
@@ -155,16 +229,60 @@ export function createFakeBridge(): FakeBridge {
     },
     sendChatMessage(request: ChatSendRequest) {
       calls.sendChatMessage.push(request);
-      if (sendBehavior) return sendBehavior(request);
-      return Promise.resolve({ requestId: `req-${calls.sendChatMessage.length}`, threadId: request.threadId });
+      if (sendBehavior) {
+        const behavior = sendBehavior;
+        sendBehavior = null;
+        return behavior(request);
+      }
+      const requestId = request.requestId ?? `send-${calls.sendChatMessage.length}`;
+      const userMessage = responseMessage(request.threadId, `${requestId}-response-user`, "user", request.content);
+      const assistantMessage = responseMessage(
+        request.threadId,
+        `${requestId}-response-assistant`,
+        "assistant",
+        "Fake assistant response."
+      );
+      return Promise.resolve({
+        userMessage,
+        assistantMessage,
+        content: assistantMessage.content,
+        model: "fake-model",
+        elapsedMs: 0
+      });
     },
     retryChatMessage(request: ChatRetryRequest) {
       calls.retryChatMessage.push(request);
-      return Promise.resolve({ requestId: `retry-${calls.retryChatMessage.length}`, threadId: request.threadId });
+      const requestId = request.requestId ?? `retry-${calls.retryChatMessage.length}`;
+      const assistantMessage = responseMessage(
+        request.threadId,
+        `${requestId}-response-assistant`,
+        "assistant",
+        "Fake retry response."
+      );
+      return Promise.resolve({
+        assistantMessage,
+        content: assistantMessage.content,
+        model: "fake-model",
+        elapsedMs: 0
+      });
     },
     editChatMessage(request: ChatEditRequest) {
       calls.editChatMessage.push(request);
-      return Promise.resolve({ requestId: `edit-${calls.editChatMessage.length}`, threadId: request.threadId });
+      const requestId = request.requestId ?? `edit-${calls.editChatMessage.length}`;
+      const userMessage = responseMessage(request.threadId, `${requestId}-response-user`, "user", request.content);
+      const assistantMessage = responseMessage(
+        request.threadId,
+        `${requestId}-response-assistant`,
+        "assistant",
+        "Fake edit response."
+      );
+      return Promise.resolve({
+        userMessage,
+        assistantMessage,
+        content: assistantMessage.content,
+        model: "fake-model",
+        elapsedMs: 0
+      });
     },
     cancelChatMessage(requestId: string) {
       calls.cancelChatMessage.push(requestId);
@@ -172,35 +290,66 @@ export function createFakeBridge(): FakeBridge {
     },
     queueChatMessage(request: ChatQueueRequest) {
       calls.queueChatMessage.push(request);
-      return Promise.resolve({ threadId: request.threadId, queue: { mode: "queue", messages: [] } });
+      return Promise.resolve({ queue: emptyQueue() });
     },
     updateQueuedChatMessage(request: ChatQueueUpdateRequest) {
-      return Promise.resolve({ threadId: request.threadId, queue: { mode: "queue", messages: [] } });
+      calls.updateQueuedChatMessage.push(request);
+      return Promise.resolve({ queue: emptyQueue() });
     },
     deleteQueuedChatMessage(request: ChatQueueDeleteRequest) {
-      return Promise.resolve({ threadId: request.threadId, queue: { mode: "queue", messages: [] } });
+      calls.deleteQueuedChatMessage.push(request);
+      return Promise.resolve({ queue: emptyQueue() });
     },
     steerQueuedChatMessage(request: ChatQueueSteerRequest) {
-      return Promise.resolve({ threadId: request.threadId, queue: { mode: "queue", messages: [] } });
+      calls.steerQueuedChatMessage.push(request);
+      return Promise.resolve({ queue: emptyQueue() });
     },
     onChatStream(callback: (event: ChatStreamEvent) => void) {
       streamListeners.add(callback);
       return () => streamListeners.delete(callback);
+    },
+    getAppUpdateState() {
+      return Promise.resolve(appUpdateState);
+    },
+    checkForAppUpdate() {
+      return Promise.resolve(appUpdateState);
+    },
+    downloadAppUpdate() {
+      return Promise.resolve(appUpdateState);
+    },
+    installAppUpdate() {
+      return Promise.resolve(appUpdateState);
+    },
+    openAppUpdateDownloadPage() {
+      return Promise.resolve(appUpdateState);
+    },
+    onAppUpdateStateChanged(callback: (state: AppUpdateState) => void) {
+      appUpdateListeners.add(callback);
+      return () => appUpdateListeners.delete(callback);
+    },
+    listExecutableDiscovery(kind) {
+      return Promise.resolve({ kind, candidates: [] });
+    },
+    getThreadDraft(threadId) {
+      calls.getThreadDraft.push(threadId);
+      return getThreadDraftBehavior(threadId);
+    },
+    updateThreadDraft(request) {
+      calls.updateThreadDraft.push(request);
+      return Promise.resolve();
     }
-  };
+  } satisfies ModeledBridgeApi;
 
   // Anything the renderer reaches for that this fake does not model should fail
-  // by name rather than silently resolve undefined and turn into a confusing
-  // assertion failure three frames later.
+  // on access by name rather than silently resolve undefined (or a truthy
+  // placeholder for a data property) and turn into a false positive.
   const bridge = new Proxy(chatApi, {
     get(target, property, receiver) {
       if (property in target) return Reflect.get(target, property, receiver);
       if (typeof property === "symbol") return undefined;
-      return () => {
-        throw new Error(
-          `Fake desktop bridge has no "${String(property)}". Add it to tests/renderer/fakeBridge.ts if this test needs it.`
-        );
-      };
+      throw new Error(
+        `Fake desktop bridge has no "${String(property)}". Add it to tests/renderer/fakeBridge.ts if this test needs it.`
+      );
     }
   }) as unknown as JasmineApi;
 
@@ -237,6 +386,9 @@ export function createFakeBridge(): FakeBridge {
     calls,
     setSendBehavior(behavior) {
       sendBehavior = behavior;
+    },
+    setGetThreadDraftBehavior(behavior) {
+      getThreadDraftBehavior = behavior;
     }
   };
 }

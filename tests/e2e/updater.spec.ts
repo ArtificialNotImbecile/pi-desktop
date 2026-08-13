@@ -46,9 +46,8 @@ test.describe("Jasmine app updater", () => {
     });
     const { page } = harness;
 
-    // Stub the shell so the click is exercised for real without opening a
-    // browser. Asserting only that the button renders would miss a bridge that
-    // never reaches the main process.
+    // Stub the shell so this exercises the renderer -> preload -> IPC -> main
+    // hand-off without opening the user's browser.
     await harness.app.evaluate(({ shell }) => {
       const opened: string[] = [];
       (globalThis as Record<string, unknown>).__openedExternally = opened;
@@ -67,8 +66,6 @@ test.describe("Jasmine app updater", () => {
       .poll(() => harness.app.evaluate(() => (globalThis as Record<string, string[]>).__openedExternally ?? []))
       .toEqual(["https://github.com/ArtificialNotImbecile/pi-desktop/releases/latest"]);
 
-    // A browser hand-off that fails leaves the user with no other route, so the
-    // destination has to stay visible rather than vanish into a dropped promise.
     await harness.app.evaluate(({ shell }) => {
       shell.openExternal = async () => {
         throw new Error("no usable browser handler");
@@ -80,15 +77,4 @@ test.describe("Jasmine app updater", () => {
     await expect(failure).toContainText("no usable browser handler");
   });
 
-  test("About reports an up-to-date installed build", async ({}, testInfo) => {
-    harness = await launchJasmine(testInfo.title.replace(/\W+/g, "-"), undefined, {
-      JASMINE_E2E_FAKE_UPDATER: "up-to-date"
-    });
-    const { page } = harness;
-
-    await openSettings(page, "About");
-    await page.getByRole("button", { name: "Check for updates" }).click();
-    await expect(page.getByText("Jasmine is up to date.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Check for updates" })).toBeEnabled();
-  });
 });

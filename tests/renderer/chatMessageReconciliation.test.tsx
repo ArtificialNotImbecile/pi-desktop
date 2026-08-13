@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { act } from "@testing-library/react";
+import { act, waitFor } from "@testing-library/react";
+import { createChatStreamSettlement } from "../../src/shared/streamSettlement";
 import { renderChatMessages, thread } from "./chatMessagesHarness";
 
 /**
@@ -82,44 +83,64 @@ describe("chat message reconciliation", () => {
     expect(harness.renderedContent()).not.toContain(BETA);
   });
 
-  test("a settled run survives a list response that raced it", async () => {
+  test("an active A to B to A run keeps its settlement over the stale final page", async () => {
     const harness = await renderChatMessages();
-    harness.bridge.seed("alpha", [{ id: "alpha-u1", role: "user", content: ALPHA }]);
+    seedThread(harness, "alpha", ALPHA);
+    seedThread(harness, "beta", BETA);
+    await harness.selectThread(thread("alpha", { messageCount: 2 }));
 
-    // The opening page read is still in flight when a run settles on the same
-    // thread. That page was read before the run finished, so applying it as-is
-    // would drop the settled answer.
-    const releaseStale = harness.bridge.holdNextListMessages();
-    await harness.selectThread(thread("alpha", { messageCount: 1 }));
+    // Keep sendChatMessage unresolved after the stream settlement. That leaves
+    // the hook's real request id associated with alpha while the final stale
+    // alpha page lands, exercising settled.requestId === requestId rather than
+    // the unrelated !requestId fallback.
+    const prompt = "slow response slow timeline alpha settlement";
+    const run = await harness.startRun(prompt);
+    await run.stream("alpha is still working");
 
-    // Deliberately not appended to the store: the held page must stay as it was
-    // read, so the settlement is the only thing that can put the answer on
-    // screen and the assertion cannot pass by way of the page alone.
+    const releaseBeta = harness.bridge.holdNextListMessages();
+    await harness.selectThread(thread("beta", { messageCount: 2 }));
+    const releaseFinalAlpha = harness.bridge.holdNextListMessages();
+    await harness.selectThread(thread("alpha", { messageCount: 4 }));
+
+    // The final alpha page was snapshotted before this assistant was persisted.
+    // Its settlement is therefore the only source of the completed answer.
+    const assistantMessage = harness.bridge.append("alpha", {
+      id: `${run.requestId}-reply-1`,
+      role: "assistant",
+      content: "Slow response complete."
+    });
     await harness.bridge.emit({
-      requestId: "run-1",
+      requestId: run.requestId,
       threadId: "alpha",
       status: "done",
-      settlement: {
-        replaceAfterMessageId: "alpha-u1",
-        messages: [
-          { id: "alpha-a1", threadId: "alpha", role: "assistant", content: "Slow response complete.", createdAt: "2026-01-01T00:00:10.000Z" }
-        ]
-      }
+      settlement: createChatStreamSettlement(
+        run.requestId,
+        "alpha-a1",
+        [run.userMessage],
+        [assistantMessage],
+        true
+      )
     });
     expect(harness.renderedContent()).toContain("Slow response complete.");
 
-    await releaseStale();
+    // Both superseded replies arrive only after the settlement. The final alpha
+    // reply is current but stale and must be reconciled with this active run.
+    await releaseBeta();
+    await releaseFinalAlpha();
 
     expect(harness.renderedContent()).toContain(ALPHA);
+    expect(harness.renderedContent()).toContain(prompt);
     expect(harness.renderedContent()).toContain("Slow response complete.");
-    // The settled run leaves no live row behind and reports no error, which is
-    // what the E2E case checked as `.assistant-block.live-message` count 0 and
-    // a hidden `.error-strip`.
-    const liveRows = harness.current().messages.filter((message) => (
-      message.id.startsWith("stream-") || message.renderId?.startsWith("stream-")
-    ));
+    expect(harness.renderedContent()).not.toContain(BETA);
+    const liveRows = harness.current().messages.filter((message) => message.id.startsWith("stream-"));
     expect(liveRows).toHaveLength(0);
+    expect(harness.current().messages.find((message) => message.id === assistantMessage.id)).toMatchObject({
+      renderId: `stream-${run.requestId}-0`
+    });
     expect(harness.current().error).toBeNull();
+
+    await run.complete(assistantMessage);
+    expect(harness.current().runState).toBe("idle");
   });
 
   test("a stale page for a thread with no run does not resurrect a superseded answer", async () => {
@@ -128,21 +149,30 @@ describe("chat message reconciliation", () => {
       { id: "alpha-u1", role: "user", content: ALPHA },
       { id: "alpha-a1", role: "assistant", content: "superseded answer" }
     ]);
+    harness.bridge.seed("beta", [{ id: "beta-u1", role: "user", content: BETA }]);
     await harness.selectThread(thread("alpha", { messageCount: 2 }));
     expect(harness.renderedContent()).toContain("superseded answer");
 
-    // A regenerate truncates the old answer and settles a new one.
+    // Read the old alpha page, switch away, then begin another alpha read and
+    // hold its already-snapshotted reply. The settlement has no active request
+    // association, so this explicitly covers the !requestId reconciliation.
+    await harness.selectThread(thread("beta", { messageCount: 1 }));
+    const releaseStaleAlpha = harness.bridge.holdNextListMessages();
+    await harness.selectThread(thread("alpha", { messageCount: 2 }));
+
     await harness.bridge.emit({
       requestId: "run-2",
       threadId: "alpha",
       status: "done",
-      settlement: {
-        replaceAfterMessageId: "alpha-u1",
-        messages: [
-          { id: "alpha-a2", threadId: "alpha", role: "assistant", content: "regenerated answer", createdAt: "2026-01-01T00:00:20.000Z" }
-        ]
-      }
+      settlement: createChatStreamSettlement("run-2", "alpha-u1", [], [
+        { id: "alpha-a2", threadId: "alpha", role: "assistant", content: "regenerated answer", createdAt: "2026-01-01T00:00:20.000Z" }
+      ])
     });
+
+    expect(harness.renderedContent()).toContain("regenerated answer");
+    expect(harness.renderedContent()).not.toContain("superseded answer");
+
+    await releaseStaleAlpha();
 
     expect(harness.renderedContent()).toContain("regenerated answer");
     expect(harness.renderedContent()).not.toContain("superseded answer");
@@ -153,15 +183,32 @@ describe("chat message reconciliation", () => {
     seedThread(harness, "alpha", ALPHA);
     await harness.selectThread(thread("alpha", { messageCount: 2 }));
 
-    harness.bridge.setSendBehavior(async () => {
+    const prompt = "this send fails";
+    harness.bridge.setSendBehavior(async (request) => {
+      if (!request.requestId) throw new Error("Failed send reached the bridge without a requestId.");
+      // chat:send persists the user row before provider generation can fail.
+      harness.bridge.append(request.threadId, {
+        id: `${request.requestId}-persisted-user`,
+        role: "user",
+        content: request.content
+      });
       throw new Error("Provider is unreachable.");
     });
     await act(async () => {
-      await harness.current().sendMessage("this send fails");
+      await harness.current().sendMessage(prompt);
     });
 
     expect(harness.renderedContent()).toContain(ALPHA);
     expect(harness.renderedContent()).toContain("Mock reply from Jasmine.");
+    const failedUser = harness.current().messages.find((message) => message.content === prompt);
+    const requestId = harness.bridge.calls.sendChatMessage.at(-1)?.requestId;
+    expect(requestId).toBeTruthy();
+    expect(failedUser).toMatchObject({
+      id: `${requestId}-persisted-user`,
+      renderId: `pending-${requestId}-0`,
+      role: "user",
+      content: prompt
+    });
     expect(harness.current().error).toBeTruthy();
     expect(harness.current().runState).not.toBe("running");
   });
@@ -172,18 +219,52 @@ describe("chat message reconciliation", () => {
     seedThread(harness, "beta", BETA);
     await harness.selectThread(thread("alpha", { messageCount: 2 }));
 
-    harness.bridge.setSendBehavior(async () => {
+    const prompt = "this late alpha send fails";
+    harness.bridge.setSendBehavior(async (request) => {
+      if (!request.requestId) throw new Error("Failed send reached the bridge without a requestId.");
+      harness.bridge.append(request.threadId, {
+        id: `${request.requestId}-persisted-user`,
+        role: "user",
+        content: request.content
+      });
       throw new Error("Provider is unreachable.");
     });
+    const readsBeforeFailure = harness.bridge.calls.listMessages.length;
+    const releaseFailurePage = harness.bridge.holdNextListMessages();
+    let failureCompletion: Promise<boolean> | null = null;
     await act(async () => {
-      await harness.current().sendMessage("this send fails");
+      failureCompletion = harness.current().sendMessage(prompt);
+      await Promise.resolve();
     });
-    expect(harness.current().error).toBeTruthy();
+
+    // Wait until failure reconciliation has actually read and held alpha's
+    // persisted page. Switching before that point would only test the early
+    // beginProviderFailureReconcile guard, not a late IPC reply.
+    await waitFor(() => {
+      expect(harness.bridge.calls.listMessages).toHaveLength(readsBeforeFailure + 1);
+      expect(harness.bridge.calls.listMessages.at(-1)?.threadId).toBe("alpha");
+    });
 
     await harness.selectThread(thread("beta", { messageCount: 2 }));
+    expect(harness.renderedContent()).toContain(BETA);
+    // Thread selection may commit the new route once before the hook's layout
+    // effect clears the old rows. The retained E2E paint monitor owns that
+    // transition. From this stable beta page onward, however, alpha's held IPC
+    // reply must never commit under beta.
+    const betaCommitOffset = harness.commits().length;
+
+    await releaseFailurePage();
+    await act(async () => {
+      await failureCompletion;
+    });
 
     expect(harness.renderedContent()).toContain(BETA);
     expect(harness.renderedContent()).not.toContain(ALPHA);
+    expect(harness.renderedContent()).not.toContain(prompt);
+    for (const commit of harness.commits().slice(betaCommitOffset).filter((entry) => entry.threadId === "beta")) {
+      expect(commit.contents).not.toContain(ALPHA);
+      expect(commit.contents).not.toContain(prompt);
+    }
     // Errors are per thread, so beta must open clean.
     expect(harness.current().error).toBeNull();
   });

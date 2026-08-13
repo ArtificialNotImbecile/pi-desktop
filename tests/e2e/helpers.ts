@@ -1,13 +1,15 @@
 import { expect } from "@playwright/test";
 import { _electron as electron, type CDPSession, type ElectronApplication, type Locator, type Page } from "playwright";
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES, e2eUserDataDirName } from "./userDataDir.mjs";
+
+export { E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES, e2eUserDataDirName } from "./userDataDir.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -735,26 +737,6 @@ export function baseLaunchEnv(userDataDir: string, extra: Record<string, string>
     KIMI_API_KEY: "e2e-mock-key",
     ...extra
   };
-}
-
-export const E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES = 96;
-
-export function e2eUserDataDirName(label: string, uniqueId = randomUUID()): string {
-  // Pi's session directory includes an encoded copy of the workspace cwd. A
-  // full Playwright title here can therefore make that later component exceed
-  // macOS's 255-byte limit. Keep a readable prefix, retain title identity in a
-  // stable hash, and retain per-launch uniqueness in the UUID.
-  const readableLabel = label
-    .normalize("NFKD")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "")
-    .slice(0, 40) || "jasmine-e2e";
-  const labelHash = createHash("sha256").update(label).digest("hex").slice(0, 12);
-  const name = `${readableLabel}-${labelHash}-${uniqueId}`;
-  if (Buffer.byteLength(name, "utf8") > E2E_USER_DATA_DIR_COMPONENT_MAX_BYTES) {
-    throw new Error("E2E user data directory component exceeded its portable byte limit.");
-  }
-  return name;
 }
 
 export async function launchJasmine(label: string, existingUserDataDir?: string, extraEnv: Record<string, string> = {}): Promise<HarnessApp> {

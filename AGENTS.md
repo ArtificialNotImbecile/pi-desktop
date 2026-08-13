@@ -42,7 +42,7 @@ For a localized change, run:
 
 `npm.cmd run test:renderer` (Vitest + jsdom, `tests/renderer/`) mounts real
 components and hooks against a fake desktop bridge, with no Electron. The whole
-suite runs in under two seconds, so prefer it whenever the behavior under test is
+suite runs in seconds rather than Electron-suite minutes, so prefer it whenever the behavior under test is
 renderer state: message reconciliation, pagination, run and error states, panel
 chrome, menu and form logic. `tests/renderer/fakeBridge.ts` models the IPC
 surface; add to it rather than reaching for a real bridge, and note that an
@@ -62,15 +62,16 @@ an inline style a maximized panel never carries, a row a refetch restores anyway
 -- pass whether or not the behavior works, and several only revealed themselves
 this way.
 
-CI owns the full E2E suite, split across four jobs: three `Full E2E (i/3)` shards
+CI owns the full E2E suite, split across three jobs: two `Full E2E (i/2)` shards
 of the `main` Playwright project, plus `Full E2E (serial projects)` for the
 focus-sensitive and startup-timing projects. Do not run the whole suite locally as
 routine verification: CI reruns it on the exact commit anyway. Locally, run the
 smallest spec or `--grep` that covers your change and let CI catch the rest.
 
-Every E2E test launches its own Electron instance, so roughly 2s of each ~4.6s
-test is process startup. That makes test count, not assertion count, the thing
-that costs wall-clock time — prefer adding coverage in `tests/renderer/`.
+Every E2E case launches Electron at least once; restart and secondary-process
+cases launch it more than once. That makes case and launch count, not assertion
+count, the thing that costs wall-clock time — prefer adding coverage in
+`tests/renderer/`.
 
 Run the full `npm.cmd run test:e2e` locally only when you have a specific reason —
 debugging a failure CI reported, or a change to the harness or Playwright config

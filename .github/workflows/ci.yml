@@ -8,15 +8,13 @@ on:
 permissions:
   contents: read
 
-# A new push supersedes the run already in flight for the same pull request,
-# so review fixes do not leave three platform jobs grinding on a dead commit.
-# Pushes to main are grouped per commit instead: a shared group would hold only
-# one pending run, so a third push could evict the middle commit's queued run
-# even with cancel-in-progress off, and every released commit needs its own
-# result.
+# A new commit supersedes the run already in flight for the same pull request
+# or branch. Pull requests use their stable number instead of the merge SHA;
+# pushes use the stable branch ref, so only the newest main commit keeps using
+# runners.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   static:
@@ -36,6 +34,7 @@ jobs:
 
   verify:
     name: ${{ matrix.label }}
+    needs: static
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -54,12 +53,6 @@ jobs:
             npm: npm.cmd
             unit: npm.cmd run test:unit
             smoke: npm.cmd run test:e2e:smoke
-          - id: mac-arm64
-            label: macOS Apple Silicon
-            os: macos-latest
-            npm: npm
-            unit: npm run test:unit
-            smoke: npm run test:e2e:smoke
     steps:
       - uses: actions/checkout@v5
 
@@ -68,8 +61,28 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Restore Electron download cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
+        id: npm_ci
+        continue-on-error: true
+        timeout-minutes: 8
         run: ${{ matrix.npm }} ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
+
+      - name: Retry dependency install once
+        if: steps.npm_ci.outcome == 'failure'
+        timeout-minutes: 8
+        run: ${{ matrix.npm }} ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
 
       - name: Install Linux runtime dependencies
         if: matrix.id == 'linux-x64'
@@ -82,8 +95,10 @@ jobs:
         run: ${{ matrix.unit }}
 
       # Renderer tests run React components and hooks under jsdom against a fake
-      # desktop bridge. No Electron, no display, a couple of seconds a platform.
+      # desktop bridge. No Electron, native module, or display is involved, so
+      # running them once on Linux covers the same renderer behavior.
       - name: Run renderer tests
+        if: matrix.id == 'linux-x64'
         run: ${{ matrix.npm }} run test:renderer
 
       - name: Run E2E smoke tests
@@ -92,39 +107,41 @@ jobs:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
 
-  # The smoke tag covers 12 of the ~111 E2E tests, so the platform matrix above
+  # The smoke tag covers 7 of the 85 E2E tests, so the platform matrix above
   # cannot be the only automated E2E signal.
   #
-  # macOS, though Linux is the cheaper runner. Under JASMINE_E2E_OFFSCREEN the
-  # window is created focusable: false, which on X11 leaves it unmanaged, so
-  # maximize and minimize are dropped and isMaximized() never turns true. Five
-  # specs fail there for that reason alone -- window controls, model-menu
-  # anchoring, message paging, and the Working notification -- identically at
+  # The full suite runs on macOS, though Linux is the cheaper runner. Under
+  # JASMINE_E2E_OFFSCREEN the window is created focusable: false, which on X11 leaves it unmanaged, so
+  # maximize and minimize are dropped and isMaximized() never turns true. Four
+  # cases fail there for that reason alone -- window controls, model-menu
+  # anchoring, terminal resize/session, and the Working notification -- identically at
   # one worker and at two, and identically with openbox running, so neither
-  # parallelism nor a missing window manager was the cause. None of the five is
+  # parallelism nor a missing window manager was the cause. None of the four is
   # tagged @smoke, so they had never run on Linux before this job existed.
   # macOS is the configuration with a green full run behind it. Making the suite
   # pass under X11 is its own change, and belongs with the offscreen harness.
-  # Each E2E test launches its own Electron instance, so about 2s of every
-  # test is process startup: the unsharded suite spent 9m56s on 130 tests, ~4.6s
-  # each. One worker stays mandatory -- parallel Electron launches starve the
-  # heavier specs on macOS, which the Playwright config documents -- so the way
-  # to spend less wall-clock time is more machines, not more workers.
+  # Each E2E test launches its own Electron instance, so process startup is a
+  # material part of every case. One worker stays mandatory -- parallel
+  # launches starve the heavier specs on macOS, which the Playwright config
+  # documents -- so the way to spend less wall-clock time is more machines,
+  # not more workers.
   #
   # `--shard` cannot be applied to the whole config: the focus-sensitive and
   # startup-timing projects declare `dependencies`, and Playwright then places
-  # every test in the first shard (verified: 128/0/0). Sharding the `main`
-  # project alone splits evenly (41/40/40 of its 121 tests) and the two serial
-  # projects run as their own job with --no-deps, which also gives them the
-  # uncontended machine their `dependencies` were there to guarantee.
+  # every test in the first shard. After renderer/service migration reduced the
+  # local suite from 133 to 85 cases. CI skips four desktop-session cases, so
+  # its 77-case `main` project fits in two shards (39/38). This removes one
+  # complete macOS install/build while the separate serial job keeps the two
+  # remaining projects uncontended.
   e2e:
-    name: Full E2E (${{ matrix.shard }}/3)
+    name: Full E2E (${{ matrix.shard }}/2)
+    needs: static
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v5
 
@@ -133,14 +150,35 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Restore Electron download cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
+        id: npm_ci
+        continue-on-error: true
+        timeout-minutes: 8
         run: npm ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
+
+      - name: Retry dependency install once
+        if: steps.npm_ci.outcome == 'failure'
+        timeout-minutes: 8
+        run: npm ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
 
       - name: Build application
         run: npm run build
 
       - name: Run E2E shard
-        run: npm run test:e2e:main -- --shard=${{ matrix.shard }}/3
+        id: e2e_shard
+        run: npm run test:e2e:main -- --shard=${{ matrix.shard }}/2
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
@@ -149,7 +187,7 @@ jobs:
           JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
 
       - name: Upload failure artifacts
-        if: failure()
+        if: ${{ failure() && steps.e2e_shard.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-failures-shard-${{ matrix.shard }}
@@ -161,6 +199,7 @@ jobs:
   # this separate job gives them.
   e2e-serial:
     name: Full E2E (serial projects)
+    needs: static
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -171,21 +210,51 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Restore Electron download cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
+        id: npm_ci
+        continue-on-error: true
+        timeout-minutes: 8
         run: npm ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
+
+      - name: Retry dependency install once
+        if: steps.npm_ci.outcome == 'failure'
+        timeout-minutes: 8
+        run: npm ci
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
 
       - name: Build application
+        id: build
         run: npm run build
 
       - name: Run focus-sensitive and startup-timing projects
+        id: e2e_serial
         run: npm run test:e2e:serial
         env:
           JASMINE_E2E_OFFSCREEN: "1"
           JASMINE_E2E_WORKERS: "1"
           JASMINE_E2E_SKIP_DESKTOP_SESSION: "1"
 
+      # These jobs already install and build the native macOS tree. Keep its
+      # platform unit coverage here instead of repeating another install/build
+      # in the verify matrix. Run it after startup timing so the unit suite's
+      # Electron smoke does not warm the framework or filesystem caches first.
+      - name: Run macOS unit tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: npm run test:unit
+
       - name: Upload failure artifacts
-        if: failure()
+        if: ${{ failure() && steps.e2e_serial.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-failures-serial
