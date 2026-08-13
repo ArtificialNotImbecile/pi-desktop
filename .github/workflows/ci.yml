@@ -81,6 +81,11 @@ jobs:
       - name: Run unit tests
         run: ${{ matrix.unit }}
 
+      # Renderer tests run React components and hooks under jsdom against a fake
+      # desktop bridge. No Electron, no display, a couple of seconds a platform.
+      - name: Run renderer tests
+        run: ${{ matrix.npm }} run test:renderer
+
       - name: Run E2E smoke tests
         run: ${{ matrix.smoke }}
         env:

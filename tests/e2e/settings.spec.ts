@@ -330,37 +330,9 @@ test.describe("Jasmine settings", () => {
     }
   });
 
-  test("settings window has movable chrome plus minimize and restore states @desktop-session", async () => {
-    const { page } = harness;
-
-    await openProviderSettings(page);
-    await expect(page.locator(".settings-panel")).toBeVisible();
-    const before = await page.locator(".settings-panel").boundingBox();
-    expect(before).not.toBeNull();
-
-    const bar = page.locator(".settings-window-bar");
-    const barBox = await bar.boundingBox();
-    expect(barBox).not.toBeNull();
-    await page.mouse.move((barBox?.x ?? 0) + 80, (barBox?.y ?? 0) + 12);
-    await page.mouse.down();
-    await page.mouse.move((barBox?.x ?? 0) + 160, (barBox?.y ?? 0) + 58);
-    await page.mouse.up();
-
-    const afterDrag = await page.locator(".settings-panel").boundingBox();
-    expect(afterDrag).not.toBeNull();
-    expect(Math.abs((afterDrag?.x ?? 0) - (before?.x ?? 0))).toBeGreaterThan(24);
-    expect(Math.abs((afterDrag?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(24);
-
-    await page.getByRole("button", { name: "Minimize settings" }).click();
-    await expect(page.locator(".settings-panel")).toHaveClass(/minimized/);
-    await expect(page.locator(".settings-detail")).toHaveCount(0);
-    await page.getByRole("button", { name: "Restore settings" }).click();
-    await expect(page.locator(".settings-panel")).not.toHaveClass(/minimized/);
-
-    await page.getByRole("button", { name: "Maximize settings" }).click();
-    await expect(page.locator(".settings-panel")).toHaveClass(/maximized/);
-    await expect(page.getByRole("button", { name: "Restore settings size" })).toBeVisible();
-    await page.getByRole("button", { name: "Restore settings size" }).click();
-    await expect(page.locator(".settings-panel")).not.toHaveClass(/maximized/);
-  });
+  // Settings window chrome -- title-bar drag, minimize, maximize, restore -- is
+  // React state and clientX/clientY arithmetic on a div, not an OS window. It
+  // moved to tests/renderer/settingsWindowChrome.test.tsx, which covers the same
+  // states plus the drag-suppression guards this case never exercised, and needs
+  // no desktop session to do it.
 });

@@ -1254,55 +1254,11 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.");
   });
 
-  test("A to B to A message loads cannot overwrite a live settlement", async () => {
-    const { page } = harness;
-    await startEmptyThread(page);
-    await page.locator(".rich-composer-editor").fill("alpha epoch baseline");
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-
-    await startEmptyThread(page);
-    await page.locator(".rich-composer-editor").fill("beta epoch baseline");
-    await page.getByRole("button", { name: "Send" }).click();
-    await waitForStableAssistant(page, "Mock reply from Jasmine.");
-
-    const ids = await page.evaluate(async () => {
-      const threads = await window.jasmine.listThreads();
-      const alpha = threads.find((thread) => thread.title.includes("alpha epoch baseline"));
-      const beta = threads.find((thread) => thread.title.includes("beta epoch baseline"));
-      if (!alpha || !beta) throw new Error("Epoch test threads are missing.");
-      return { alpha: alpha.id, beta: beta.id };
-    });
-
-    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
-    await page.locator(".rich-composer-editor").fill("slow response slow timeline alpha settlement");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
-
-    // Each delay is applied after messages:list has already read SQLite. Both A
-    // pages therefore contain only the persisted user row and arrive after the
-    // final assistant settlement. The first A and the B response are stale by
-    // epoch; the final A response must be reconciled with the settlement.
-    await page.evaluate(({ alpha, beta }) => {
-      window.__JASMINE_MESSAGE_LOAD_DELAYS__ = {
-        [alpha]: [5_000, 5_200],
-        [beta]: [4_800]
-      };
-    }, ids);
-    await page.getByRole("button", { name: /beta epoch baseline/i }).first().click();
-    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
-    await page.getByRole("button", { name: /beta epoch baseline/i }).first().click();
-    await page.getByRole("button", { name: /alpha epoch baseline/i }).first().click();
-
-    await waitForStableAssistant(page, "Slow response complete.", 12_000);
-    await page.waitForTimeout(5_500);
-    await expect(page.locator(".message-stack")).toContainText("alpha epoch baseline");
-    await expect(page.locator(".message-stack")).toContainText("slow response slow timeline alpha settlement");
-    await expect(page.locator(".message-stack")).toContainText("Slow response complete.");
-    await expect(page.locator(".message-stack")).not.toContainText("beta epoch baseline");
-    await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
-    await expect(page.locator(".error-strip")).toBeHidden();
-  });
+  // "A to B to A message loads cannot overwrite a live settlement" moved to
+  // tests/renderer/chatMessageReconciliation.test.tsx. It provoked the ordering
+  // with three ~5s __JASMINE_MESSAGE_LOAD_DELAYS__ waits plus a 5.5s settle, for
+  // 12.3s a run; the renderer version holds and releases the in-flight replies
+  // explicitly, so the ordering under test is the ordering that runs.
 
   test("a delayed same-thread load merges history with a newly started live run", async () => {
     const { page } = harness;
