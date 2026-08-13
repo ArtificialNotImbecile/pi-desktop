@@ -583,6 +583,36 @@ test.describe("Jasmine panels and tools", () => {
     expect(restored.raw.sha256).toHaveLength(64);
   });
 
+  test("the opt-in taxonomy snapshot rolls forward for retry and edit", async () => {
+    const { page } = harness;
+    await startEmptyThread(page);
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await page.locator(".rich-composer-editor").fill("show structured taxonomy");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitForStableAssistant(page, "Mock reply from Jasmine.");
+
+    const captureState = async () => page.evaluate(async () => {
+      const threadId = (await window.jasmine.listThreads())[0]?.id;
+      if (!threadId) throw new Error("Taxonomy test thread is missing.");
+      const response = await window.jasmine.listThreadContextTaxonomy(threadId);
+      return { count: response.captures.length, id: response.captures.at(-1)?.id ?? null };
+    });
+    const sentCapture = await captureState();
+    expect(sentCapture.count).toBe(1);
+    expect(sentCapture.id).toBeTruthy();
+
+    await page.locator(".assistant-block").last().getByRole("button", { name: "Regenerate this response" }).click();
+    await expect.poll(captureState).toEqual({ count: 1, id: expect.not.stringMatching(sentCapture.id!) });
+    const retryCapture = await captureState();
+
+    const userMessage = page.locator(".user-message-wrap").last();
+    await userMessage.hover();
+    await userMessage.getByRole("button", { name: "Edit message" }).click();
+    await page.locator(".rich-composer-editor").fill("show structured taxonomy edited");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(captureState).toEqual({ count: 1, id: expect.not.stringMatching(retryCapture.id!) });
+  });
+
   test("file change artifacts and lazy details restore after restart", async ({}, testInfo) => {
     let { page } = harness;
     const userDataDir = harness.userDataDir;
