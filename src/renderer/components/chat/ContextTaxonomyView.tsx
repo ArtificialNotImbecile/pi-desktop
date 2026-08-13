@@ -1,4 +1,4 @@
-import { useMemo, useState, type SyntheticEvent } from "react";
+import { memo, useMemo, useState, type SyntheticEvent } from "react";
 import type {
   AppLanguage,
   ContextReasoningValidation,
@@ -88,12 +88,13 @@ type ResolvedGroup = { id: string; label: string; items: ResolvedItem[]; tokenEs
 
 type CaptureOption = { id: string; requestIndex: number; requestCount: number };
 
-export function TaxonomyView(props: {
+export const TaxonomyView = memo(function TaxonomyView(props: {
   taxonomy: ContextTaxonomy;
   captureId: string;
   captures?: CaptureOption[];
   onSelectCapture?(captureId: string): void;
 }) {
+  recordHarnessRender();
   const { t } = useI18n();
   const taxonomy = props.taxonomy;
   const validation = taxonomy.reasoningValidation;
@@ -191,6 +192,17 @@ export function TaxonomyView(props: {
       </div>
     </div>
   );
+});
+
+function recordHarnessRender(): void {
+  if (typeof window === "undefined" || !window.__JASMINE_HARNESS_ENABLED__) return;
+  window.__JASMINE_CONTEXT_TAXONOMY_RENDERS__ = (window.__JASMINE_CONTEXT_TAXONOMY_RENDERS__ ?? 0) + 1;
+}
+
+declare global {
+  interface Window {
+    __JASMINE_CONTEXT_TAXONOMY_RENDERS__?: number;
+  }
 }
 
 function TaxonomyHeader(props: {
@@ -416,34 +428,36 @@ function TaxonomyItemView(props: {
         <span className="taxonomy-item-title" title={resolved.title}>{resolved.title}</span>
         <span className="taxonomy-item-tokens">{resolved.tokenEstimate.toLocaleString(localeTag(language))}</span>
       </summary>
-      <div className="taxonomy-item-body">
-        <div className="taxonomy-item-meta">
-          {resolved.meta.map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
-          <PayloadPath path={resolved.path} />
+      {props.open && (
+        <div className="taxonomy-item-body">
+          <div className="taxonomy-item-meta">
+            {resolved.meta.map((entry, index) => <span key={`${entry}-${index}`}>{entry}</span>)}
+            <PayloadPath path={resolved.path} />
+          </div>
+          {single
+            ? <RenderedBody text={single.text} format={single.format} title={single.title} />
+            : resolved.parts.length > 0
+              ? (
+                <div className="taxonomy-parts">
+                  {resolved.parts.map((part) => (
+                    <TaxonomyPartView
+                      key={part.key}
+                      part={part}
+                      open={props.openParts.has(part.key)}
+                      onToggle={(open) => props.onTogglePart(part.key, open)}
+                    />
+                  ))}
+                </div>
+              )
+              : resolved.foldedCount > 0
+                ? null
+                : <RenderedBody
+                    text={resolved.item.text ?? resolved.item.preview}
+                    format={looksLikeJson(resolved.item.text ?? "") ? "json" : "markdown"}
+                    title={resolved.title}
+                  />}
         </div>
-        {single
-          ? <RenderedBody text={single.text} format={single.format} title={single.title} />
-          : resolved.parts.length > 0
-            ? (
-              <div className="taxonomy-parts">
-                {resolved.parts.map((part) => (
-                  <TaxonomyPartView
-                    key={part.key}
-                    part={part}
-                    open={props.openParts.has(part.key)}
-                    onToggle={(open) => props.onTogglePart(part.key, open)}
-                  />
-                ))}
-              </div>
-            )
-            : resolved.foldedCount > 0
-              ? null
-              : <RenderedBody
-                  text={resolved.item.text ?? resolved.item.preview}
-                  format={looksLikeJson(resolved.item.text ?? "") ? "json" : "markdown"}
-                  title={resolved.title}
-                />}
-      </div>
+      )}
     </details>
   );
 }
@@ -464,15 +478,17 @@ function TaxonomyPartView(props: { part: ResolvedPart; open: boolean; onToggle(o
         <span className="taxonomy-part-title" title={part.title}>{part.toolName ?? part.title}</span>
         <span className="taxonomy-part-tokens">{part.tokenEstimate.toLocaleString(localeTag(language))}</span>
       </summary>
-      <div className="taxonomy-part-body">
-        {(part.payloadPath || part.toolCallId) && (
-          <div className="taxonomy-part-meta">
-            {part.toolCallId && <span>{part.toolCallId}</span>}
-            {part.payloadPath && <PayloadPath path={part.payloadPath} />}
-          </div>
-        )}
-        <RenderedBody text={part.text} format={part.format} title={part.title} />
-      </div>
+      {props.open && (
+        <div className="taxonomy-part-body">
+          {(part.payloadPath || part.toolCallId) && (
+            <div className="taxonomy-part-meta">
+              {part.toolCallId && <span>{part.toolCallId}</span>}
+              {part.payloadPath && <PayloadPath path={part.payloadPath} />}
+            </div>
+          )}
+          <RenderedBody text={part.text} format={part.format} title={part.title} />
+        </div>
+      )}
     </details>
   );
 }

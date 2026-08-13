@@ -2802,6 +2802,7 @@ try {
       messages: [{ role: "user", content: "taxonomy duplicate guard" }],
       content: "taxonomy duplicate guard",
       attachments: [],
+      captureContextTaxonomy: true,
       cwd: scopedCwd,
       toolsEnabled: true
     }, {
@@ -2828,6 +2829,26 @@ try {
     const systemPromptItem = mockReply.contextTaxonomy.items.find((item) => item.source === "jasmine.systemPrompt");
     assert.match(String(systemPromptItem?.text ?? ""), new RegExp(escapeRegExp(`Current working directory: ${scopedCwd.replace(/\\/g, "/")}`)));
     assert.equal((String(systemPromptItem?.text ?? "").match(/Current working directory:/g) ?? []).length, 1);
+
+    const uncapturedReply = await generateAssistantReply({
+      threadId: "taxonomy-disabled-thread",
+      messages: [{ role: "user", content: "taxonomy stays disabled" }],
+      content: "taxonomy stays disabled",
+      attachments: [],
+      cwd: scopedCwd,
+      piAgentDir: agentDir,
+      toolsEnabled: true
+    }, {
+      providerName: "mock-provider",
+      apiKey: "test-key",
+      baseUrl: "http://127.0.0.1:1",
+      modelId: "mock-model",
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    });
+    assert.equal(uncapturedReply.contextTaxonomy, undefined);
+    assert.equal(uncapturedReply.contextTaxonomies, undefined);
 
     const mockProvider = {
       providerName: "jasmine-mock",

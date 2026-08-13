@@ -289,7 +289,7 @@ describe("context taxonomy panel", () => {
     expect(panel.text(".taxonomy-item-title")).toEqual(["Assistant turn"]);
 
     const emptyMessage = panel.container.querySelector<HTMLElement>(".taxonomy-item");
-    fireEvent.click(emptyMessage!.querySelector<HTMLElement>(".taxonomy-item-head")!);
+    fireEvent.click(panel.button("Expand all"));
     expect(emptyMessage?.querySelector(".taxonomy-item-meta")?.textContent).toContain("assistant");
     expect(emptyMessage?.querySelector(".taxonomy-body")).toBeNull();
   });
@@ -423,6 +423,11 @@ describe("context taxonomy panel", () => {
     expect(open).toHaveLength(1);
     expect(open[0].querySelector(".taxonomy-item-title")?.textContent).toBe("Current user prompt");
     expect(panel.container.querySelectorAll(".taxonomy-part[open]")).toHaveLength(0);
+    // A closed <details> only hides its descendants in CSS. If the bodies are
+    // still mounted, a large capture duplicates the complete conversation into
+    // hundreds of Markdown/code DOM subtrees and makes unrelated typing lag.
+    expect(panel.container.querySelectorAll(".taxonomy-item-body")).toHaveLength(1);
+    expect(panel.container.querySelectorAll(".taxonomy-part-body")).toHaveLength(0);
   });
 
   test("expand all opens every item and part, and collapses back", () => {

@@ -48,6 +48,7 @@ type ModeledBridgeApi = Pick<
   | "updateQueuedChatMessage"
   | "deleteQueuedChatMessage"
   | "steerQueuedChatMessage"
+  | "updateChatContextTaxonomyCapture"
   | "onChatStream"
   | "getAppUpdateState"
   | "checkForAppUpdate"
@@ -303,6 +304,9 @@ export function createFakeBridge(): FakeBridge {
     steerQueuedChatMessage(request: ChatQueueSteerRequest) {
       calls.steerQueuedChatMessage.push(request);
       return Promise.resolve({ queue: emptyQueue() });
+    },
+    updateChatContextTaxonomyCapture() {
+      return Promise.resolve(false);
     },
     onChatStream(callback: (event: ChatStreamEvent) => void) {
       streamListeners.add(callback);

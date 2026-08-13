@@ -161,6 +161,10 @@ test.describe("Jasmine threads and projects", () => {
     const projectFiles = await page.evaluate(async (projectId) => window.jasmine.searchFiles({ query: "project-note", projectId, limit: 4 }), project.id);
     expect(projectFiles.map((file) => file.relativePath)).toContain("src/project-note.txt");
 
+    // Context taxonomy is an opt-in debug probe. This assertion intentionally
+    // needs its system-prompt snapshot, so make that opt-in explicit.
+    await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+    await expect(page.getByRole("complementary", { name: "Context taxonomy" })).toBeVisible();
     await page.locator(".rich-composer-editor").fill("project cwd check");
     await page.getByRole("button", { name: "Send" }).click();
     await waitForStableAssistant(page, "Mock reply from Jasmine.");
@@ -176,6 +180,7 @@ test.describe("Jasmine threads and projects", () => {
     }, project.id);
     expect(scopedMessageState.thread.projectId).toBe(project.id);
     expect(scopedMessageState.systemPromptText).toContain(project.rootPath.replace(/\\/g, "/"));
+    await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
 
     const scratchCwd = await page.evaluate(async () => {
       const session = await window.jasmine.startTerminal({ projectId: null, cols: 80, rows: 8 });

@@ -17,7 +17,10 @@ export type ContextCaptureExtensionOptions = {
   provider?: string;
   model?: string;
   currentUserPromptText?: string;
+  getCurrentUserPromptText?(): string | undefined;
   getCanonicalMessages?(): unknown[] | undefined;
+  shouldCapture?(): boolean;
+  getTaskIndex?(): number;
   outputDir?: string;
   onCapture?: ContextCaptureHandler;
   onError?(error: unknown, taxonomy?: ContextTaxonomy): void;
@@ -57,12 +60,23 @@ function registerContextCapture(pi: Pick<ExtensionAPI, "on">, options: ContextCa
   let emittedLatestTaxonomy = false;
 
   pi.on("before_provider_request", (event) => {
+    if (options.shouldCapture && !options.shouldCapture()) {
+      latestTaxonomy = null;
+      emittedLatestTaxonomy = false;
+      return event.payload;
+    }
     const payloadModel = payloadModelId(event.payload);
     latestTaxonomy = providerPayloadToContextTaxonomy(event.payload, {
       provider: options.provider || "unknown-provider",
       model: payloadModel || options.model || "unknown-model",
-      currentUserPromptText: options.currentUserPromptText
+      currentUserPromptText: options.getCurrentUserPromptText?.() ?? options.currentUserPromptText
     });
+    latestTaxonomy.providerRequest = {
+      index: 1,
+      count: 1,
+      taskIndex: Math.max(1, options.getTaskIndex?.() ?? 1),
+      policy: "task-capture"
+    };
     let canonicalMessages: unknown[] | undefined;
     try {
       canonicalMessages = options.getCanonicalMessages?.();

@@ -439,7 +439,7 @@ export function useChatMessages(options: {
     }));
   }
 
-  async function sendMessage(content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds: string[] = [], inlinePluginIds: string[] = [], targetThread?: ChatThread, optimisticSkillsUsed: SkillReference[] = [], optimisticPluginsUsed: PluginReference[] = []): Promise<boolean> {
+  async function sendMessage(content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds: string[] = [], inlinePluginIds: string[] = [], targetThread?: ChatThread, optimisticSkillsUsed: SkillReference[] = [], optimisticPluginsUsed: PluginReference[] = [], captureContextTaxonomy = false): Promise<boolean> {
     const thread = options.activeThread ?? targetThread ?? null;
     if ((!content.trim() && attachments.length === 0) || !thread) return false;
 
@@ -497,6 +497,7 @@ export function useChatMessages(options: {
         reasoningEffort,
         memoryEnabled,
         toolsEnabled,
+        captureContextTaxonomy,
         skillIds,
         inlineSkillIds,
         inlinePluginIds,
@@ -541,7 +542,7 @@ export function useChatMessages(options: {
     }
   }
 
-  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort) {
+  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, captureContextTaxonomy = false) {
     const threadId = options.activeThread?.id;
     if (!threadId || isBusy(threadRunStates[threadId])) return;
     const requestId = crypto.randomUUID();
@@ -572,6 +573,7 @@ export function useChatMessages(options: {
         reasoningEffort,
         memoryEnabled,
         toolsEnabled,
+        captureContextTaxonomy,
         skillIds,
         messageId
       });
@@ -610,7 +612,7 @@ export function useChatMessages(options: {
     }
   }
 
-  async function editMessage(messageId: string, content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds?: string[], inlinePluginIds?: string[], optimisticSkillsUsed: SkillReference[] = [], optimisticPluginsUsed: PluginReference[] = []): Promise<boolean> {
+  async function editMessage(messageId: string, content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds?: string[], inlinePluginIds?: string[], optimisticSkillsUsed: SkillReference[] = [], optimisticPluginsUsed: PluginReference[] = [], captureContextTaxonomy = false): Promise<boolean> {
     const threadId = options.activeThread?.id;
     if ((!content.trim() && attachments.length === 0) || !threadId || isBusy(threadRunStates[threadId])) return false;
     const requestId = crypto.randomUUID();
@@ -648,6 +650,7 @@ export function useChatMessages(options: {
         reasoningEffort,
         memoryEnabled,
         toolsEnabled,
+        captureContextTaxonomy,
         skillIds,
         inlineSkillIds,
         inlinePluginIds,

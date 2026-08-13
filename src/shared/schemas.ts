@@ -144,6 +144,7 @@ export const chatSendRequestSchema = z.object({
   reasoningEffort: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
   memoryEnabled: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
+  captureContextTaxonomy: z.boolean().optional(),
   skillIds: z.array(z.string().min(1)).max(12).optional(),
   inlineSkillIds: z.array(z.string().min(1)).max(6).optional(),
   inlinePluginIds: z.array(z.string().min(1)).max(6).optional(),
@@ -160,6 +161,7 @@ export const chatRetryRequestSchema = z.object({
   reasoningEffort: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
   memoryEnabled: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
+  captureContextTaxonomy: z.boolean().optional(),
   skillIds: z.array(z.string().min(1)).max(12).optional(),
   messageId: z.string().min(1).optional()
 });
@@ -173,6 +175,7 @@ export const chatEditRequestSchema = z.object({
   reasoningEffort: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
   memoryEnabled: z.boolean().optional(),
   toolsEnabled: z.boolean().optional(),
+  captureContextTaxonomy: z.boolean().optional(),
   skillIds: z.array(z.string().min(1)).max(12).optional(),
   inlineSkillIds: z.array(z.string().min(1)).max(6).optional(),
   inlinePluginIds: z.array(z.string().min(1)).max(6).optional(),
@@ -203,6 +206,11 @@ export const chatQueueDeleteRequestSchema = z.object({
 });
 
 export const chatQueueSteerRequestSchema = chatQueueDeleteRequestSchema;
+
+export const chatContextTaxonomyCaptureUpdateRequestSchema = z.object({
+  threadId: z.string().min(1),
+  enabled: z.boolean()
+});
 
 export const askUserQuestionResponseSchema = z.object({
   id: z.string().min(1),

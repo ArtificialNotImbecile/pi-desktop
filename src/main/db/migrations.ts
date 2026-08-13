@@ -358,6 +358,25 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
   // launch for the same downgrade reason as the removals above.
   db.exec("DROP TABLE IF EXISTS web_search_settings;");
   markMigration(db, 40, "web access is a package, not a setting", now);
+  // Context taxonomy is an opt-in debug probe. Collapse the legacy append-only
+  // history to one rolling snapshot per thread, then keep that invariant in the
+  // schema as well as the repository write path.
+  db.exec(`
+    DELETE FROM context_captures
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY thread_id
+          ORDER BY captured_at DESC, rowid DESC
+        ) AS capture_rank
+        FROM context_captures
+      )
+      WHERE capture_rank > 1
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_context_captures_thread_latest
+      ON context_captures(thread_id);
+  `);
+  markMigration(db, 41, "rolling on-demand context taxonomy capture", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

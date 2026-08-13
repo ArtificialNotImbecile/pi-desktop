@@ -1,6 +1,7 @@
 import { app, ipcMain, type WebContents } from "electron";
 import type {
   AskUserQuestionPrompt,
+  ChatContextTaxonomyCaptureUpdateRequest,
   ChatEditRequest,
   ChatEditResponse,
   ChatQueueDeleteRequest,
@@ -20,13 +21,14 @@ import type {
   ChatStreamSettlement,
   ChatStreamMessage,
   ChatTimelineItem,
+  ContextTaxonomy,
   FileChangeCaptureInput,
   ReasoningEffort,
   SkillRecord,
   SkillReference,
   WebSearchResult
 } from "../../shared/ipc.js";
-import { chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSchema, chatQueueSteerRequestSchema, chatQueueUpdateRequestSchema, chatRetryRequestSchema, chatSendRequestSchema } from "../../shared/schemas.js";
+import { chatContextTaxonomyCaptureUpdateRequestSchema, chatEditRequestSchema, chatQueueDeleteRequestSchema, chatQueueRequestSchema, chatQueueSteerRequestSchema, chatQueueUpdateRequestSchema, chatRetryRequestSchema, chatSendRequestSchema } from "../../shared/schemas.js";
 import { WORKING_ACTIVITY, usingToolActivity, type WorkingActivity } from "../../shared/workingActivity.js";
 import { computeStreamDelta } from "../../shared/streamDelta.js";
 import { createChatStreamSettlement } from "../../shared/streamSettlement.js";
@@ -65,6 +67,7 @@ import type { WorkingRegistry } from "../services/workingRegistry.js";
 type ActiveRun = {
   threadId: string;
   abortController: AbortController;
+  captureContextTaxonomy: boolean;
   streamSettled: boolean;
   queueControls?: RuntimeQueueControls;
   queueReady: Promise<RuntimeQueueControls>;
@@ -85,6 +88,17 @@ export function registerChatIpc(context: IpcContext): void {
 
   ipcMain.handle("chat:cancel", (_event, requestId: string): boolean => {
     return working.stop(requestId);
+  });
+
+  ipcMain.handle("chat:contextTaxonomyCapture:update", (_event, input: ChatContextTaxonomyCaptureUpdateRequest): boolean => {
+    const request = chatContextTaxonomyCaptureUpdateRequestSchema.parse(input);
+    let updated = false;
+    for (const run of activeRuns.values()) {
+      if (run.threadId !== request.threadId) continue;
+      run.captureContextTaxonomy = request.enabled;
+      updated = true;
+    }
+    return updated;
   });
 
   ipcMain.handle("chat:queue", async (_event, request: ChatQueueRequest): Promise<ChatQueueResponse> => {
@@ -162,7 +176,7 @@ export function registerChatIpc(context: IpcContext): void {
       [],
       true
     );
-    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController, request.captureContextTaxonomy === true));
     working.start({ requestId, threadId: request.threadId });
 
     try {
@@ -306,7 +320,7 @@ export function registerChatIpc(context: IpcContext): void {
       settlementReplaceFromId
     );
     const modelContent = modelContentForMessage(lastUserMessage);
-    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController, request.captureContextTaxonomy === true));
     working.start({ requestId, threadId: request.threadId, activity: WORKING_ACTIVITY.preparingRetry });
 
     try {
@@ -354,6 +368,7 @@ export function registerChatIpc(context: IpcContext): void {
           cwd,
           attachments: lastUserMessage.attachments ?? [],
           toolsEnabled: request.toolsEnabled,
+          captureContextTaxonomy: request.captureContextTaxonomy,
           messages: retryPlan.contextMessages,
           sessionManager: piSession.manager,
           sessionMessageIds: retryPlan.contextMessageIds,
@@ -440,7 +455,7 @@ export function registerChatIpc(context: IpcContext): void {
       false,
       settlementReplaceFromId
     );
-    activeRuns.set(requestId, createActiveRun(request.threadId, abortController));
+    activeRuns.set(requestId, createActiveRun(request.threadId, abortController, request.captureContextTaxonomy === true));
     working.start({ requestId, threadId: request.threadId, activity: WORKING_ACTIVITY.preparingEdit });
 
     try {
@@ -524,6 +539,7 @@ export function registerChatIpc(context: IpcContext): void {
           cwd,
           attachments,
           toolsEnabled: request.toolsEnabled,
+          captureContextTaxonomy: request.captureContextTaxonomy,
           messages,
           sessionManager: piSession.manager,
           sessionMessageIds: storedMessages.map((message) => message.id),
@@ -583,7 +599,7 @@ export function registerChatIpc(context: IpcContext): void {
   });
 }
 
-function createActiveRun(threadId: string, abortController: AbortController): ActiveRun {
+function createActiveRun(threadId: string, abortController: AbortController, captureContextTaxonomy: boolean): ActiveRun {
   let resolveQueueReady: (controls: RuntimeQueueControls) => void = () => undefined;
   let rejectQueueReady: (error: Error) => void = () => undefined;
   const queueReady = new Promise<RuntimeQueueControls>((resolve, reject) => {
@@ -594,6 +610,7 @@ function createActiveRun(threadId: string, abortController: AbortController): Ac
   return {
     threadId,
     abortController,
+    captureContextTaxonomy,
     streamSettled: false,
     queueReady,
     resolveQueueReady,
@@ -900,16 +917,23 @@ function persistRuntimeGeneratedMessages(
       assistantMessages.push(lastAssistantMessage);
       persistedMessages.push(lastAssistantMessage);
     }
-    const captures = input.reply.contextTaxonomies?.length
-      ? input.reply.contextTaxonomies
-      : input.reply.contextTaxonomy
-        ? [input.reply.contextTaxonomy]
-        : [];
-    for (const taxonomy of captures) {
-      const taskIndex = taxonomy.providerRequest?.taskIndex ?? 1;
+    const taxonomy = input.reply.contextTaxonomies?.at(-1) ?? input.reply.contextTaxonomy;
+    if (taxonomy) {
+      // The capture extension tracks the active queued task without retaining
+      // any earlier payload. Legacy/fallback captures have no scope and belong
+      // to the last assistant produced by the run.
+      const taskIndex = taxonomy.providerRequest?.taskIndex ?? Math.max(1, assistantMessages.length);
       const message = assistantMessages[Math.min(Math.max(0, taskIndex - 1), assistantMessages.length - 1)] ?? lastAssistantMessage;
-      if (!message) continue;
-      db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy });
+      const latestTaxonomy: ContextTaxonomy = {
+        ...taxonomy,
+        providerRequest: {
+          index: 1,
+          count: 1,
+          taskIndex,
+          policy: "task-capture"
+        }
+      };
+      if (message) db.addContextCapture({ threadId: input.threadId, messageId: message.id, runId: input.runId, taxonomy: latestTaxonomy });
     }
     persistFileChangeCaptures(db, {
       threadId: input.threadId,
@@ -1110,6 +1134,10 @@ async function runTracedGeneration(
         if (!canEmitRunUpdate(input.requestId, input.threadId)) return;
         emitQueueUpdate(input.sender, input.requestId, input.threadId, queue);
         input.working.queue(input.requestId, queueCount(queue));
+      },
+      shouldCaptureContextTaxonomy: () => {
+        const run = activeRuns.get(input.requestId);
+        return Boolean(run && run.threadId === input.threadId && run.captureContextTaxonomy);
       },
       onFileChangeCapture: (capture) => observedFileChanges.push(capture)
     })).catch((error: unknown) => {

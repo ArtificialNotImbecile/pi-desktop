@@ -49,6 +49,10 @@ export function addContextCapture(db: SqlDatabase, input: {
   const rawState: ContextRawPayloadState = raw ? (taxonomy.rawState ?? "complete") : "unavailable";
   const rawSha256 = raw ? createHash("sha256").update(raw).digest("hex") : null;
   const fallbackTaxonomy = raw ? undefined : withoutRawPayload(taxonomy);
+  // Context taxonomy is a rolling debug snapshot, not conversation history.
+  // Remove the previous payload before inserting so each thread owns at most
+  // one compressed raw request even if a caller accidentally supplies several.
+  db.prepare("DELETE FROM context_captures WHERE thread_id = ?").run(input.threadId);
   db.prepare(`
     INSERT INTO context_captures (
       id, thread_id, message_id, run_id, task_index, request_index, request_count,

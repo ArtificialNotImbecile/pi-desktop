@@ -839,6 +839,7 @@ export type ChatSendRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
@@ -863,6 +864,7 @@ export type ChatRetryRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   messageId?: string;
 };
@@ -883,6 +885,7 @@ export type ChatEditRequest = {
   reasoningEffort?: ReasoningEffort;
   memoryEnabled?: boolean;
   toolsEnabled?: boolean;
+  captureContextTaxonomy?: boolean;
   skillIds?: string[];
   inlineSkillIds?: string[];
   inlinePluginIds?: string[];
@@ -928,6 +931,11 @@ export type ChatQueueSteerRequest = {
 
 export type ChatQueueResponse = {
   queue: ChatQueueState;
+};
+
+export type ChatContextTaxonomyCaptureUpdateRequest = {
+  threadId: string;
+  enabled: boolean;
 };
 
 export type PickedPath = {
@@ -1288,6 +1296,7 @@ export type JasmineApi = {
   updateQueuedChatMessage(request: ChatQueueUpdateRequest): Promise<ChatQueueResponse>;
   deleteQueuedChatMessage(request: ChatQueueDeleteRequest): Promise<ChatQueueResponse>;
   steerQueuedChatMessage(request: ChatQueueSteerRequest): Promise<ChatQueueResponse>;
+  updateChatContextTaxonomyCapture(request: ChatContextTaxonomyCaptureUpdateRequest): Promise<boolean>;
   cancelChatMessage(requestId: string): Promise<boolean>;
   answerAskUserQuestion(request: AskUserQuestionResponse): Promise<void>;
   answerPermissionApproval(request: PermissionApprovalResponse): Promise<void>;

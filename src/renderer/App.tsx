@@ -14,6 +14,7 @@ import { useActivity } from "./hooks/useActivity";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useCommandPaletteCommands } from "./hooks/useCommandPaletteCommands";
 import { useComposer } from "./hooks/useComposer";
+import { useContextTaxonomyCapture } from "./hooks/useContextTaxonomyCapture";
 import { useFloatingSurfaceDismissal } from "./hooks/useFloatingSurfaceDismissal";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useMemories } from "./hooks/useMemories";
@@ -147,6 +148,12 @@ function App(props: { initialAppSettings: AppSettings }) {
     [activeRightPanelTabId, rightPanelTabs]
   );
   const activeRightPanelMode = activeRightPanelTab?.mode ?? null;
+  const captureContextTaxonomy = useContextTaxonomyCapture({
+    threadId: threads.activeThreadId,
+    activePanelMode: activeRightPanelMode,
+    rightPanelCollapsed,
+    chatPageRendered: navigation.route.name !== "working"
+  });
   const activeScopeProjectId = threads.activeThread?.projectId ?? activeProjectId;
   const activeProject = useMemo(
     () => projects.projects.find((project) => project.id === activeScopeProjectId) ?? null,
@@ -169,7 +176,7 @@ function App(props: { initialAppSettings: AppSettings }) {
         skillChoices: inlineSkillChoices,
         pluginChoices: plugins.packages
       });
-      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread, skillsUsed, pluginsUsed);
+      const sent = await chat.sendMessage(content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, targetThread, skillsUsed, pluginsUsed, captureContextTaxonomy);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -186,7 +193,7 @@ function App(props: { initialAppSettings: AppSettings }) {
         skillChoices: inlineSkillChoices,
         pluginChoices: plugins.packages
       });
-      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, skillsUsed, pluginsUsed);
+      const sent = await chat.editMessage(messageId, content, providers.activeProvider?.id, attachments, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, inlineSkillIds, inlinePluginIds, skillsUsed, pluginsUsed, captureContextTaxonomy);
       if (sent) {
         setInlineSkillIds([]);
       }
@@ -407,7 +414,7 @@ function App(props: { initialAppSettings: AppSettings }) {
 
   function retryMessage(message?: ChatMessage) {
     const messageId = message?.status === "error" ? undefined : message?.id;
-    void chat.retryLastMessage(providers.activeProvider?.id, messageId, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort);
+    void chat.retryLastMessage(providers.activeProvider?.id, messageId, providers.activeProvider?.defaultModel, memoryEnabled, toolsEnabled, skills.selectedSkillIds, reasoningEffort, captureContextTaxonomy);
   }
 
   function selectReasoningEffort(effort: ReasoningEffort) {
