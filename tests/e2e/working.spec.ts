@@ -127,6 +127,28 @@ test.describe("Working task center", () => {
     await betaTask.locator(".working-task-main").click();
     await expect.poll(() => navigationPath(page)).toContain(setup.threads[1].id);
 
+    // The registry persists terminal activity in English whatever the UI
+    // language is, and the attention amber is not part of the appearance
+    // settings, so a Chinese UI on a dark surface is where both would break: a
+    // finished row printing a stored English word instead of its duration, and
+    // a Needs you tile keeping its near-white background under light ink.
+    await page.evaluate(() => window.jasmine.updateAppSettings({ language: "zh", appearance: { surface: "#101216", ink: "#f2f4f8" } }));
+    await page.reload();
+    await page.waitForSelector(".app-shell");
+    await page.getByRole("button", { name: /^Working/ }).click();
+    const failedRow = page.locator(".working-task.status-failed");
+    await expect(failedRow).toContainText("耗时");
+    await expect(failedRow).not.toContainText("Failed");
+    const attentionPalette = await page.evaluate(() => {
+      const styles = getComputedStyle(document.documentElement);
+      return {
+        color: styles.getPropertyValue("--attention").trim(),
+        soft: styles.getPropertyValue("--attention-soft").trim()
+      };
+    });
+    expect(attentionPalette.color).toBe("#e9a13b");
+    expect(Number.parseInt(attentionPalette.soft.slice(1, 3), 16)).toBeLessThan(80);
+
     await page.evaluate(async ({ threadId, projectId }) => {
       await window.jasmine.deleteThread(threadId);
       await window.jasmine.removeProject({ id: projectId });

@@ -7,7 +7,11 @@ import { useI18n } from "../../i18n";
 const ACTIVE_STATUSES: WorkingTaskStatus[] = ["running", "waiting_user", "stopping"];
 const ATTENTION_STATUSES: WorkingTaskStatus[] = ["waiting_user", "failed"];
 const DONE_STATUSES: WorkingTaskStatus[] = ["completed", "cancelled", "interrupted"];
-const CLEARABLE_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelled", "interrupted"];
+const TERMINAL_STATUSES: WorkingTaskStatus[] = ["completed", "failed", "cancelled", "interrupted"];
+// The registry persists these activity strings in English whatever the UI
+// language is, so recognizing "this only repeats the status" has to compare
+// against them rather than against the translated label.
+const GENERIC_TERMINAL_ACTIVITY = new Set(["completed", "failed", "cancelled"]);
 // Finished runs are history: they stay one click away instead of pushing the
 // tasks that still need a decision off the first screen.
 const DONE_PREVIEW_COUNT = 5;
@@ -39,7 +43,7 @@ export function WorkingPage(props: {
   }, [props.snapshot.activeCount]);
 
   const empty = props.snapshot.items.length === 0;
-  const clearableCount = props.snapshot.items.filter((task) => CLEARABLE_STATUSES.includes(task.status)).length;
+  const clearableCount = props.snapshot.items.filter((task) => TERMINAL_STATUSES.includes(task.status)).length;
   const waitingCount = groups.attention.filter((task) => task.status === "waiting_user").length;
   const failedCount = groups.attention.length - waitingCount;
   const queuedCount = props.snapshot.items.reduce((total, task) => total + task.queueCount, 0);
@@ -260,9 +264,8 @@ function terminalLabel(status: WorkingTaskStatus, t: ReturnType<typeof useI18n>[
 // took. Activity text that only repeats the status is dropped.
 function detailText(task: WorkingTask, t: ReturnType<typeof useI18n>["t"]): string {
   const activity = task.activity.trim();
-  const repeatsStatus = activity.toLowerCase() === statusLabel(task.status, t).toLowerCase();
-  if (!DONE_STATUSES.includes(task.status) && task.status !== "failed") return activity;
-  if (activity && !repeatsStatus) return activity;
+  if (!TERMINAL_STATUSES.includes(task.status)) return activity;
+  if (activity && !GENERIC_TERMINAL_ACTIVITY.has(activity.toLowerCase())) return activity;
   const duration = taskDuration(task);
   return duration ? t("working.took", { duration }) : "";
 }

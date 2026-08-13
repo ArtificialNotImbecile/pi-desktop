@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { AppearanceSettings } from "../../shared/ipc";
-import { DEFAULT_APPEARANCE } from "../../shared/theme";
+import { ATTENTION_ON_DARK, ATTENTION_ON_LIGHT, DEFAULT_APPEARANCE } from "../../shared/theme";
 
 export const defaultAppearance: AppearanceSettings = {
   ...DEFAULT_APPEARANCE,
@@ -28,6 +28,9 @@ export function buildThemeVariables(appearance: AppearanceSettings): Record<stri
   const success = parseHex(appearance.success, defaultAppearance.success);
   const danger = parseHex(appearance.danger, defaultAppearance.danger);
   const defaultTheme = isDefaultAppearance(appearance);
+  // A dark surface needs the lighter amber; mixing the light one toward the
+  // ground would only bury it.
+  const attention = parseHex(luminance(surface) < 0.5 ? ATTENTION_ON_DARK : ATTENTION_ON_LIGHT, ATTENTION_ON_LIGHT);
 
   return {
     "--accent": toHex(accent),
@@ -52,6 +55,10 @@ export function buildThemeVariables(appearance: AppearanceSettings): Record<stri
     "--accent-line": defaultTheme ? "#b9dcff" : toHex(mix(surface, accent, 0.32)),
     "--success-soft": defaultTheme ? "#effaf3" : toHex(mix(surface, success, 0.08)),
     "--danger-soft": defaultTheme ? "#fff4f4" : toHex(mix(surface, danger, 0.07)),
+    "--attention": toHex(attention),
+    "--attention-rgb": toRgbTriplet(attention),
+    "--attention-soft": defaultTheme ? "#fff6e9" : toHex(mix(surface, attention, 0.1)),
+    "--attention-line": defaultTheme ? "#f2d3a4" : toHex(mix(surface, attention, 0.32)),
     "--on-accent": luminance(accent) < 0.55 ? "#ffffff" : "#0d0d0d",
     "--on-ink": luminance(ink) < 0.55 ? "#ffffff" : "#0d0d0d",
     "--on-danger": luminance(danger) < 0.55 ? "#ffffff" : "#0d0d0d",
