@@ -347,7 +347,7 @@ function AppearanceSettingsPage(props: {
           <strong>{t("empty.title")}</strong>
           <small>{t("settings.appearance.previewCopy")}</small>
         </div>
-        <Button variant="primary">Primary</Button>
+        <Button variant="primary">{t("settings.appearance.previewPrimary")}</Button>
         <span className="appearance-preview-state success">{t("app.saved")}</span>
         <span className="appearance-preview-state danger">{t("app.saveFailed")}</span>
       </section>

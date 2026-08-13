@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../../i18n";
 import type { CodeBlockKind } from "./codeLanguage";
 import { normalizeCodeLanguage } from "./codeLanguage";
 
@@ -19,6 +20,7 @@ export function ShikiCodeBlock(props: {
   onCopy?(code: string): void;
   showCopy?: boolean;
 }) {
+  const { t } = useI18n();
   const code = props.code.replace(/\n$/, "");
   const language = normalizeCodeLanguage(props.language, props.kind, code);
   const [highlighted, setHighlighted] = useState<HighlightedCode | null>(null);
@@ -86,8 +88,8 @@ export function ShikiCodeBlock(props: {
       <figcaption>
         <span>{props.title || language}</span>
         {props.showCopy !== false ? (
-          <button type="button" onClick={copy} aria-label="Copy code block" title="Copy code block">
-            {copied ? "Copied" : "Copy"}
+          <button type="button" onClick={copy} aria-label={t("code.copyBlock")} title={t("code.copyBlock")}>
+            {copied ? t("code.copied") : t("code.copy")}
           </button>
         ) : null}
       </figcaption>

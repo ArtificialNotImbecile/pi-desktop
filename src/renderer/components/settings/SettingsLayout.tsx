@@ -1,6 +1,7 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { Button, type ButtonVariant, SaveState, type SaveStateValue, Select, StatusPill, TextInput, Toolbar, classNames } from "../ui";
 import { EyeIcon, EyeOffIcon, FolderIcon } from "../icons/Icons";
+import { useI18n } from "../../i18n";
 
 export function SettingsPage(props: {
   children: ReactNode;
@@ -60,6 +61,7 @@ export function SettingsActions(props: {
   savingLabel?: string;
   state?: SaveStateValue;
 }) {
+  const { t } = useI18n();
   const state = props.state || "idle";
   return (
     <div className={classNames("settings-actions", "inline-actions", "ui-settings-actions", props.className)}>
@@ -73,7 +75,7 @@ export function SettingsActions(props: {
           style={{ backgroundColor: "var(--accent)", borderColor: "var(--accent)" }}
           onClick={props.onSave}
         >
-          {state === "saving" ? props.savingLabel || "Saving..." : props.dirty ? props.saveLabel || "Save" : props.savedLabel || "Saved"}
+          {state === "saving" ? props.savingLabel || t("app.savingDots") : props.dirty ? props.saveLabel || t("app.save") : props.savedLabel || t("app.saved")}
         </Button>
       ) : null}
     </div>

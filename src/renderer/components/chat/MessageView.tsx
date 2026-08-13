@@ -395,13 +395,14 @@ function AttachmentPreviewGrid(props: {
   attachments: NonNullable<ChatMessage["attachments"]>;
   onPreview(attachment: NonNullable<ChatMessage["attachments"]>[number]): void;
 }) {
+  const { t } = useI18n();
   const imageAttachments = props.attachments.filter((item) => item.isImage && item.previewDataUrl);
   if (imageAttachments.length === 0) return null;
 
   return (
     <div className="message-image-grid">
       {imageAttachments.map((item) => (
-        <button key={item.path} type="button" onClick={() => props.onPreview(item)} aria-label={`Preview ${item.name}`}>
+        <button key={item.path} type="button" onClick={() => props.onPreview(item)} aria-label={t("message.previewAttachment", { name: item.name })}>
           <img src={item.previewDataUrl} alt={item.name} title={item.name} />
         </button>
       ))}

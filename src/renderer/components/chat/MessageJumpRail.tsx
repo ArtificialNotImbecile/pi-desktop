@@ -1,8 +1,10 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../../../shared/ipc";
+import { useI18n } from "../../i18n";
 import { MenuSurface } from "../ui";
 
 export const MessageJumpRail = memo(function MessageJumpRail(props: { messages: ChatMessage[]; onNavigate(): void }) {
+  const { t } = useI18n();
   const railRef = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const nextUserMessages = props.messages.filter(isNavigableUserMessage);
@@ -201,7 +203,7 @@ export const MessageJumpRail = memo(function MessageJumpRail(props: { messages: 
     <nav
       ref={railRef}
       className={`message-jump-rail ${open ? "open" : ""}`}
-      aria-label="User message navigation"
+      aria-label={t("message.userNavigation")}
       onMouseEnter={() => setOpen(true)}
     >
       <div className="message-jump-marks" aria-hidden="true">
@@ -221,7 +223,7 @@ export const MessageJumpRail = memo(function MessageJumpRail(props: { messages: 
         ref={triggerRef}
         className="message-jump-trigger"
         type="button"
-        aria-label="Open user message navigation"
+        aria-label={t("message.openUserNavigation")}
         aria-expanded={open}
         onClick={() => setOpen(true)}
       />

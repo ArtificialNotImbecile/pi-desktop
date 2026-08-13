@@ -9,7 +9,7 @@ import { MenuItem, MenuSurface } from "../ui";
 import { TaxonomyView } from "./ContextTaxonomyView";
 import { useI18n } from "../../i18n";
 import { useThrottledValue } from "../../hooks/useThrottledValue";
-import { rightPanelModeLabel, rightPanelModes, type RightPanelMode, type RightPanelTab } from "../../navigation/routes";
+import { rightPanelModes, type RightPanelMode, type RightPanelTab } from "../../navigation/routes";
 import { ArtifactsPane } from "./ArtifactsPane";
 export type { RightPanelMode } from "../../navigation/routes";
 
@@ -33,7 +33,9 @@ export function ChatRightPanel(props: {
   onClose(tabId: string): void;
   onCollapse(): void;
 }) {
+  const { t } = useI18n();
   const activeTab = props.openTabs.find((tab) => tab.id === props.activeTabId) ?? null;
+  const activeTabTitle = activeTab ? localizedTabTitle(activeTab, t) : null;
   const activeMode = activeTab?.mode ?? null;
   const hasPanel = props.openTabs.length > 0 && activeTab !== null;
   const expanded = hasPanel && !props.collapsed;
@@ -47,17 +49,17 @@ export function ChatRightPanel(props: {
 
   return (
     <>
-      <div className={`right-panel-tabs ${expanded ? "panel-open" : ""}`} aria-label="Right panel shortcuts">
-        <PanelButton mode="terminal" active={activeMode === "terminal" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "terminal")} label="Terminal" onCollapse={props.onCollapse} onSelect={props.onSelect}><TerminalIcon /></PanelButton>
-        <PanelButton mode="artifacts" active={activeMode === "artifacts" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "artifacts")} label="Artifacts" onCollapse={props.onCollapse} onSelect={props.onSelect}><FolderIcon /></PanelButton>
-        <PanelButton mode="context" active={activeMode === "context" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "context")} label="Context taxonomy" onCollapse={props.onCollapse} onSelect={props.onSelect}><SlidersIcon /></PanelButton>
+      <div className={`right-panel-tabs ${expanded ? "panel-open" : ""}`} aria-label={t("rightPanel.shortcuts")}>
+        <PanelButton mode="terminal" active={activeMode === "terminal" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "terminal")} label={panelModeLabel("terminal", t)} onCollapse={props.onCollapse} onSelect={props.onSelect}><TerminalIcon /></PanelButton>
+        <PanelButton mode="artifacts" active={activeMode === "artifacts" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "artifacts")} label={panelModeLabel("artifacts", t)} onCollapse={props.onCollapse} onSelect={props.onSelect}><FolderIcon /></PanelButton>
+        <PanelButton mode="context" active={activeMode === "context" && !props.collapsed} open={props.openTabs.some((tab) => tab.mode === "context")} label={panelModeLabel("context", t)} onCollapse={props.onCollapse} onSelect={props.onSelect}><SlidersIcon /></PanelButton>
       </div>
       {hasPanel && activeTab && (
-        <aside className={`chat-right-panel ${props.collapsed ? "chat-right-panel--collapsed" : ""}`} aria-hidden={props.collapsed} aria-label={activeTab.title}>
+        <aside className={`chat-right-panel ${props.collapsed ? "chat-right-panel--collapsed" : ""}`} aria-hidden={props.collapsed} aria-label={activeTabTitle ?? activeTab.title}>
           <div
             className="right-panel-resize-handle"
             role="separator"
-            aria-label="Resize right panel"
+            aria-label={t("rightPanel.resize")}
             aria-orientation="vertical"
             aria-valuemin={240}
             aria-valuemax={720}
@@ -67,8 +69,10 @@ export function ChatRightPanel(props: {
             onPointerDown={(event) => beginPanelResize(event, props.onResize)}
           />
           <header className="chat-right-panel-header">
-            <div className="right-panel-tabbar" role="tablist" aria-label="Open right panels">
-              {props.openTabs.map((tab) => (
+            <div className="right-panel-tabbar" role="tablist" aria-label={t("rightPanel.openTabs")}>
+              {props.openTabs.map((tab) => {
+                const title = localizedTabTitle(tab, t);
+                return (
                 <div className={`right-panel-tab ${props.activeTabId === tab.id ? "active" : ""}`} key={tab.id}>
                   <button
                     type="button"
@@ -78,19 +82,20 @@ export function ChatRightPanel(props: {
                     onClick={() => props.onSelectTab(tab.id)}
                   >
                     {panelIcon(tab.mode)}
-                    <span>{tab.title}</span>
+                    <span>{title}</span>
                   </button>
                   <button
                     className="right-panel-tab-close"
                     type="button"
-                    aria-label={`Close ${tab.title} tab`}
-                    title={`Close ${tab.title} tab`}
+                    aria-label={t("rightPanel.closeTab", { title })}
+                    title={t("rightPanel.closeTab", { title })}
                     onClick={() => props.onClose(tab.id)}
                   >
                     x
                   </button>
                 </div>
-              ))}
+                );
+              })}
               <div className="right-panel-add-tab-wrap">
                 <button
                   ref={addButtonRef}
@@ -98,16 +103,16 @@ export function ChatRightPanel(props: {
                   className="right-panel-add-tab"
                   aria-expanded={addMenuOpen}
                   aria-haspopup="menu"
-                  aria-label="Add panel"
+                  aria-label={t("rightPanel.add")}
                   disabled={addable.length === 0}
-                  title={addable.length ? "Add panel" : "All panels are open"}
+                  title={addable.length ? t("rightPanel.add") : t("rightPanel.allOpen")}
                   onClick={() => setAddMenuOpen((open) => !open)}
                 >
                   <PlusIcon />
                 </button>
                 <MenuSurface
                   anchorRef={addButtonRef}
-                  aria-label="Add panel menu"
+                  aria-label={t("rightPanel.addMenu")}
                   className="right-panel-add-menu"
                   minWidth={200}
                   onOpenChange={setAddMenuOpen}
@@ -125,14 +130,14 @@ export function ChatRightPanel(props: {
                         props.onAdd(mode);
                       }}
                     >
-                      {rightPanelModeLabel(mode)}
+                      {panelModeLabel(mode, t)}
                     </MenuItem>
                   ))}
                 </MenuSurface>
               </div>
             </div>
             <div className="right-panel-header-actions">
-              <button type="button" className="right-panel-collapse" onClick={props.onCollapse} aria-label="Collapse panel" title="Collapse panel"><MinimizeIcon /></button>
+              <button type="button" className="right-panel-collapse" onClick={props.onCollapse} aria-label={t("rightPanel.collapse")} title={t("rightPanel.collapse")}><MinimizeIcon /></button>
             </div>
           </header>
           {props.openTabs.map((tab) => (
@@ -201,11 +206,12 @@ function clampPanelWidth(width: number, pageWidth: number) {
 }
 
 function PanelButton(props: { mode: RightPanelMode; active: boolean; open: boolean; label: string; children: ReactNode; onCollapse(): void; onSelect(mode: RightPanelMode): void }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       className={`${props.active ? "active" : ""} ${props.open ? "open" : ""}`}
-      aria-label={`Open ${props.label}`}
+      aria-label={t("rightPanel.open", { panel: props.label })}
       title={props.label}
       onClick={() => {
         if (props.active) {
@@ -218,6 +224,19 @@ function PanelButton(props: { mode: RightPanelMode; active: boolean; open: boole
       {props.children}
     </button>
   );
+}
+
+function panelModeLabel(mode: RightPanelMode, t: ReturnType<typeof useI18n>["t"]): string {
+  if (mode === "terminal") return t("rightPanel.terminal");
+  if (mode === "artifacts") return t("rightPanel.artifacts");
+  return t("rightPanel.context");
+}
+
+function localizedTabTitle(tab: RightPanelTab, t: ReturnType<typeof useI18n>["t"]): string {
+  const base = panelModeLabel(tab.mode, t);
+  if (tab.mode !== "terminal") return base;
+  const suffix = /^Terminal( \d+)$/.exec(tab.title)?.[1];
+  return suffix ? `${base}${suffix}` : base;
 }
 
 function TerminalPane(props: { active: boolean; activeProjectId: string | null; activeThreadId: string | null }) {
@@ -463,13 +482,13 @@ function TerminalPane(props: { active: boolean; activeProjectId: string | null; 
     <div className="terminal-pane">
       <div className="terminal-meta">
         <span>{status}</span>
-        <button type="button" onClick={session ? () => void stop() : () => void start()}>{session ? "Stop" : "Start"}</button>
+        <button type="button" onClick={session ? () => void stop() : () => void start()}>{session ? t("terminal.stop") : t("terminal.start")}</button>
       </div>
       <div
         ref={hostRef}
         className="terminal-output terminal-emulator"
         role="textbox"
-        aria-label="Terminal command"
+        aria-label={t("terminal.command")}
         tabIndex={0}
         onClick={() => terminalRef.current?.focus()}
         onContextMenu={openContextMenu}

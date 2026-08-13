@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
+  AppLanguage,
   ChatMessage,
   FileChangeCaptureSummary,
   FileChangeDetail,
@@ -11,6 +12,7 @@ import type {
 } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { useThrottledValue } from "../../hooks/useThrottledValue";
+import { localeTag, useI18n } from "../../i18n";
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, InfoIcon } from "../icons/Icons";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
@@ -19,6 +21,7 @@ type CaptureAlert = { tone: "warning" | "danger"; label: string };
 type DetailView = "diff" | "after" | "before";
 
 export function ArtifactsPane(props: { threadId: string | null; messages: ChatMessage[] }) {
+  const { t } = useI18n();
   const [data, setData] = useState<ThreadArtifactsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -130,12 +133,12 @@ export function ArtifactsPane(props: { threadId: string | null; messages: ChatMe
         <span className="artifact-pane-turns">in {captures.length} {captures.length === 1 ? "turn" : "turns"}</span>
         <Button
           aria-expanded={infoOpen}
-          aria-label="About file change capture"
+          aria-label={t("artifacts.aboutCapture")}
           className="artifact-icon-button"
           leftIcon={<InfoIcon />}
           onClick={() => setInfoOpen((open) => !open)}
           size="sm"
-          title="About file change capture"
+          title={t("artifacts.aboutCapture")}
           variant="quiet"
         />
       </div>
@@ -156,10 +159,10 @@ export function ArtifactsPane(props: { threadId: string | null; messages: ChatMe
       </div>
       <Dialog
         className="artifact-detail-dialog"
-        closeLabel="Close"
+        closeLabel={t("app.close")}
         onClose={() => setSelection(null)}
         open={selectionMatchesThread}
-        title={visibleDetail ? fileName(visibleDetail.relativePath || visibleDetail.path) : "File change"}
+        title={visibleDetail ? fileName(visibleDetail.relativePath || visibleDetail.path) : t("artifacts.fileChange")}
       >
         {detailLoading ? <p className="panel-empty">Loading file snapshot...</p> : null}
         {detailError ? <p className="artifact-detail-error" role="alert">{detailError}</p> : null}
@@ -178,12 +181,13 @@ function CaptureGroup(props: {
   onToggle(): void;
   onToggleCoverage(): void;
 }) {
+  const { language, t } = useI18n();
   const capture = props.capture;
   const counts = statusCounts(capture.changes.map((change) => change.status));
-  const alert = captureAlert(capture);
-  const absoluteTime = formatTimestamp(capture.completedAt);
+  const alert = captureAlert(capture, t);
+  const absoluteTime = formatTimestamp(capture.completedAt, language);
   return (
-    <section className="artifact-capture" aria-label={`File changes captured ${absoluteTime}`}>
+    <section className="artifact-capture" aria-label={t("artifacts.capturedAt", { time: absoluteTime })}>
       <header className="artifact-capture-header">
         <Button
           aria-expanded={props.open}
@@ -194,7 +198,7 @@ function CaptureGroup(props: {
           variant="quiet"
         >
           <span className="artifact-capture-chevron" aria-hidden="true">{props.open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-          <span className="artifact-capture-when">{formatRelativeTime(capture.completedAt, props.now)}</span>
+          <span className="artifact-capture-when">{formatRelativeTime(capture.completedAt, props.now, language, t)}</span>
           <StatusTally counts={counts} />
         </Button>
         {alert ? (
@@ -203,7 +207,7 @@ function CaptureGroup(props: {
             className={`artifact-coverage-chip artifact-coverage-chip--${alert.tone}`}
             onClick={props.onToggleCoverage}
             size="sm"
-            title="Show capture coverage"
+            title={t("artifacts.showCoverage")}
             variant="quiet"
           >
             {alert.label}
@@ -217,7 +221,10 @@ function CaptureGroup(props: {
             <Button
               className={`artifact-change-row artifact-change-row--${change.status}`}
               key={change.id}
-              aria-label={`Open ${change.status} file ${change.relativePath || change.path}`}
+              aria-label={t("artifacts.openFile", {
+                status: artifactStatusLabel(change.status, t),
+                path: change.relativePath || change.path
+              })}
               onClick={() => props.onOpen(change.id)}
               size="sm"
               title={change.relativePath || change.path}
@@ -289,6 +296,7 @@ function CaptureBasisNote(props: { captures: FileChangeCaptureSummary[] }) {
 }
 
 function ArtifactDetailView(props: { change: FileChangeDetail; capture: FileChangeCaptureSummary | null }) {
+  const { t } = useI18n();
   const change = props.change;
   const views = availableViews(change);
   const [view, setView] = useState<DetailView>(views[0] ?? "diff");
@@ -302,7 +310,7 @@ function ArtifactDetailView(props: { change: FileChangeDetail; capture: FileChan
         {directory ? <span className="artifact-detail-separator" aria-hidden="true">·</span> : null}
         <RevisionFacts change={change} capture={props.capture} />
         {views.length > 1 ? (
-          <div className="artifact-detail-views" role="group" aria-label="Preview mode">
+          <div className="artifact-detail-views" role="group" aria-label={t("artifacts.previewMode")}>
             {views.map((candidate) => (
               <Button
                 aria-pressed={candidate === active}
@@ -312,13 +320,13 @@ function ArtifactDetailView(props: { change: FileChangeDetail; capture: FileChan
                 size="sm"
                 variant="quiet"
               >
-                {candidate === "diff" ? "Diff" : candidate === "after" ? "After" : "Before"}
+                {t(`artifacts.view.${candidate}`)}
               </Button>
             ))}
           </div>
         ) : null}
         <Button
-          aria-label="Copy full path"
+          aria-label={t("artifacts.copyFullPath")}
           className="artifact-icon-button"
           leftIcon={<CopyIcon />}
           onClick={() => void copyPath(change.path)}
@@ -407,17 +415,18 @@ function ImageChangePreview(props: { before?: FileChangeRevision; after?: FileCh
 }
 
 function UnifiedDiff(props: { diff: string; truncated: boolean }) {
+  const { t } = useI18n();
   const rows = parseUnifiedDiff(props.diff);
   const renderedRows = rows.slice(0, 5_000);
   const renderTruncated = renderedRows.length < rows.length;
   return (
     <div className="artifact-diff-wrap">
-      <table className="artifact-diff" aria-label="Unified file diff">
+      <table className="artifact-diff" aria-label={t("artifacts.unifiedDiff")}>
         <tbody>
           {renderedRows.map((row, index) => (
             <tr className={`artifact-diff-line artifact-diff-line--${row.kind}`} key={`${index}:${row.text}`}>
-              <td className="artifact-diff-number" aria-label={row.oldLine === undefined ? undefined : `Old line ${row.oldLine}`}>{row.oldLine ?? ""}</td>
-              <td className="artifact-diff-number" aria-label={row.newLine === undefined ? undefined : `New line ${row.newLine}`}>{row.newLine ?? ""}</td>
+              <td className="artifact-diff-number" aria-label={row.oldLine === undefined ? undefined : t("artifacts.oldLine", { line: row.oldLine })}>{row.oldLine ?? ""}</td>
+              <td className="artifact-diff-number" aria-label={row.newLine === undefined ? undefined : t("artifacts.newLine", { line: row.newLine })}>{row.newLine ?? ""}</td>
               <td className="artifact-diff-code"><code>{row.text || " "}</code></td>
             </tr>
           ))}
@@ -478,14 +487,17 @@ function parseUnifiedDiff(diff: string): DiffRow[] {
 }
 
 function StatusGlyph(props: { status: FileChangeStatus }) {
+  const { t } = useI18n();
   const label = props.status === "added" ? "A" : props.status === "modified" ? "M" : "D";
-  return <span className={`artifact-status artifact-status--${props.status}`} aria-label={props.status} title={props.status}>{label}</span>;
+  const status = artifactStatusLabel(props.status, t);
+  return <span className={`artifact-status artifact-status--${props.status}`} aria-label={status} title={status}>{label}</span>;
 }
 
 function StatusTally(props: { counts: ReturnType<typeof statusCounts> }) {
+  const { t } = useI18n();
   const counts = props.counts;
   return (
-    <span className="artifact-tally" aria-label={`${counts.added} added, ${counts.modified} modified, ${counts.deleted} deleted`}>
+    <span className="artifact-tally" aria-label={t("artifacts.statusCounts", counts)}>
       {counts.added > 0 ? <span className="added">+{counts.added}</span> : null}
       {counts.modified > 0 ? <span className="modified">~{counts.modified}</span> : null}
       {counts.deleted > 0 ? <span className="deleted">-{counts.deleted}</span> : null}
@@ -499,11 +511,12 @@ function StatusTally(props: { counts: ReturnType<typeof statusCounts> }) {
  * content — so it stays silent instead of falling back to the whole file size.
  */
 function ChangeStat(props: { change: FileChangeSummary }) {
+  const { t } = useI18n();
   const stats = props.change.lineStats;
   if (stats) {
     if (stats.added === 0 && stats.deleted === 0) return null;
     return (
-      <span className="artifact-change-stat" title={`${stats.added} added, ${stats.deleted} removed`}>
+      <span className="artifact-change-stat" title={t("artifacts.lineCounts", { added: stats.added, deleted: stats.deleted })}>
         {stats.added > 0 ? <span className="added">+{stats.added}</span> : null}
         {stats.deleted > 0 ? <span className="deleted">−{stats.deleted}</span> : null}
       </span>
@@ -524,13 +537,18 @@ function byteWeight(change: FileChangeSummary): ReactNode {
   return <span className={delta > 0 ? "added" : "deleted"}>{delta > 0 ? "+" : "−"}{formatBytes(Math.abs(delta))}</span>;
 }
 
-function captureAlert(capture: FileChangeCaptureSummary): CaptureAlert | null {
+export function captureAlert(capture: FileChangeCaptureSummary, t: ReturnType<typeof useI18n>["t"]): CaptureAlert | null {
   const coverage = capture.coverage;
-  if (coverage.status === "unsupported") return { tone: "danger", label: "Tracking unavailable" };
-  if (coverage.status === "failed") return { tone: "danger", label: "Tracking failed" };
-  if (coverage.status === "partial") return { tone: "warning", label: "Partial coverage" };
-  if (coverage.trackingMode === "managed-tools-only" && coverage.bashInvoked) return { tone: "warning", label: "Shell not tracked" };
-  if (capture.warnings.length > 0) return { tone: "warning", label: `${capture.warnings.length} ${capture.warnings.length === 1 ? "warning" : "warnings"}` };
+  if (coverage.status === "unsupported") return { tone: "danger", label: t("artifacts.coverage.unavailable") };
+  if (coverage.status === "failed") return { tone: "danger", label: t("artifacts.coverage.failed") };
+  if (coverage.status === "partial") return { tone: "warning", label: t("artifacts.coverage.partial") };
+  if (coverage.trackingMode === "managed-tools-only" && coverage.bashInvoked) return { tone: "warning", label: t("artifacts.coverage.shellNotTracked") };
+  if (capture.warnings.length > 0) {
+    return {
+      tone: "warning",
+      label: t(capture.warnings.length === 1 ? "artifacts.coverage.warning" : "artifacts.coverage.warnings", { count: capture.warnings.length })
+    };
+  }
   return null;
 }
 
@@ -597,23 +615,34 @@ function directoryLabel(path: string): string {
   return segments.length === 0 ? "" : `‎${segments.join("/")}`;
 }
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string, language: AppLanguage): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString(localeTag(language));
 }
 
-function formatRelativeTime(value: string, now: number): string {
+export function formatRelativeTime(
+  value: string,
+  now: number,
+  language: AppLanguage,
+  t: ReturnType<typeof useI18n>["t"]
+): string {
   const time = new Date(value).valueOf();
   if (Number.isNaN(time)) return value;
   const seconds = Math.max(Math.round((now - time) / 1000), 0);
-  if (seconds < 45) return "just now";
+  if (seconds < 45) return t("artifacts.relative.justNow");
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return t("artifacts.relative.minutesAgo", { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
+  if (hours < 24) return t("artifacts.relative.hoursAgo", { count: hours });
   const days = Math.round(hours / 24);
-  if (days < 7) return `${days} d ago`;
-  return new Date(time).toLocaleDateString();
+  if (days < 7) return t("artifacts.relative.daysAgo", { count: days });
+  return new Date(time).toLocaleDateString(localeTag(language));
+}
+
+function artifactStatusLabel(status: FileChangeStatus, t: ReturnType<typeof useI18n>["t"]): string {
+  if (status === "added") return t("artifacts.status.added");
+  if (status === "modified") return t("artifacts.status.modified");
+  return t("artifacts.status.deleted");
 }
 
 function formatBytes(value: number): string {

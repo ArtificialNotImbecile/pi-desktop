@@ -1,7 +1,7 @@
 import { useState } from "react";
-import type { MemoryRecord } from "../../../shared/ipc";
+import type { AppLanguage, MemoryRecord } from "../../../shared/ipc";
 import { BrainIcon, EditIcon, RefreshIcon } from "../icons/Icons";
-import { useI18n } from "../../i18n";
+import { localeTag, useI18n } from "../../i18n";
 
 export function MemoryPanel(props: {
   open: boolean;
@@ -16,7 +16,7 @@ export function MemoryPanel(props: {
   onArchive(id: string, archived: boolean): void;
   onRequestDelete(memory: MemoryRecord): void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [draft, setDraft] = useState("");
 
   if (!props.open) return null;
@@ -66,6 +66,7 @@ export function MemoryPanel(props: {
             <MemoryRow
               key={memory.id}
               memory={memory}
+              language={language}
               onUpdate={props.onUpdate}
               onArchive={props.onArchive}
               onRequestDelete={props.onRequestDelete}
@@ -91,6 +92,7 @@ export function MemoryPanel(props: {
 
 function MemoryRow(props: {
   memory: MemoryRecord;
+  language: AppLanguage;
   onUpdate(id: string, content: string): void;
   onArchive(id: string, archived: boolean): void;
   onRequestDelete(memory: MemoryRecord): void;
@@ -115,7 +117,7 @@ function MemoryRow(props: {
       <div className="memory-row-title">
         <BrainIcon />
         <strong>{props.memory.archived ? props.labels.archived : props.labels.active}</strong>
-        <span>{formatDate(props.memory.updatedAt)}</span>
+        <span>{formatDate(props.memory.updatedAt, props.language)}</span>
       </div>
       {editing ? (
         <form
@@ -153,8 +155,8 @@ function MemoryRow(props: {
   );
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: AppLanguage): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  return date.toLocaleDateString(localeTag(language), { month: "short", day: "numeric" });
 }

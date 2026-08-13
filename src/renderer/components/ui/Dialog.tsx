@@ -2,6 +2,7 @@ import { classNames } from "./classNames";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { useId, useRef, type ReactNode, type RefObject } from "react";
 import { Button } from "./Button";
+import { useI18n } from "../../i18n";
 
 export function Dialog(props: {
   actions?: ReactNode;
@@ -16,6 +17,7 @@ export function Dialog(props: {
   showClose?: boolean;
   title: ReactNode;
 }) {
+  const { t } = useI18n();
   const titleId = useId();
   const descriptionId = useId();
   const hasBody = props.body !== undefined && props.body !== null;
@@ -57,8 +59,8 @@ export function Dialog(props: {
             </RadixDialog.Title>
             {props.showClose === false ? null : (
               <RadixDialog.Close asChild>
-                <Button variant="ghost" size="sm" aria-label={props.closeLabel || "Close"}>
-                  {props.closeLabel || "Close"}
+                <Button variant="ghost" size="sm" aria-label={props.closeLabel || t("app.close")}>
+                  {props.closeLabel || t("app.close")}
                 </Button>
               </RadixDialog.Close>
             )}

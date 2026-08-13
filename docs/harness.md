@@ -79,6 +79,10 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `test-infrastructure.mjs`: portable, collision-resistant E2E user-data
   directory names and Vite's fixed strict development-server port. These are
   pure Node/config checks and do not belong in the Playwright project count.
+- `i18n-parity.mjs`: shared English/Chinese dictionary parity, translated
+  activity labels, explicit renderer locales for dates/numbers, and a source
+  guard that rejects literal accessible attributes, interpolated labels, and
+  control names outside the fixed-language UI catalogue fixture.
 
 ## Renderer test map
 
@@ -95,6 +99,7 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `commandPalette.test.tsx` and `navigation.test.tsx`: command/shortcut routing, UI catalog interactions, route serialization, and browser-style navigation history.
 - `rightPanelTabs.test.ts`: terminal-tab display-name allocation without launching a desktop shell.
 - `messageRendering.test.tsx`: message actions, tool summaries, decoded errors, and image lightboxes through the real `MessageView`; Shiki, layout, scroll, paint timing, and DOM identity stay in E2E.
+- `chatPanelI18n.test.ts`: English-stable and Chinese-localized short artifact timestamps without launching Electron.
 - `fakeBridge.ts`: the fake `window.jasmine`. It mirrors the repository's
   `(created_at, rowid)` paging order, can hold and release a `listMessages`
   reply to reproduce an out-of-order IPC response deterministically, returns

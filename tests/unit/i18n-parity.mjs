@@ -9,18 +9,20 @@
 //   3. an activity label main persists that the renderer never translates
 //   4. user-visible copy built in main from string literals, where the
 //      dictionary used to be out of reach
-//   5. a clock formatted with the machine's locale instead of the app's
+//   5. a clock or count formatted with the machine's locale instead of the app's
+//   6. renderer-owned accessibility copy written as a JSX literal
 //
-// A sixth -- a call site persisting an activity string that is not in the
+// A seventh -- a call site persisting an activity string that is not in the
 // shared list -- is a compile error rather than a check here: the persistence
 // API takes WorkingActivity, not string.
 //
 // It reads the sources rather than rendering anything, so it fails on the drift
 // itself instead of needing a run to reach that state.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { dictionaries, localeTag, translate } from "../../dist/main/shared/i18n.js";
 import { WORKING_ACTIVITY } from "../../dist/main/shared/workingActivity.js";
 
@@ -77,13 +79,86 @@ for (const key of [...mapped.values(), "working.activity.usingNamedTool"]) {
   assert.ok(key in dictionaries.en, `Unknown i18n key ${key}`);
 }
 
-// A clock or date formatted with undefined takes the locale of the machine,
-// not the language the app is set to, which is how a Chinese UI ends up
-// printing "03:45 PM". The Working page has to pass the tag explicitly.
+// A clock, date or number formatted without a locale takes the locale of the
+// machine, not the language the app is set to. Check the whole component tree
+// so fixing one panel cannot leave the same defect in the next one.
 assert.equal(localeTag("zh"), "zh-CN");
 assert.equal(localeTag("en"), "en-US");
-const osLocale = [...page.matchAll(/toLocale\w*\(\s*(undefined|\[\])/g)].map((match) => match[0]);
-assert.deepEqual(osLocale, [], "WorkingPage must format times with localeTag(language), not the OS locale");
+const componentDir = path.join(rootDir, "src/renderer/components");
+const componentFiles = await collectFiles(componentDir, (file) => file.endsWith(".tsx"));
+const osLocale = [];
+const literalAttributes = [];
+const literalControlNames = [];
+const copyAttributes = new Set(["aria-label", "title", "placeholder"]);
+const namedControlElements = new Set(["a", "button", "label", "option", "Button", "MenuItem", "summary"]);
+const literalAllowlist = new Set([
+  // The catalogue deliberately presents its primitive samples in one fixed
+  // language so it can double as a visual/test fixture rather than app copy.
+  "src/renderer/components/ui/UiCatalog.tsx"
+]);
+
+for (const file of componentFiles) {
+  const sourceText = await readFile(file, "utf8");
+  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const relative = path.relative(rootDir, file).replaceAll("\\", "/");
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && /^toLocale(?:String|DateString|TimeString)$/.test(node.expression.name.text)) {
+      const locale = node.arguments[0];
+      if (usesImplicitLocale(locale)) {
+        osLocale.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
+      }
+    }
+    if (ts.isJsxAttribute(node) && copyAttributes.has(node.name.text) && !literalAllowlist.has(relative)) {
+      const initializer = node.initializer;
+      const literal = staticAttributeCopy(initializer);
+      if (literal && /[A-Za-z]{2}/.test(literal)) {
+        literalAttributes.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ${node.name.text}=${JSON.stringify(literal)}`);
+      }
+    }
+    if (ts.isJsxElement(node) && namedControlElements.has(node.openingElement.tagName.getText(source))
+      && !literalAllowlist.has(relative)) {
+      const copy = [];
+      for (const child of node.children) collectControlCopy(child, copy, source, namedControlElements);
+      const literal = copy.join(" ").replace(/\s+/g, " ").trim();
+      if (/[A-Za-z]{2}/.test(literal)) {
+        literalControlNames.push(`${relative}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} control=${JSON.stringify(literal)}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+}
+
+assert.deepEqual(osLocale, [], "Renderer components must format with localeTag(language), not the OS locale");
+assert.deepEqual(literalAttributes, [], "Renderer accessibility copy must come from i18n, not JSX literals");
+assert.deepEqual(literalControlNames, [], "Renderer control names must come from i18n, not JSX child literals");
+
+// Keep the guard honest even after the current source tree is clean. These are
+// the three AST shapes that prior review rounds showed could silently escape.
+const guardFixture = ts.createSourceFile(
+  "i18n-guard-fixture.tsx",
+  "const control = <button aria-label={`Preview ${name}`}>{active ? 'Stop' : 'Start'}</button>; const detail = <details><summary>Raw payload</summary></details>; new Date().toLocaleString(undefined);",
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX
+);
+const fixtureSignals = { attribute: "", controls: [], locale: false };
+const inspectFixture = (node) => {
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === "toLocaleString") {
+    fixtureSignals.locale = usesImplicitLocale(node.arguments[0]);
+  }
+  if (ts.isJsxAttribute(node) && node.name.text === "aria-label") fixtureSignals.attribute = staticAttributeCopy(node.initializer);
+  if (ts.isJsxElement(node) && namedControlElements.has(node.openingElement.tagName.getText(guardFixture))) {
+    const copy = [];
+    for (const child of node.children) collectControlCopy(child, copy, guardFixture, namedControlElements);
+    fixtureSignals.controls.push(copy.join(" ").replace(/\s+/g, " ").trim());
+  }
+  ts.forEachChild(node, inspectFixture);
+};
+inspectFixture(guardFixture);
+assert.deepEqual(fixtureSignals, { attribute: "Preview {…}", controls: ["Stop Start", "Raw payload"], locale: true });
 
 // 3. The copy main puts in front of the user goes through the dictionary.
 const registry = await readFile(path.join(rootDir, "src/main/services/workingRegistry.ts"), "utf8");
@@ -107,3 +182,81 @@ assert.notEqual(
 assert.ok(zhTranslate("working.notification.title", { state: "X" }).includes("X"), "Notification title dropped its state operand");
 
 console.log(`i18n-parity: ${en.length} keys in en and zh, ${mapped.size} activity labels translated`);
+
+async function collectFiles(directory, accept) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) return collectFiles(target, accept);
+    return accept(target) ? [target] : [];
+  }));
+  return nested.flat();
+}
+
+function usesImplicitLocale(locale) {
+  return !locale
+    || (ts.isIdentifier(locale) && locale.text === "undefined")
+    || ts.isVoidExpression(locale)
+    || (ts.isArrayLiteralExpression(locale) && locale.elements.length === 0);
+}
+
+function staticAttributeCopy(initializer) {
+  if (initializer && ts.isStringLiteral(initializer)) return initializer.text;
+  if (!initializer || !ts.isJsxExpression(initializer) || !initializer.expression) return "";
+  if (ts.isStringLiteral(initializer.expression) || ts.isNoSubstitutionTemplateLiteral(initializer.expression)) {
+    return initializer.expression.text;
+  }
+  const interpolated = [];
+  const collectInterpolatedCopy = (expression) => {
+    if (ts.isTemplateExpression(expression)) {
+      interpolated.push([expression.head.text, ...expression.templateSpans.map((span) => span.literal.text)].join("{…}"));
+    }
+    ts.forEachChild(expression, collectInterpolatedCopy);
+  };
+  collectInterpolatedCopy(initializer.expression);
+  return interpolated.join(" ");
+}
+
+function collectControlCopy(node, copy, source, namedControlElements) {
+  if (ts.isJsxText(node)) {
+    copy.push(node.text);
+    return;
+  }
+  if (ts.isJsxElement(node)) {
+    if (namedControlElements.has(node.openingElement.tagName.getText(source))) return;
+    for (const child of node.children) collectControlCopy(child, copy, source, namedControlElements);
+    return;
+  }
+  if (ts.isJsxFragment(node)) {
+    for (const child of node.children) collectControlCopy(child, copy, source, namedControlElements);
+    return;
+  }
+  if (!ts.isJsxExpression(node) || !node.expression) return;
+  collectControlExpressionCopy(node.expression, copy, source, namedControlElements);
+}
+
+function collectControlExpressionCopy(node, copy, source, namedControlElements) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    copy.push(node.text);
+    return;
+  }
+  if (ts.isTemplateExpression(node)) {
+    copy.push(node.head.text, ...node.templateSpans.map((span) => span.literal.text));
+    return;
+  }
+  if (ts.isConditionalExpression(node)) {
+    collectControlExpressionCopy(node.whenTrue, copy, source, namedControlElements);
+    collectControlExpressionCopy(node.whenFalse, copy, source, namedControlElements);
+    return;
+  }
+  if (ts.isBinaryExpression(node)) {
+    collectControlExpressionCopy(node.left, copy, source, namedControlElements);
+    collectControlExpressionCopy(node.right, copy, source, namedControlElements);
+    return;
+  }
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) {
+    collectControlExpressionCopy(node.expression, copy, source, namedControlElements);
+    return;
+  }
+  if (ts.isJsxElement(node) || ts.isJsxFragment(node)) collectControlCopy(node, copy, source, namedControlElements);
+}
