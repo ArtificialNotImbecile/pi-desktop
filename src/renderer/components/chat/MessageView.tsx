@@ -107,7 +107,10 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     >
       <MessageTimeline
         key="timeline"
-        cacheScope={`${props.message.threadId}:${props.message.renderId ?? props.message.id}`}
+        cacheScope={`${props.message.threadId}:${props.message.id}`}
+        cacheAliasScopes={props.message.renderId && props.message.renderId !== props.message.id
+          ? [`${props.message.threadId}:${props.message.renderId}`]
+          : undefined}
         items={visibleTimeline}
         onCopyCode={props.onCopyCode}
         live={isLive}

@@ -223,6 +223,46 @@ describe("message rendering", () => {
     expect(settledThought.querySelector(".timeline-running-indicator")).toBeNull();
   });
 
+  test("a disclosure opened live stays open after settlement and a persisted reload", () => {
+    const liveMessage = {
+      ...assistantMessage("stream-disclosure-navigation-0", [
+        { id: "navigation-persisted-thought", kind: "thinking" as const, text: "Keep this detail open." },
+        { id: "navigation-persisted-output", kind: "assistant_text" as const, text: "Done." }
+      ]),
+      elapsedMs: undefined
+    };
+    const harness = mountMessages([liveMessage]);
+    const liveToggle = screen.getByRole("button", { name: "Thinking" });
+    fireEvent.click(liveToggle);
+    expect(liveToggle.getAttribute("aria-expanded")).toBe("true");
+
+    const settledMessage = {
+      ...liveMessage,
+      id: "persisted-disclosure-navigation",
+      renderId: liveMessage.id,
+      elapsedMs: 1_400
+    };
+    harness.rerender(
+      <I18nProvider language="en">
+        <MessageView
+          message={settledMessage}
+          onCopy={harness.onCopy}
+          onCopyCode={harness.onCopyCode}
+          onRetry={harness.onRetry}
+          onEdit={harness.onEdit}
+          onRemember={harness.onRemember}
+        />
+      </I18nProvider>
+    );
+    expect(screen.getByRole("button", { name: "Thinking" }).getAttribute("aria-expanded")).toBe("true");
+
+    harness.unmount();
+    const reloaded = mountMessages([{ ...settledMessage, renderId: undefined }]);
+    const reloadedToggle = screen.getByRole("button", { name: "Thinking" });
+    expect(reloadedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(reloaded.container.querySelector(".thinking-markdown")?.hasAttribute("hidden")).toBe(false);
+  });
+
   test("tool rows summarize edit and bash results and replace undecodable output", () => {
     const editMessage = assistantMessage("edit-message", toolTimeline(
       "edit",

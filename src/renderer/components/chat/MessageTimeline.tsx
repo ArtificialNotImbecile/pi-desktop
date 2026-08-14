@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, ChevronDownIcon, SearchIcon, TerminalIcon, WrenchIcon } from "../icons/Icons";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -32,6 +32,7 @@ type SettledTimelinePresentation = {
 
 export function MessageTimeline(props: {
   cacheScope: string;
+  cacheAliasScopes?: string[];
   items: ChatTimelineItem[];
   onCopyCode(code: string): void;
   live?: boolean;
@@ -57,8 +58,23 @@ export function MessageTimeline(props: {
     [timelineItems, retainPaintedPresentation, props.modelId]
   );
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  // A live row is keyed by its renderer identity, while its database-backed
+  // replacement is keyed by the persisted message id. During the settlement
+  // render both identities are available; copy the live disclosure choices to
+  // the persisted scope before a later thread navigation drops renderId.
+  useLayoutEffect(() => {
+    if (!props.cacheAliasScopes?.length) return;
+    for (const item of displayItems) {
+      const stableKey = expansionKey(props.cacheScope, item.id);
+      if (expansionStateCache.has(stableKey)) continue;
+      const expansion = expandedItems[item.id]
+        ?? firstAliasedExpansion(props.cacheAliasScopes, item.id);
+      if (expansion !== undefined) rememberExpansion(stableKey, expansion);
+    }
+  }, [displayItems, expandedItems, props.cacheAliasScopes, props.cacheScope]);
   const isExpanded = (item: TimelineDisplayItem) => expandedItems[item.id]
     ?? expansionStateCache.get(expansionKey(props.cacheScope, item.id))
+    ?? firstAliasedExpansion(props.cacheAliasScopes, item.id)
     ?? item.defaultExpanded;
   const toggleItem = useCallback((itemId: string, expanded: boolean) => {
     rememberExpansion(expansionKey(props.cacheScope, itemId), !expanded);
@@ -90,6 +106,14 @@ export function MessageTimeline(props: {
 
 function expansionKey(scope: string, itemId: string): string {
   return `${scope}\u0000${itemId}`;
+}
+
+function firstAliasedExpansion(aliasScopes: string[] | undefined, itemId: string): boolean | undefined {
+  for (const scope of aliasScopes ?? []) {
+    const value = expansionStateCache.get(expansionKey(scope, itemId));
+    if (value !== undefined) return value;
+  }
+  return undefined;
 }
 
 type TimelineDisplayItem =
