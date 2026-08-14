@@ -93,7 +93,7 @@ test.describe("Jasmine streaming Markdown", () => {
     expect(metrics.largestParsedChunk).toBeLessThan(3_000);
   });
 
-  test("keeps final output and stable Markdown nodes mounted while settlement folds work into the recap", async () => {
+  test("keeps final output and work rows mounted in place through settlement", async () => {
     const { app, page } = harness;
     const threadId = await activateFixtureThread(harness, "Settlement Markdown continuity fixture");
     const requestId = "settlement-markdown-request";
@@ -152,9 +152,8 @@ test.describe("Jasmine streaming Markdown", () => {
     await expect(settled).not.toHaveClass(/live-message/);
     await expect(settledFinalRow).toHaveClass(/final-answer/);
     await expect(settledFinalRow.locator(".markdown-heading")).toHaveCount(70);
-    await expect(settled.locator(".run-recap-details")).toBeHidden();
-    await expect(settled.locator(".run-recap-meta")).toBeHidden();
-    await expect(settled.locator("[data-timeline-item-id='settlement-preamble']")).toBeHidden();
+    await expect(settled.locator(".run-recap")).toHaveCount(0);
+    await expect(settled.locator("[data-timeline-item-id='settlement-preamble']")).toBeVisible();
 
     const continuity = await page.evaluate(() => {
       const scope = window as Window & {
@@ -179,10 +178,6 @@ test.describe("Jasmine streaming Markdown", () => {
       largestCompletionParse: 0
     });
 
-    await settled.getByRole("button", { name: "Show work details" }).click();
-    await expect(settled.locator(".run-recap-details")).toBeVisible();
-    await expect(settled.locator(".run-recap-meta")).toBeVisible();
-    await expect(settled.locator("[data-timeline-item-id='settlement-preamble']")).toBeVisible();
     await expect(settled.locator("[data-timeline-item-id='settlement-preamble']")).not.toHaveClass(/tool-preamble-item/);
     await expect(settled.locator(".tool-run-item", { hasText: "src/example.ts" })).toBeVisible();
     await expect(settledFinalRow).toContainText("Stable section 70");
@@ -433,7 +428,7 @@ test.describe("Jasmine streaming Markdown", () => {
         visible: boolean;
         sameNode: boolean;
         settled: boolean;
-        recapExpanded: boolean | null;
+        rowExpanded: boolean | null;
       };
       const scope = window as Window & {
         __JASMINE_LOCKED_READING_ROW__?: Element;
@@ -456,13 +451,13 @@ test.describe("Jasmine streaming Markdown", () => {
         const rowRect = current?.getBoundingClientRect();
         const viewportRect = viewport?.getBoundingClientRect();
         const message = current?.closest<HTMLElement>(".assistant-block");
-        const recapToggle = message?.querySelector<HTMLElement>(".run-recap-toggle");
+        const rowToggle = current?.querySelector<HTMLElement>(".timeline-toggle");
         scope.__JASMINE_LOCKED_READING_SAMPLES__?.push({
           top: rowRect && viewportRect ? rowRect.top - viewportRect.top : null,
           visible: Boolean(rowRect && viewportRect && rowRect.bottom > viewportRect.top && rowRect.top < viewportRect.bottom),
           sameNode: current === scope.__JASMINE_LOCKED_READING_ROW__,
           settled: message?.dataset.messageId === persistedMessageId,
-          recapExpanded: recapToggle ? recapToggle.getAttribute("aria-expanded") === "true" : null
+          rowExpanded: rowToggle ? rowToggle.getAttribute("aria-expanded") === "true" : null
         });
         if (scope.__JASMINE_LOCKED_READING_ACTIVE__ && (scope.__JASMINE_LOCKED_READING_SAMPLES__?.length ?? 0) < 240) {
           window.requestAnimationFrame(sample);
@@ -483,8 +478,7 @@ test.describe("Jasmine streaming Markdown", () => {
     const settled = page.locator(`[data-message-id='${persistedId}']`);
     const settledTarget = settled.locator(`[data-timeline-item-id='${targetItemId}']`);
     await expect(settled).not.toHaveClass(/live-message/);
-    await expect(settled.getByRole("button", { name: "Hide work details" })).toHaveAttribute("aria-expanded", "true");
-    await expect(settled.locator(".run-recap-meta")).toBeVisible();
+    await expect(settled.locator(".run-recap")).toHaveCount(0);
     await expect(settledTarget).toBeVisible();
     await expect(settledTarget.getByRole("button")).toHaveAttribute("aria-expanded", "true");
     await waitAnimationFrames(page, 12);
@@ -495,7 +489,7 @@ test.describe("Jasmine streaming Markdown", () => {
         visible: boolean;
         sameNode: boolean;
         settled: boolean;
-        recapExpanded: boolean | null;
+        rowExpanded: boolean | null;
       };
       const scope = window as Window & {
         __JASMINE_LOCKED_READING_BASELINE__?: number;
@@ -514,7 +508,7 @@ test.describe("Jasmine streaming Markdown", () => {
         settledSampleCount: settledSamples.length,
         everySettledSampleVisible: settledSamples.every((sample) => sample.visible),
         everySettledSampleKeptNode: settledSamples.every((sample) => sample.sameNode),
-        everySettledSampleKeptRecapExpanded: settledSamples.every((sample) => sample.recapExpanded === true),
+        everySettledSampleKeptRowExpanded: settledSamples.every((sample) => sample.rowExpanded === true),
         maxBaselineDrift: Math.max(0, ...numericSettledTops.map((top) => Math.abs(top - baseline))),
         maxFrameDrift: Math.max(0, ...transitionSamples.slice(1).map((sample, index) => {
           const previous = transitionSamples[index];
@@ -526,7 +520,7 @@ test.describe("Jasmine streaming Markdown", () => {
     expect(stability.settledSampleCount).toBeGreaterThanOrEqual(6);
     expect(stability.everySettledSampleVisible).toBe(true);
     expect(stability.everySettledSampleKeptNode).toBe(true);
-    expect(stability.everySettledSampleKeptRecapExpanded).toBe(true);
+    expect(stability.everySettledSampleKeptRowExpanded).toBe(true);
     expect(stability.maxBaselineDrift).toBeLessThanOrEqual(4);
     expect(stability.maxFrameDrift).toBeLessThanOrEqual(4);
     expect(stability.finalTopRange).toBeLessThanOrEqual(1);

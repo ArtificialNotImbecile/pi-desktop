@@ -8,13 +8,11 @@ const redSquareBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGElEQVR4nGP8z8Dwn4ECwESJ5lEDRgAAUOQCH2mP8toAAAAASUVORK5CYII=";
 
 export function electronExecutablePath() {
-  return path.join(
-    rootDir,
-    "node_modules",
-    "electron",
-    "dist",
-    process.platform === "win32" ? "electron.exe" : "electron"
-  );
+  const dist = path.join(rootDir, "node_modules", "electron", "dist");
+  if (process.platform === "darwin") {
+    return path.join(dist, "Electron.app", "Contents", "MacOS", "Electron");
+  }
+  return path.join(dist, process.platform === "win32" ? "electron.exe" : "electron");
 }
 
 export async function resetDirectory(directory) {

@@ -14,7 +14,6 @@ function assistantMessage(id: string, timeline: ChatTimelineItem[]): ChatMessage
     content: "Mock reply from Jasmine.",
     createdAt,
     elapsedMs: 1200,
-    preserveRunDetails: true,
     timeline
   };
 }
@@ -76,10 +75,10 @@ function toolTimeline(
  */
 describe("message rendering", () => {
   test("assistant actions expose accessible names and dispatch every direct and menu callback", () => {
-    const message = { ...assistantMessage("action-message", [
+    const message = assistantMessage("action-message", [
       { id: "action-thinking", kind: "thinking", text: "Need to inspect." },
       { id: "action-output", kind: "assistant_text", text: "Mock reply from Jasmine." }
-    ]), preserveRunDetails: false };
+    ]);
     const harness = mountMessages([message]);
 
     const copy = screen.getByRole("button", { name: "Copy message" });
@@ -88,7 +87,9 @@ describe("message rendering", () => {
     expect(copy.getAttribute("title")).toBe("Copy message");
     expect(regenerate.getAttribute("title")).toBe("Regenerate this response");
     expect(actions.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.getByRole("button", { name: "Show work details" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Show work details" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Thinking" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("Worked for 1s")).toBeDefined();
     expect(screen.queryByRole("button", { name: "Open trace" })).toBeNull();
 
     fireEvent.click(copy);
@@ -123,6 +124,42 @@ describe("message rendering", () => {
     expect(harness.onRemember).toHaveBeenCalledOnce();
     expect(harness.onRemember).toHaveBeenLastCalledWith(message);
     expect(actions.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  test("thought rows stay compact and summarize the newest live line before settling on the first line", () => {
+    const liveMessage = {
+      ...assistantMessage("stream-live-thought-0", [
+        { id: "thought-summary", kind: "thinking" as const, text: "First plan\nNewest live step" }
+      ]),
+      elapsedMs: undefined
+    };
+    const harness = mountMessages([liveMessage]);
+    const thought = harness.container.querySelector(".thinking-item") as HTMLElement;
+    const toggle = thought.querySelector(".timeline-toggle") as HTMLButtonElement;
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(thought.textContent).toContain("Newest live step");
+    expect(thought.textContent).not.toContain("First plan");
+    expect(thought.querySelector(".thinking-markdown")).toBeNull();
+    expect(thought.querySelector(".timeline-running-indicator")).not.toBeNull();
+
+    harness.rerender(
+      <I18nProvider language="en">
+        <MessageView
+          message={{ ...liveMessage, id: "settled-thought", renderId: liveMessage.id, elapsedMs: 1400 }}
+          onCopy={harness.onCopy}
+          onCopyCode={harness.onCopyCode}
+          onRetry={harness.onRetry}
+          onEdit={harness.onEdit}
+          onRemember={harness.onRemember}
+        />
+      </I18nProvider>
+    );
+
+    const settledThought = harness.container.querySelector(".thinking-item") as HTMLElement;
+    expect(settledThought.textContent).toContain("First plan");
+    expect(settledThought.textContent).not.toContain("Newest live step");
+    expect(settledThought.querySelector(".timeline-running-indicator")).toBeNull();
   });
 
   test("tool rows summarize edit and bash results and replace undecodable output", () => {

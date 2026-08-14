@@ -1,10 +1,9 @@
-import { memo, useCallback, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import type { ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, ChevronDownIcon, SearchIcon, TerminalIcon, WrenchIcon } from "../icons/Icons";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { useI18n } from "../../i18n";
 import { languageFromPath, looksLikeDiff, looksLikeJson, ShikiCodeBlock, type CodeBlockKind } from "../code";
-import { RunRecap, type RunRecapStatus } from "./RunRecap";
 
 declare global {
   interface Window {
@@ -13,11 +12,9 @@ declare global {
   }
 }
 
-// A directly loaded settled recap stays lazy while collapsed. Rows that were
-// already painted during a live run remain mounted (and are merely hidden) at
-// settlement, so folding the recap never throws away already-rendered Markdown.
-// A later thread reload can still remount a detail row, so mirror expansion
-// toggles into this bounded cache rather than snapping it shut when rebuilt.
+// Thought and tool rows own their expansion independently. Mirror toggles into
+// this bounded cache so pagination or thread navigation does not unexpectedly
+// reopen a row the reader deliberately collapsed (or vice versa).
 const expansionStateCache = new Map<string, boolean>();
 const EXPANSION_CACHE_LIMIT = 500;
 
@@ -31,13 +28,6 @@ function rememberExpansion(itemId: string, expanded: boolean) {
 type SettledTimelinePresentation = {
   finalItemIds: string[];
   fallbackFinalItem?: Extract<ChatTimelineItem, { kind: "assistant_text" }>;
-  recap?: {
-    status: RunRecapStatus;
-    elapsedMs?: number;
-    defaultExpanded: boolean;
-    header?: ReactNode;
-    footer?: ReactNode;
-  };
 };
 
 export function MessageTimeline(props: {
@@ -67,94 +57,35 @@ export function MessageTimeline(props: {
     [timelineItems, retainPaintedPresentation, props.modelId]
   );
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-  const liveExpansionSnapshotRef = useRef<Record<string, boolean>>({});
-  if (props.live) {
-    for (const item of displayItems) {
-      liveExpansionSnapshotRef.current[item.id] = expandedItems[item.id]
-        ?? expansionStateCache.get(expansionKey(props.cacheScope, item.id))
-        ?? item.defaultExpanded;
-    }
-  }
-  const [recapExpandedOverride, setRecapExpandedOverride] = useState<boolean | null>(null);
-  const recapExpanded = recapExpandedOverride ?? Boolean(props.settled?.recap?.defaultExpanded);
-  const recapControlsBase = useId().replace(/:/g, "");
-  const rowDomIds = useMemo(
-    () => new Map(displayItems.map((item, index) => [item.id, `${recapControlsBase}-row-${index}`])),
-    [displayItems, recapControlsBase]
-  );
   const isExpanded = (item: TimelineDisplayItem) => expandedItems[item.id]
     ?? expansionStateCache.get(expansionKey(props.cacheScope, item.id))
-    // Preserve an explicitly expanded live row for a reader-locked settlement,
-    // but collapse ordinary successful recaps exactly as before.
-    ?? (Boolean(props.settled) && recapExpanded && retainedLiveDetailsRef.current
-      ? liveExpansionSnapshotRef.current[item.id] ?? item.defaultExpanded
-      : Boolean(props.live) ? item.defaultExpanded : false);
+    ?? item.defaultExpanded;
   const toggleItem = useCallback((itemId: string, expanded: boolean) => {
     rememberExpansion(expansionKey(props.cacheScope, itemId), !expanded);
     setExpandedItems((current) => ({ ...current, [itemId]: !expanded }));
   }, [props.cacheScope]);
 
-  const renderRows = (
-    items: TimelineDisplayItem[],
-    finalAnswer: boolean,
-    hidden = false,
-    domIds?: Map<string, string>
-  ) => items.map((item) => (
-    <TimelineDisplayRow
-      key={item.id}
-      domId={domIds?.get(item.id)}
-      item={item}
-      expanded={isExpanded(item)}
-      live={retainPaintedPresentation}
-      finalAnswer={finalAnswer}
-      hidden={hidden}
-      onCopyCode={props.onCopyCode}
-      onToggle={toggleItem}
-    />
-  ));
+  const finalIds = new Set(props.settled?.finalItemIds ?? []);
+  if (props.settled?.fallbackFinalItem) finalIds.add(props.settled.fallbackFinalItem.id);
 
-  const children: ReactNode[] = [];
-  if (!props.settled) {
-    children.push(...renderRows(displayItems, false, false, rowDomIds));
-  } else {
-    const finalIds = new Set(props.settled.finalItemIds);
-    if (props.settled.fallbackFinalItem) finalIds.add(props.settled.fallbackFinalItem.id);
-    const details = displayItems.filter((item) => !finalIds.has(item.id));
-    const finalItems = displayItems.filter((item) => finalIds.has(item.id));
-    const recap = props.settled.recap;
-    if (recap) {
-      const headerId = `${recapControlsBase}-header`;
-      const footerId = `${recapControlsBase}-footer`;
-      const controlledIds = [headerId, ...details.map((item) => rowDomIds.get(item.id) ?? ""), footerId].filter(Boolean);
-      children.push(
-        <RunRecap
-          key="run-recap"
-          status={recap.status}
-          elapsedMs={recap.elapsedMs}
-          defaultExpanded={recap.defaultExpanded}
-          expanded={recapExpanded}
-          onExpandedChange={setRecapExpandedOverride}
-          controlledIds={controlledIds}
+  // DeepSeek-style settlement: every thought/tool row stays in chronological
+  // flow and owns its own compact disclosure. There is no turn-wide wrapper
+  // that moves or hides the entire run when the final event arrives.
+  return (
+    <div className="message-timeline">
+      {displayItems.map((item) => (
+        <TimelineDisplayRow
+          key={item.id}
+          item={item}
+          expanded={isExpanded(item)}
+          live={Boolean(props.live)}
+          finalAnswer={finalIds.has(item.id)}
+          onCopyCode={props.onCopyCode}
+          onToggle={toggleItem}
         />
-      );
-      children.push(
-        <div id={headerId} key="run-recap-header" hidden={!recapExpanded} className="run-recap-detail-row run-recap-meta">{recap.header}</div>
-      );
-      if (recapExpanded || retainedLiveDetailsRef.current) {
-        children.push(...renderRows(details, false, !recapExpanded, rowDomIds));
-      }
-      children.push(
-        <div id={footerId} key="run-recap-footer" hidden={!recapExpanded} className="run-recap-detail-row run-recap-provenance">{recap.footer}</div>
-      );
-    }
-    // Keep rows in the same flat keyed child list across live -> settled. A
-    // nested array creates a new reconciliation scope and remounts the final
-    // Markdown subtree even though its item id is unchanged.
-    children.push(...renderRows(finalItems, true, false, rowDomIds));
-    if (!recap) children.push(...renderRows(details, false, false, rowDomIds));
-  }
-
-  return <div className="message-timeline">{children}</div>;
+      ))}
+    </div>
+  );
 }
 
 function expansionKey(scope: string, itemId: string): string {
@@ -179,12 +110,10 @@ type ToolSummary = {
 type ToolDetail = { label: string; content: string; tone?: "error" | "code" };
 
 type TimelineDisplayRowProps = {
-  domId?: string;
   item: TimelineDisplayItem;
   expanded: boolean;
   live: boolean;
   finalAnswer: boolean;
-  hidden: boolean;
   onCopyCode(code: string): void;
   onToggle(itemId: string, expanded: boolean): void;
 };
@@ -194,33 +123,39 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
   const { item } = props;
   recordTimelineRowRender(item.id);
   const toggle = () => props.onToggle(item.id, props.expanded);
+  const detailsMountedRef = useRef(props.expanded);
+  if (props.expanded) detailsMountedRef.current = true;
 
   if (item.kind === "thinking") {
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className={`timeline-item thinking-item ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.thinking")}>
-        <TimelineToggle label={t("message.thinking")} expanded={props.expanded} onToggle={toggle} icon={<BrainIcon />} />
-        <div className="thinking-markdown" hidden={!props.expanded}>
-          <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
-        </div>
+      <section data-timeline-item-id={item.id} className={`timeline-item thinking-item ${props.live ? "running" : "done"} ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.thinking")}>
+        <TimelineToggle label={t("message.thinking")} summary={thoughtSummary(item.text, props.live)} running={props.live} expanded={props.expanded} onToggle={toggle} icon={<BrainIcon />} />
+        {detailsMountedRef.current && (
+          <div className="thinking-markdown" hidden={!props.expanded}>
+            <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
+          </div>
+        )}
       </section>
     );
   }
   if (item.kind === "tool_preamble") {
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className={`timeline-item thinking-item tool-preamble-item ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.toolPreamble")}>
-        <TimelineToggle label={t("message.toolPreamble")} expanded={props.expanded} onToggle={toggle} icon={<WrenchIcon />} />
-        <div className="thinking-markdown" hidden={!props.expanded}>
-          <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
-        </div>
+      <section data-timeline-item-id={item.id} className={`timeline-item thinking-item tool-preamble-item ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.toolPreamble")}>
+        <TimelineToggle label={t("message.toolPreamble")} summary={thoughtSummary(item.text, false)} expanded={props.expanded} onToggle={toggle} icon={<WrenchIcon />} />
+        {detailsMountedRef.current && (
+          <div className="thinking-markdown" hidden={!props.expanded}>
+            <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
+          </div>
+        )}
       </section>
     );
   }
   if (item.kind === "tool") {
-    return <ToolRunRow id={props.domId} item={item} expanded={props.expanded} hidden={props.hidden} onToggle={toggle} />;
+    return <ToolRunRow item={item} expanded={props.expanded} onToggle={toggle} />;
   }
   if (item.kind === "system") {
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className="timeline-item system-item" aria-label={item.title}>
+      <section data-timeline-item-id={item.id} className="timeline-item system-item" aria-label={item.title}>
         <div className="timeline-label"><TerminalIcon /><span>{item.title}</span></div>
         <p>{item.text}</p>
       </section>
@@ -228,9 +163,7 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
   }
   return (
     <section
-      id={props.domId}
       data-timeline-item-id={item.id}
-      hidden={props.hidden}
       className={`timeline-output ${props.finalAnswer ? "final-answer" : ""}`}
       aria-label={t("message.assistantOutput")}
     >
@@ -244,10 +177,8 @@ function sameTimelineDisplayRowProps(
   next: TimelineDisplayRowProps
 ): boolean {
   return previous.expanded === next.expanded
-    && previous.domId === next.domId
     && previous.live === next.live
     && previous.finalAnswer === next.finalAnswer
-    && previous.hidden === next.hidden
     && previous.onCopyCode === next.onCopyCode
     && previous.onToggle === next.onToggle
     && sameTimelineDisplayItem(previous.item, next.item);
@@ -294,7 +225,7 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (item.kind === "thinking") {
-      result.push({ id: item.id, kind: "thinking", text: item.text, defaultExpanded: live });
+      result.push({ id: item.id, kind: "thinking", text: item.text, defaultExpanded: false });
       continue;
     }
     if (item.kind === "tool_call") {
@@ -344,9 +275,10 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
       // While a run is live, a text item cannot know whether a later tool call
       // will turn it into a DeepSeek tool preamble. Reclassifying a row after it
       // has painted remounts its Markdown and visibly jumps. Keep live text in
-      // its first structure; the settled recap can classify with full context.
+      // its first structure; a directly loaded settled turn can classify with
+      // full context without changing an already-painted row.
       if (!live && isDeepSeekToolPreamble(items, index, modelId)) {
-        result.push({ id: item.id, kind: "tool_preamble", text: item.text, defaultExpanded: live });
+        result.push({ id: item.id, kind: "tool_preamble", text: item.text, defaultExpanded: false });
       } else {
         result.push({ id: item.id, kind: "assistant_text", text: item.text, defaultExpanded: true });
       }
@@ -399,11 +331,11 @@ function toToolDisplayItem(
     call,
     result: toolResult,
     summary,
-    defaultExpanded: summary.state === "error"
+    defaultExpanded: false
   };
 }
 
-function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { kind: "tool" }>; expanded: boolean; hidden?: boolean; onToggle(): void }) {
+function ToolRunRow(props: { item: Extract<TimelineDisplayItem, { kind: "tool" }>; expanded: boolean; onToggle(): void }) {
   const { t } = useI18n();
   const { item } = props;
   const summary = item.summary;
@@ -423,9 +355,7 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
   if (props.expanded) detailsMountedRef.current = true;
   return (
     <section
-      id={props.id}
       data-timeline-item-id={item.id}
-      hidden={props.hidden}
       className={`timeline-item tool-run-item ${summary.state} ${props.expanded ? "" : "collapsed"}`}
       aria-label={t("message.toolSummary", { action: summary.action, target: summary.target }).trim()}
     >
@@ -435,6 +365,9 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
           <b>{controlAction}</b>
           {summary.target && <span className="tool-run-target">{summary.target}</span>}
         </span>
+        {isToolError(summary.state) && !props.expanded && (
+          <span className="tool-run-error-summary">{toolErrorSummary(summary.details)}</span>
+        )}
         <small className={`tool-run-status ${summary.state}`}>{controlStatus}</small>
         <ChevronDownIcon />
       </button>
@@ -740,11 +673,27 @@ function truncateMiddle(value: string, maxLength: number): string {
   return `${value.slice(0, keep)}...${value.slice(-keep)}`;
 }
 
-function TimelineToggle(props: { label: string; expanded: boolean; icon: ReactElement; onToggle(): void }) {
+function thoughtSummary(text: string, live: boolean): string {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return (live ? lines.at(-1) : lines[0]) ?? "";
+}
+
+function toolErrorSummary(details: ToolDetail[]): string {
+  const error = details.find((detail) => detail.tone === "error")?.content ?? "";
+  return error.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+function isToolError(state: ToolSummary["state"]): boolean {
+  return state === "error";
+}
+
+function TimelineToggle(props: { label: string; summary: string; running?: boolean; expanded: boolean; icon: ReactElement; onToggle(): void }) {
   return (
-    <button type="button" className="timeline-label timeline-toggle" aria-expanded={props.expanded} onClick={props.onToggle}>
+    <button type="button" className="timeline-label timeline-toggle" aria-label={props.label} aria-expanded={props.expanded} onClick={props.onToggle}>
       {props.icon}
       <span>{props.label}</span>
+      {!props.expanded && props.summary && <small className="timeline-summary">{props.summary}</small>}
+      {props.running && <span className="timeline-running-indicator" aria-hidden="true" />}
       <ChevronDownIcon />
     </button>
   );

@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { BrandSettings, ChatMessage } from "../../../shared/ipc";
 import type { RunState } from "../../types";
@@ -58,15 +58,6 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
   }, []);
   const handleRemember = useCallback((message: ChatMessage) => handlersRef.current.onRemember(message), []);
   const handleMessageInteraction = useCallback(() => handlersRef.current.onMessageInteraction(), []);
-  // Only the active tail can suppress the run placeholder. Persisted messages
-  // retain their stream renderId to preserve DOM identity, so scanning all rows
-  // would let an earlier answer hide the Thinking state of the next request.
-  const tailMessage = props.messages.at(-1);
-  const hasLiveAssistant = Boolean(
-    tailMessage?.role === "assistant"
-    && isRunMessage(tailMessage)
-    && (tailMessage.content.trim().length > 0 || tailMessage.timeline?.some(hasVisibleTimelineActivity))
-  );
   const runningLabel = props.runState === "stopping"
     ? t("message.stopping")
     : t("message.thinkingWith", { model: props.runModelLabel ?? props.modelLabel });
@@ -77,7 +68,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
       ref={props.messageScrollRef}
       onWheel={(event) => props.onMessageWheel(event.deltaY)}
       onClickCapture={(event) => {
-        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .run-recap-toggle, .load-older-messages")) {
+        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .load-older-messages")) {
           props.onMessageInteraction();
         }
       }}
@@ -148,14 +139,8 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
             </MessageActionsStateProvider>
           </>
         )}
-        {isRunning && !hasLiveAssistant && (
-          <div className="assistant-block thinking">
-            <div className="thought-line">
-              <BrainIcon />
-              <span>{runningLabel}</span>
-              <LoadingDots />
-            </div>
-          </div>
+        {isRunning && (
+          <TurnActivity key={props.actionKey} label={runningLabel} stopping={props.runState === "stopping"} />
         )}
         {props.error && (
           <div className="error-strip">
@@ -188,24 +173,28 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
   );
 }
 
-function isLiveMessage(message: ChatMessage): boolean {
-  return message.id.startsWith("stream-");
-}
-
 function isRunActive(runState: RunState): boolean {
   return runState === "running" || runState === "stopping";
 }
 
-function isRunMessage(message: ChatMessage): boolean {
-  return isLiveMessage(message)
-    || message.id.startsWith("pending-")
-    || message.renderId?.startsWith("stream-") === true;
-}
-
-function hasVisibleTimelineActivity(item: NonNullable<ChatMessage["timeline"]>[number]): boolean {
-  if (item.kind === "thinking" || item.kind === "assistant_text") return item.text.trim().length > 0;
-  if (item.kind === "tool_call" || item.kind === "tool_result") return true;
-  return item.kind === "system" && item.title !== "Model" && item.title !== "Thinking level";
+function TurnActivity(props: { label: string; stopping: boolean }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const clock = elapsedSeconds >= 15
+    ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`
+    : null;
+  return (
+    <div className={`turn-activity ${props.stopping ? "stopping" : ""}`} role="status" aria-live="polite">
+      <span>{props.label}</span>
+      {clock && <time aria-hidden="true">{clock}</time>}
+    </div>
+  );
 }
 
 function isScrollbarGutterPointer(scroll: HTMLDivElement, clientX: number): boolean {

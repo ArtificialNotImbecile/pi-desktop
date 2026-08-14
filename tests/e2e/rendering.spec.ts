@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -64,16 +64,11 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
     const thinkingItem = latestAssistant.locator(".thinking-item").first();
-    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
-    await expect(thinkingItem).toBeHidden();
+    await expect(latestAssistant.getByRole("button", { name: "Show work details" })).toHaveCount(0);
+    await expect(thinkingItem).toBeVisible();
     await expect(thinkingItem).toContainText("Need to inspect");
     await expect(latestAssistant.getByLabel("Assistant output")).toContainText("Mock reply from Jasmine.");
-    await recapToggle.click();
-    await expect(latestAssistant.locator(".run-recap-details")).toBeVisible();
-    await expect(thinkingItem).toBeVisible();
     await expect(latestAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
     await expect(latestAssistant.locator(".message-timeline")).not.toContainText("Thinking level");
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "AGENTS.md" });
@@ -82,11 +77,8 @@ test.describe("Jasmine message rendering", () => {
     await expect(readTool).toContainText("read - 1 line");
 
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
-    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(thinkingItem.locator(".thinking-markdown")).toBeVisible();
-    await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(thinkingItem.locator(".thinking-markdown")).toBeHidden();
+    await expect(thinkingItem.locator(".thinking-markdown")).toHaveCount(0);
     await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
     await expect(latestAssistant.locator(".thinking-item")).toContainText("Need to inspect");
@@ -126,9 +118,8 @@ test.describe("Jasmine message rendering", () => {
     const repairedAssistant = harness.page.locator(".assistant-block").last();
     await expect(repairedAssistant.getByLabel("Assistant output")).toContainText("Visible final answer.");
     await expect(repairedAssistant.getByLabel("Assistant output")).not.toContainText("Mock reply from Jasmine.");
-    await expect(repairedAssistant.locator(".run-recap-label")).toHaveText("Worked for 3m 49s");
-    await expect(repairedAssistant.getByRole("button", { name: "Show work details" })).toHaveAttribute("aria-expanded", "false");
-    await repairedAssistant.getByRole("button", { name: "Show work details" }).click();
+    await expect(repairedAssistant.locator(".run-completion-line")).toContainText("Worked for 3m 49s");
+    await expect(repairedAssistant.getByRole("button", { name: "Show work details" })).toHaveCount(0);
     await expect(repairedAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
     await expect(repairedAssistant.locator(".message-run-line")).toContainText("high");
     const preambleToggle = repairedAssistant.getByRole("button", { name: "Tool preamble", exact: true });
@@ -184,9 +175,7 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: threadTitle }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
-    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
-    await recapToggle.click();
+    await expect(latestAssistant.getByRole("button", { name: "Show work details" })).toHaveCount(0);
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "document-analysis" }).first();
     const bashTool = latestAssistant.locator(".tool-run-item", { hasText: "ls -R" }).first();
     await expect(readTool).toContainText("read - 202 lines");
@@ -242,8 +231,9 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expandWorkDetails(latestAssistant);
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
+    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+    await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
     const thinkingMarkdown = latestAssistant.locator(".thinking-markdown .markdown-message");
     await expect(thinkingMarkdown).toBeVisible();
@@ -291,7 +281,6 @@ test.describe("Jasmine message rendering", () => {
     // message re-renders on stream completion and can detach the measured row,
     // which makes getComputedStyle return empty values.
     await expect(page.locator(".assistant-block.live-message")).toHaveCount(0, { timeout: 10_000 });
-    await expandWorkDetails(writeMessage);
     const compactTypography = await writeTool.locator(".tool-run-toggle").evaluate((row) => {
       const target = row.querySelector(".tool-run-target");
       const label = row.querySelector(".tool-run-main b");
@@ -538,8 +527,8 @@ test.describe("Jasmine message rendering", () => {
     });
     const textLengthBeforeBlockedFrame = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
     // Model a long Markdown/Shiki frame while main-process stream updates keep
-    // arriving. The first painted frame afterwards must not catch up in one
-    // large jump merely because several animation frames were missed.
+    // arriving. Publication should converge to the newest cumulative snapshot
+    // on the next paint instead of replaying every missed prefix.
     await page.evaluate(() => {
       const blockedUntil = performance.now() + 180;
       let spin = 0;
@@ -554,8 +543,7 @@ test.describe("Jasmine message rendering", () => {
     })).toBeLessThanOrEqual(96);
     // A renderer-blocked interval has no painted frames, so the amount of text
     // queued by the independent main-process stream is scheduler/platform
-    // dependent. Keep the scroll samples (which cover the recovery frames), but
-    // begin the steady-state tail envelope after the follower has recovered.
+    // dependent. Begin the steady-state tail envelope after recovery.
     await page.evaluate(() => {
       (window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ = [];
     });
@@ -618,7 +606,7 @@ test.describe("Jasmine message rendering", () => {
     expect(streamingContinuity.sameMessageNode).toBe(true);
     expect(streamingContinuity.sameUserNode).toBe(true);
     expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(96);
-    expect(streamingContinuity.maxPaintedFrameAdvance).toBeLessThanOrEqual(17);
+    expect(streamingContinuity.maxPaintedFrameAdvance).toBeGreaterThan(0);
     expect(streamingContinuity.finalAnswerVisible).toBe(true);
     expect(streamingContinuity.settledRenders).toEqual({});
     expect(settledIds).toHaveLength(158);
@@ -628,9 +616,3 @@ test.describe("Jasmine message rendering", () => {
   });
 
 });
-
-async function expandWorkDetails(assistant: Locator): Promise<void> {
-  const toggle = assistant.getByRole("button", { name: "Show work details" });
-  if (await toggle.isVisible()) await toggle.click();
-  await expect(assistant.locator(".run-recap-details")).toBeVisible();
-}

@@ -539,7 +539,7 @@ export async function messageJumpMarkAlignment(page: Page): Promise<{ maxDelta: 
   });
 }
 
-export function seedLargeThreadMessages(userDataDir: string, threadId: string, count: number): void {
+export function seedLargeThreadMessages(userDataDir: string, threadId: string, count: number, withExpandableThinking = false): void {
   const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
   const db = new DatabaseSync(dbPath);
   const insert = db.prepare(`
@@ -571,6 +571,11 @@ export function seedLargeThreadMessages(userDataDir: string, threadId: string, c
       const timeline = role === "assistant"
         ? JSON.stringify([
             { id: `large-model-${index}`, kind: "system", title: "Model", text: "mock/deepseek-v4-flash" },
+            ...(withExpandableThinking && index === 1 ? [{
+              id: `large-thinking-${index}`,
+              kind: "thinking",
+              text: Array.from({ length: 18 }, (_entry, line) => `Detailed reasoning line ${line + 1} ${"y".repeat(80)}`).join("\n\n")
+            }] : []),
             { id: `large-output-${index}`, kind: "assistant_text", text: content }
           ])
         : "[]";

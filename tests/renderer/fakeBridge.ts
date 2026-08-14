@@ -18,11 +18,9 @@ import type {
 let nextRowId = 0;
 
 /**
- * Drains the hook's requestAnimationFrame-paced visible-stream queue. The hook
- * deliberately spreads stream commits across frames so a slow renderer cannot
- * batch several into one layout jump, and each committed frame can schedule the
- * next from a layout effect, so several passes are needed to reach a resting
- * state.
+ * Drains the hook's requestAnimationFrame-paced visible stream. Provider events
+ * that arrive before a paint are coalesced to the newest cumulative snapshot;
+ * several passes still cover a React commit followed by its layout effect.
  */
 export async function flushFrames(count = 6): Promise<void> {
   for (let index = 0; index < count; index += 1) {
@@ -73,6 +71,8 @@ export type FakeBridge = {
    * the time this resolves.
    */
   emit(event: ChatStreamEvent): Promise<void>;
+  /** Delivers several provider events in one task without advancing paint. */
+  emitBurst(events: ChatStreamEvent[]): Promise<void>;
   /**
    * Withholds the next `listMessages` response until the returned function is
    * called. This is how a renderer test reproduces an out-of-order IPC reply --
@@ -375,6 +375,13 @@ export function createFakeBridge(): FakeBridge {
         for (const listener of [...streamListeners]) listener(event);
       });
       await flushFrames();
+    },
+    async emitBurst(events) {
+      await act(async () => {
+        for (const event of events) {
+          for (const listener of [...streamListeners]) listener(event);
+        }
+      });
     },
     holdNextListMessages() {
       holdCount += 1;

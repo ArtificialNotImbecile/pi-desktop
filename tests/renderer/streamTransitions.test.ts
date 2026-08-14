@@ -1,38 +1,36 @@
 import { describe, expect, test } from "vitest";
-import { compactVisibleStreamTransition } from "../../src/renderer/hooks/useChatMessages";
-import { applyStreamDelta } from "../../src/shared/streamDelta";
+import { renderChatMessages, thread } from "./chatMessagesHarness";
+import { flushFrames } from "./fakeBridge";
 
-describe("visible stream transition compaction", () => {
-  test("compacts queued cumulative snapshots into replayable stream deltas", () => {
-    const first = [{
-      role: "assistant" as const,
-      content: "alpha",
-      timeline: [{ id: "compact-output", kind: "assistant_text" as const, text: "alpha" }]
-    }];
-    const second = [{
-      role: "assistant" as const,
-      content: "alpha beta",
-      timeline: [{ id: "compact-output", kind: "assistant_text" as const, text: "alpha beta" }]
-    }];
-    const third = [{
-      role: "assistant" as const,
-      content: "alpha beta gamma",
-      timeline: [{ id: "compact-output", kind: "assistant_text" as const, text: "alpha beta gamma" }]
-    }];
+describe("visible stream frame publication", () => {
+  test("paints the newest cumulative snapshot instead of replaying a burst over later frames", async () => {
+    const harness = await renderChatMessages();
+    await harness.selectThread(thread("frame-coalescing"));
+    const run = await harness.startRun("show the latest frame");
+    const frame = (text: string) => ({
+      requestId: run.requestId,
+      threadId: run.threadId,
+      status: "running" as const,
+      liveMessages: [{
+        role: "assistant" as const,
+        content: text,
+        timeline: [{ id: "coalesced-output", kind: "assistant_text" as const, text }]
+      }]
+    });
 
-    const reset = compactVisibleStreamTransition(undefined, first);
-    expect(reset?.kind).toBe("stream-reset");
-    const deltaOne = compactVisibleStreamTransition(first, second);
-    const deltaTwo = compactVisibleStreamTransition(second, third);
-    expect(deltaOne?.kind).toBe("stream-delta");
-    expect(deltaTwo?.kind).toBe("stream-delta");
-    if (deltaOne?.kind !== "stream-delta" || deltaTwo?.kind !== "stream-delta") {
-      throw new Error("Expected compact deltas.");
-    }
-    expect(deltaOne.delta.messages[0]?.contentAppend).toBe(" beta");
-    expect(deltaOne.delta.messages[0]?.timelineDelta?.items[0]?.textAppend).toBe(" beta");
-    expect(deltaTwo.delta.messages[0]?.contentAppend).toBe(" gamma");
-    expect(applyStreamDelta(applyStreamDelta(first, deltaOne.delta), deltaTwo.delta)).toEqual(third);
-    expect(compactVisibleStreamTransition(third, third)).toBeNull();
+    await harness.bridge.emitBurst([
+      frame("alpha"),
+      frame("alpha beta"),
+      frame("alpha beta gamma")
+    ]);
+    await flushFrames(1);
+
+    expect(harness.renderedContent()).toContain("alpha beta gamma");
+    expect(harness.commits().filter(({ contents }) => (
+      contents.includes("alpha") || contents.includes("alpha beta")
+    ))).toHaveLength(0);
+
+    await run.settle("alpha beta gamma");
+    harness.unmount();
   });
 });

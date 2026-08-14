@@ -179,10 +179,11 @@ test.describe("Jasmine providers and models", () => {
     await page.getByRole("button", { name: "Send" }).click();
     const liveAssistant = page.locator(".assistant-block.live-message").last();
     await expect(liveAssistant).toBeVisible();
-    await expect(liveAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".turn-activity")).toContainText("deepseek-v4-flash");
     await expect(liveAssistant.locator(".message-actions")).toBeHidden();
     await expect(liveAssistant.locator(".message-actions")).toHaveCSS("pointer-events", "none");
-    await expect(liveAssistant.locator(".thinking-markdown")).toContainText("Need to inspect");
+    await expect(liveAssistant.locator(".thinking-item")).toContainText("Need to inspect");
+    await expect(liveAssistant.locator(".thinking-markdown")).toHaveCount(0);
     await expect(liveAssistant.locator(".tool-run-item").first()).toContainText("reading");
 
     // Switch the composer model while the slow response is still streaming.
@@ -191,7 +192,7 @@ test.describe("Jasmine providers and models", () => {
     await page.locator(".model-pill").click();
     await page.locator(".model-provider-group", { hasText: "Moonshot Kimi" }).getByRole("button", { name: /kimi-k2\.6/ }).click();
     await expect(page.locator(".model-pill")).toContainText("kimi-k2.6");
-    await expect(liveAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".turn-activity")).toContainText("deepseek-v4-flash");
 
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.", { timeout: 10_000 });
     await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("deepseek-v4-flash");

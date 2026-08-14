@@ -5,7 +5,7 @@ import { MessageTimeline } from "./MessageTimeline";
 import { useI18n } from "../../i18n";
 import { MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
-import type { RunRecapStatus } from "./RunRecap";
+import { formatElapsedDuration, type RunStatus } from "./runPresentation";
 
 declare global {
   interface Window {
@@ -87,15 +87,7 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
   const runStatus = runStatusFromMessage(props.message, visibleTimeline);
   const presentation = isLive ? null : partitionSettledTimeline(visibleTimeline);
   const finalText = presentation?.finalText || (isLive ? "" : fallbackFinalText(props.message, runStatus));
-  const detailsTimeline = presentation?.details.filter((item) => !isRunMetaSystemItem(item)) ?? [];
-  const hasProvenance = hasRunProvenance(props.message);
-  const hasRecap = !isLive && (detailsTimeline.length > 0
-    || Boolean(runMeta.model)
-    || Boolean(runMeta.reasoningEffort)
-    || hasProvenance
-    || props.message.elapsedMs !== undefined
-    || runStatus !== "success");
-  const displayedFinalText = finalText || (!hasRecap && !isLive ? props.message.content.trim() : "");
+  const displayedFinalText = finalText || (!isLive && visibleTimeline.length === 0 ? props.message.content.trim() : "");
   const fallbackFinalItem = !isLive && presentation?.finalItems.length === 0 && displayedFinalText
     ? {
         id: `${props.message.renderId ?? props.message.id}-fallback-output`,
@@ -113,7 +105,6 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
       data-message-id={props.message.id}
       data-run-id={props.message.runId}
     >
-      {isLive && <RunMetaLine key="live-run-meta" runMeta={runMeta} responseModelLabel={t("message.responseModel")} />}
       <MessageTimeline
         key="timeline"
         cacheScope={`${props.message.threadId}:${props.message.renderId ?? props.message.id}`}
@@ -123,17 +114,18 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
         modelId={runMeta.model}
         settled={isLive ? undefined : {
           finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
-          fallbackFinalItem,
-          recap: hasRecap ? {
-            status: runStatus,
-            elapsedMs: props.message.elapsedMs,
-            defaultExpanded: Boolean(props.message.preserveRunDetails) || runStatus !== "success" || !displayedFinalText,
-            header: <RunMetaLine runMeta={runMeta} responseModelLabel={t("message.responseModel")} />,
-            footer: hasProvenance ? <RunProvenance message={props.message} /> : undefined
-          } : undefined
+          fallbackFinalItem
         }}
       />
-      {isLive && <RunProvenance key="live-provenance" message={props.message} />}
+      {!isLive && (
+        <RunCompletionLine
+          status={runStatus}
+          elapsedMs={props.message.elapsedMs}
+          runMeta={runMeta}
+          responseModelLabel={t("message.responseModel")}
+        />
+      )}
+      <RunProvenance key="provenance" message={props.message} />
       <AssistantMessageActions
         message={props.message}
         actionMessage={actionMessage}
@@ -291,14 +283,24 @@ function isHiddenExtensionStateItem(item: ChatTimelineItem): boolean {
   return item.kind === "system" && Boolean(item.customType);
 }
 
-function RunMetaLine(props: {
+function RunCompletionLine(props: {
+  status: RunStatus;
+  elapsedMs?: number;
   runMeta: { model: string | null; reasoningEffort: string | null };
   responseModelLabel: string;
 }) {
-  if (!props.runMeta.model) return null;
+  const { language, t } = useI18n();
+  const duration = formatElapsedDuration(props.elapsedMs, language);
+  const label = props.status === "stopped"
+    ? duration ? t("message.stoppedAfter", { duration }) : t("message.stoppedWorkDetails")
+    : props.status === "error"
+      ? duration ? t("message.failedAfter", { duration }) : t("message.failedWorkDetails")
+      : duration ? t("message.workedFor", { duration }) : null;
+  if (!label && !props.runMeta.model) return null;
   return (
-    <div className="message-run-line" aria-label={props.responseModelLabel}>
-      <span>{props.runMeta.model}</span>
+    <div className={`run-completion-line message-run-line ${props.status}`} aria-label={props.responseModelLabel}>
+      {label && <span>{label}</span>}
+      {props.runMeta.model && <small>{props.runMeta.model}</small>}
       {props.runMeta.reasoningEffort && <small>{props.runMeta.reasoningEffort}</small>}
     </div>
   );
@@ -340,15 +342,6 @@ function RunProvenance(props: { message: ChatMessage }) {
   );
 }
 
-function hasRunProvenance(message: ChatMessage): boolean {
-  return Boolean(
-    message.memoryUsed?.length
-    || message.skillsUsed?.length
-    || message.pluginsUsed?.length
-    || message.webSearchUsed?.length
-  );
-}
-
 function partitionSettledTimeline(items: ChatTimelineItem[]): {
   details: ChatTimelineItem[];
   finalItems: Array<Extract<ChatTimelineItem, { kind: "assistant_text" }>>;
@@ -380,13 +373,13 @@ function isTerminalStatusItem(item: ChatTimelineItem): boolean {
   return item.kind === "system" && item.title.trim().toLowerCase() === "stopped";
 }
 
-function runStatusFromMessage(message: ChatMessage, timeline: ChatTimelineItem[]): RunRecapStatus {
+function runStatusFromMessage(message: ChatMessage, timeline: ChatTimelineItem[]): RunStatus {
   if (message.status === "error") return "error";
   if (timeline.some(isTerminalStatusItem)) return "stopped";
   return "success";
 }
 
-function fallbackFinalText(message: ChatMessage, status: RunRecapStatus): string {
+function fallbackFinalText(message: ChatMessage, status: RunStatus): string {
   if (status === "success") return "";
   return message.content.trim();
 }

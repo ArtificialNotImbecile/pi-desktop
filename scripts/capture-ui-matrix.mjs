@@ -88,11 +88,11 @@ try {
   await capture(page, "04-markdown-message", "Markdown message with table, link, and code copy action");
   await page.getByRole("button", { name: "New chat" }).first().click();
   await sendComposerMessage(page, "show write timeline");
-  await page.waitForSelector(".run-recap-toggle");
-  await capture(page, "04-agent-recap", "Completed agent run collapsed to duration recap with final answer visible");
-  await page.getByRole("button", { name: "Show work details" }).last().click();
-  await page.waitForSelector(".run-recap-details:not([hidden]) .tool-run-item");
-  await capture(page, "04-agent-timeline", "Expanded assistant timeline with compact tool run summary and output");
+  await page.waitForSelector(".tool-run-item");
+  await capture(page, "04-agent-timeline", "Completed agent run with chronological compact tool summary and final answer");
+  await page.locator(".tool-run-item").last().getByRole("button").click();
+  await page.waitForSelector(".tool-run-details:not([hidden])");
+  await capture(page, "04-agent-tool-details", "Independently expanded tool arguments and output");
   await sendComposerMessage(page, "show edit timeline");
   await page.waitForSelector(".message-jump-rail");
   await page.getByRole("button", { name: "Open user message navigation" }).click();
@@ -119,12 +119,12 @@ try {
   await page.getByRole("button", { name: "Open Artifacts" }).click();
   await page.waitForSelector(".chat-right-panel");
   await capture(page, "04-right-panel-artifacts", "Right-side Artifacts panel for chat-produced files and web artifacts");
-  await sendComposerMessage(page, "show structured taxonomy");
   await page.getByRole("button", { name: "Open Context taxonomy" }).click();
+  await sendComposerMessage(page, "show structured taxonomy");
   await page.waitForSelector(".taxonomy-item");
   const systemTaxonomy = page.locator(".taxonomy-item", { hasText: "System prompt" }).first();
   if (await systemTaxonomy.count()) {
-    await systemTaxonomy.locator(".taxonomy-item-details > summary").click();
+    await systemTaxonomy.locator(":scope > .taxonomy-item-head").click();
   }
   const projectSegment = page.locator(".taxonomy-part", { hasText: "Project context" });
   if (await projectSegment.count()) {
