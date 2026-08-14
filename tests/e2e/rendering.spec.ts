@@ -177,9 +177,10 @@ test.describe("Jasmine message rendering", () => {
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
     await expect(latestAssistant.getByRole("button", { name: "Show work details" })).toHaveCount(0);
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "document-analysis" }).first();
-    const bashTool = latestAssistant.locator(".tool-run-item", { hasText: "ls -R" }).first();
+    const bashTool = latestAssistant.locator(".tool-run-item[data-tool-name='bash']").first();
     await expect(readTool).toContainText("read - 202 lines");
     await expect(bashTool).toContainText("done - 15 lines");
+    await expect(bashTool).not.toContainText("ls -R");
     await expect(readTool.locator(".tool-run-status")).not.toContainText("reading");
     await expect(bashTool.locator(".tool-run-status")).not.toContainText("running");
     await expect(latestAssistant.locator(".tool-run-status.running")).toHaveCount(0);
@@ -221,6 +222,11 @@ test.describe("Jasmine message rendering", () => {
       return scope.__JASMINE_LAZY_TOOL_DETAILS_NODE__ === row?.querySelector(".tool-run-details")
         && scope.__JASMINE_LAZY_TOOL_CODE_NODE__ === row?.querySelector(".shiki-code-block[data-language='markdown']");
     })).toBe(true);
+
+    const bashToggle = bashTool.getByRole("button");
+    await expect(bashTool.locator(".tool-run-details")).toHaveCount(0);
+    await bashToggle.click();
+    await expect(bashTool.locator(".tool-run-details")).toContainText("ls -R");
   });
 
   test("expanded thinking markdown stays in one left-aligned column", async () => {

@@ -380,6 +380,7 @@ function ToolRunRow(props: { item: Extract<TimelineDisplayItem, { kind: "tool" }
   return (
     <section
       data-timeline-item-id={item.id}
+      data-tool-name={item.toolName}
       className={`timeline-item tool-run-item ${summary.state} ${props.expanded ? "" : "collapsed"}`}
       aria-label={t("message.toolSummary", { action: summary.action, target: summary.target }).trim()}
     >
