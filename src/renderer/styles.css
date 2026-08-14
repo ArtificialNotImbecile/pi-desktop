@@ -4504,7 +4504,10 @@ body:has(.settings-panel) .message-jump-rail {
 
 .tool-run-main {
   display: inline-flex;
-  flex: 1 1 auto;
+  /* Hug the action + target so status and disclosure sit right after them as
+     one compact cluster. The toggle button itself stays full-row, preserving
+     the click target; shrinking still yields at narrow widths. */
+  flex: 0 1 auto;
   align-items: baseline;
   gap: 5px;
   min-width: 0;
@@ -4519,7 +4522,10 @@ body:has(.settings-panel) .message-jump-rail {
 }
 
 .tool-run-target {
-  flex: 1 1 auto;
+  /* Hug the target text: growing to fill the row stretched the pill into a
+     wide gray band. Shrinking (never growing) still yields to status +
+     disclosure at narrow widths and ellipsizes long targets. */
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 520px;
   padding: 1px 4px;
@@ -4598,7 +4604,7 @@ body:has(.settings-panel) .message-jump-rail {
 
 .tool-run-details {
   display: grid;
-  gap: 8px;
+  gap: 14px;
   width: 100%;
   max-width: 700px;
   margin-top: 7px;
@@ -4609,6 +4615,13 @@ body:has(.settings-panel) .message-jump-rail {
   display: grid;
   gap: 6px;
   width: 100%;
+}
+
+/* The uppercase section label ("INPUT"/"OUTPUT"/...) already headers each
+   detail card; the code block's own caption bar only repeated it in lowercase.
+   Drop the duplicate so the card keeps a single, lighter header. */
+.tool-run-details .code-block figcaption {
+  display: none;
 }
 
 .tool-run-details small {
@@ -4763,6 +4776,9 @@ body:has(.settings-panel) .message-jump-rail {
   position: relative;
   display: flex;
   gap: 10px;
+  /* Pull the row left by the first button's inner inset so the icon glyph
+     sits on the same content edge as the answer text and completion line. */
+  margin-left: -4px;
   color: var(--muted);
 }
 

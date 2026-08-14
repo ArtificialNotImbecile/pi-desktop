@@ -339,12 +339,51 @@ test.describe("Jasmine message rendering", () => {
     expect(compactTypography.targetHeight).toBeLessThan(24);
     expect(compactTypography.labelWeight).toBeGreaterThanOrEqual(600);
     expect(compactTypography.statusFontSize).toBe("12px");
+    // The target pill must hug its text: growing to fill the row stretched it
+    // into a wide gray band between the action label and the status.
+    const compactGeometry = await writeTool.locator(".tool-run-toggle").evaluate((row) => {
+      const label = row.querySelector(".tool-run-main b")?.getBoundingClientRect();
+      const target = row.querySelector(".tool-run-target")?.getBoundingClientRect();
+      const status = row.querySelector(".tool-run-status")?.getBoundingClientRect();
+      if (!label || !target || !status) throw new Error("Tool compact geometry nodes missing.");
+      return {
+        labelRight: label.right,
+        targetLeft: target.left,
+        targetRight: target.right,
+        targetWidth: target.width,
+        statusLeft: status.left
+      };
+    });
+    expect(compactGeometry.targetLeft).toBeGreaterThanOrEqual(compactGeometry.labelRight);
+    expect(compactGeometry.targetLeft - compactGeometry.labelRight).toBeLessThanOrEqual(8);
+    expect(compactGeometry.targetWidth).toBeLessThan(200);
+    // The action/target/status/chevron cluster reads as one compact
+    // disclosure: the status follows the hugged target within a token-sized
+    // gap instead of being stranded at the far end of the row.
+    expect(compactGeometry.statusLeft).toBeGreaterThanOrEqual(compactGeometry.targetRight);
+    expect(compactGeometry.statusLeft - compactGeometry.targetRight).toBeLessThanOrEqual(16);
+    // Thought/tool rows, the answer, the completion line, and the action icons
+    // share one content edge; the first action glyph must not sit inset from it.
+    const sharedEdge = await writeMessage.evaluate((block) => {
+      const answer = block.querySelector(".timeline-output p")?.getBoundingClientRect();
+      const completion = block.querySelector(".run-completion-line")?.getBoundingClientRect();
+      const actionIcon = block.querySelector(".message-actions .icon")?.getBoundingClientRect();
+      if (!answer || !completion || !actionIcon) throw new Error("Shared content edge nodes missing.");
+      return { answerLeft: answer.left, completionLeft: completion.left, actionIconLeft: actionIcon.left };
+    });
+    expect(Math.abs(sharedEdge.completionLeft - sharedEdge.answerLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sharedEdge.actionIconLeft - sharedEdge.answerLeft)).toBeLessThanOrEqual(2);
     await writeTool.getByRole("button").click();
     await expect(writeDetails).toBeVisible();
     await expect(writeDetails).toContainText("Successfully wrote");
     await expect(writeDetails).toContainText("export function hello");
     await expect(writeTool).toContainText("INPUT");
     await expect(writeTool).toContainText("OUTPUT");
+    // Each detail card is headed once by its uppercase section label; the code
+    // block's own caption bar must not render a second, lowercase duplicate.
+    await expect(writeDetails.locator("small", { hasText: "INPUT" })).toBeVisible();
+    await expect(writeDetails.locator("small", { hasText: "OUTPUT" })).toBeVisible();
+    await expect(writeDetails.locator(".code-block figcaption:visible")).toHaveCount(0);
     const toolDetailsLayout = await writeTool.locator(".tool-run-details").evaluate((element) => {
       const rows = Array.from(element.querySelectorAll(":scope > div"));
       return rows.map((row) => {
