@@ -227,6 +227,44 @@ describe("message rendering", () => {
     expect(settledThought.querySelector(".timeline-running-indicator")).toBeNull();
   });
 
+  test("only the active timeline segment keeps live thought presentation", () => {
+    const message = {
+      ...assistantMessage("stream-multiple-thoughts-0", [
+        { id: "completed-thought", kind: "thinking" as const, text: "Completed plan\nCompleted latest line" },
+        {
+          id: "completed-tool-call",
+          kind: "tool_call" as const,
+          toolCallId: "completed-tool",
+          toolName: "read",
+          title: "Read file",
+          argumentsJson: JSON.stringify({ path: "README.md" })
+        },
+        {
+          id: "completed-tool-result",
+          kind: "tool_result" as const,
+          toolCallId: "completed-tool",
+          toolName: "read",
+          title: "Read file",
+          content: "Done"
+        },
+        { id: "active-thought", kind: "thinking" as const, text: "Active plan\nActive latest line" }
+      ]),
+      elapsedMs: undefined
+    };
+    const harness = mountMessages([message]);
+    const thoughts = Array.from(harness.container.querySelectorAll<HTMLElement>(".thinking-item"));
+
+    expect(thoughts).toHaveLength(2);
+    expect(thoughts[0].classList.contains("done")).toBe(true);
+    expect(thoughts[0].textContent).toContain("Completed plan");
+    expect(thoughts[0].textContent).not.toContain("Completed latest line");
+    expect(thoughts[0].querySelector(".timeline-running-indicator")).toBeNull();
+    expect(thoughts[1].classList.contains("running")).toBe(true);
+    expect(thoughts[1].textContent).toContain("Active latest line");
+    expect(thoughts[1].textContent).not.toContain("Active plan");
+    expect(thoughts[1].querySelector(".timeline-running-indicator")).not.toBeNull();
+  });
+
   test("collapsed thought summaries and web provenance redact credentials", () => {
     const signedUrl = "https://user:password@api.example.test/private/report?access_token=provenance-must-not-see-this&X-Amz-Signature=signed#secret";
     const message: ChatMessage = {

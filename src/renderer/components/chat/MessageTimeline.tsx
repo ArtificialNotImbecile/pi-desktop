@@ -84,6 +84,7 @@ export function MessageTimeline(props: {
 
   const finalIds = new Set(props.settled?.finalItemIds ?? []);
   if (props.settled?.fallbackFinalItem) finalIds.add(props.settled.fallbackFinalItem.id);
+  const activeLiveItemId = props.live ? displayItems.at(-1)?.id : undefined;
 
   // DeepSeek-style settlement: every thought/tool row stays in chronological
   // flow and owns its own compact disclosure. There is no turn-wide wrapper
@@ -95,7 +96,7 @@ export function MessageTimeline(props: {
           key={item.id}
           item={item}
           expanded={isExpanded(item)}
-          live={Boolean(props.live)}
+          live={item.id === activeLiveItemId}
           finalAnswer={finalIds.has(item.id)}
           onCopyCode={props.onCopyCode}
           onToggle={toggleItem}
