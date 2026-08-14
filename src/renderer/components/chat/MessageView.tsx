@@ -363,9 +363,12 @@ function RunProvenance(props: { message: ChatMessage }) {
 
 function safeProvenanceLabel(result: NonNullable<ChatMessage["webSearchUsed"]>[number]): string {
   const url = sanitizedHttpUrl(result.url);
-  const title = result.title.trim() === result.url.trim()
+  const rawTitle = result.title.trim();
+  const title = rawTitle === result.url.trim()
     ? url
-    : credentialSafeText(result.title);
+    : /^https?:\/\//i.test(rawTitle)
+      ? sanitizedHttpUrl(rawTitle)
+      : credentialSafeText(rawTitle);
   if (title && url && title !== url) return `${title} - ${url}`;
   return title || url;
 }

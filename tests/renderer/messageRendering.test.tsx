@@ -244,6 +244,11 @@ describe("message rendering", () => {
           title: "Authorization: Bearer provenance-title-must-not-see-this",
           url: "https://docs.example.test/guide?api_key=another-hidden-value",
           snippet: ""
+        },
+        {
+          title: "https://alice:hunter2@private.example.test/report?download=secret#fragment",
+          url: "https://source.example.test/item",
+          snippet: ""
         }
       ]
     };
@@ -256,7 +261,10 @@ describe("message rendering", () => {
     expect(thought.querySelector(".thinking-markdown")).toBeNull();
     expect(provenance.textContent).toContain("https://api.example.test/private/report");
     expect(provenance.textContent).toContain("https://docs.example.test/guide");
+    expect(provenance.textContent).toContain("https://private.example.test/report");
     expect(provenance.textContent).not.toContain("password");
+    expect(provenance.textContent).not.toContain("alice");
+    expect(provenance.textContent).not.toContain("hunter2");
     expect(provenance.textContent).not.toContain("access_token");
     expect(provenance.textContent).not.toContain("provenance-must-not-see-this");
     expect(provenance.textContent).not.toContain("provenance-title-must-not-see-this");
