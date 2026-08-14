@@ -35,6 +35,9 @@ type MessageListProps = {
   onMessageScroll(): void;
 };
 
+const runActivityStartedAtCache = new Map<string, number>();
+const RUN_ACTIVITY_START_CACHE_LIMIT = 500;
+
 export const MessageList = memo(function MessageList(props: MessageListProps) {
   recordHarnessRender();
   const { t } = useI18n();
@@ -141,7 +144,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
           </>
         )}
         {isRunning && (
-          <TurnActivity key={props.runActivityKey} label={runningLabel} stopping={props.runState === "stopping"} />
+          <TurnActivity key={props.runActivityKey} runKey={props.runActivityKey} label={runningLabel} stopping={props.runState === "stopping"} />
         )}
         {props.error && (
           <div className="error-strip">
@@ -179,15 +182,15 @@ function isRunActive(runState: RunState): boolean {
   return runState === "running" || runState === "stopping";
 }
 
-function TurnActivity(props: { label: string; stopping: boolean }) {
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+function TurnActivity(props: { runKey: string; label: string; stopping: boolean }) {
+  const [startedAt] = useState(() => startedAtForRun(props.runKey));
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   useEffect(() => {
-    const startedAt = Date.now();
     const timer = window.setInterval(() => {
       setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [startedAt]);
   const clock = elapsedSeconds >= 15
     ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`
     : null;
@@ -197,6 +200,18 @@ function TurnActivity(props: { label: string; stopping: boolean }) {
       {clock && <time aria-hidden="true">{clock}</time>}
     </div>
   );
+}
+
+function startedAtForRun(runKey: string): number {
+  const remembered = runActivityStartedAtCache.get(runKey);
+  if (remembered !== undefined) return remembered;
+  if (runActivityStartedAtCache.size >= RUN_ACTIVITY_START_CACHE_LIMIT) {
+    const oldest = runActivityStartedAtCache.keys().next().value;
+    if (oldest !== undefined) runActivityStartedAtCache.delete(oldest);
+  }
+  const startedAt = Date.now();
+  runActivityStartedAtCache.set(runKey, startedAt);
+  return startedAt;
 }
 
 function isScrollbarGutterPointer(scroll: HTMLDivElement, clientX: number): boolean {

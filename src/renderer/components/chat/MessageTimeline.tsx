@@ -447,7 +447,10 @@ function toolTarget(
   call: Extract<ChatTimelineItem, { kind: "tool_call" }> | undefined,
   toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined
 ): string {
-  if (toolName === "bash") return truncateMiddle(stringValue(args.command) || call?.title || toolResult?.title || "", 92);
+  // Shell commands frequently carry inline credentials or environment values.
+  // Keep the collapsed row and its accessible label generic; the command body
+  // remains lazy and appears only when the user deliberately opens details.
+  if (toolName === "bash") return "";
   if (toolName === "web_search" || toolName === "code_search") return truncateMiddle(stringValue(args.query), 72);
   if (toolName === "fetch_content") return truncateMiddle(stringValue(args.url), 76);
   if (toolName === "get_search_content") return truncateMiddle(stringValue(args.id) || stringValue(args.url), 76);

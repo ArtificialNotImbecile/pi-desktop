@@ -129,6 +129,8 @@ describe("message rendering", () => {
       expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
       harness.rerender(renderList("thread-b:request-c", "settings-b"));
       expect(harness.container.querySelector(".turn-activity")?.querySelector("time")).toBeNull();
+      harness.rerender(renderList("thread-a:request-a", "settings-b"));
+      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:30");
     } finally {
       harness.unmount();
       vi.useRealTimers();
@@ -288,7 +290,13 @@ describe("message rendering", () => {
       { command: "curl https://example.test" },
       { content: "Authorization: Bearer routine-capture-must-not-see-this\nCommand exited with code 1", isError: true }
     ));
-    const harness = mountMessages([editMessage, bashMessage, errorMessage, secretErrorMessage]);
+    const secretCommandMessage = assistantMessage("secret-command-message", toolTimeline(
+      "secret-command",
+      "bash",
+      { command: "curl -H 'Authorization: Bearer collapsed-command-must-not-see-this' https://example.test" },
+      { content: "ok" }
+    ));
+    const harness = mountMessages([editMessage, bashMessage, errorMessage, secretErrorMessage, secretCommandMessage]);
 
     const editTool = harness.container.querySelector('[data-message-id="edit-message"] .tool-run-item');
     expect(editTool?.textContent).toContain("edit");
@@ -297,7 +305,7 @@ describe("message rendering", () => {
 
     const bashTool = harness.container.querySelector('[data-message-id="bash-message"] .tool-run-item');
     expect(bashTool?.textContent).toContain("bash");
-    expect(bashTool?.textContent).toContain("ls src/renderer/components/chat");
+    expect(bashTool?.textContent).not.toContain("ls src/renderer/components/chat");
     expect(bashTool?.textContent).toContain("done - 3 lines");
     expect(bashTool?.querySelector(".tool-run-details")).toBeNull();
     const bashToggle = bashTool?.querySelector(".tool-run-toggle") as HTMLButtonElement;
@@ -317,6 +325,9 @@ describe("message rendering", () => {
     const secretErrorTool = harness.container.querySelector('[data-message-id="secret-error-message"] .tool-run-item.error');
     expect(secretErrorTool?.querySelector(".tool-run-details")).toBeNull();
     expect(secretErrorTool?.textContent).not.toContain("routine-capture-must-not-see-this");
+    const secretCommandTool = harness.container.querySelector('[data-message-id="secret-command-message"] .tool-run-item');
+    expect(secretCommandTool?.querySelector(".tool-run-details")).toBeNull();
+    expect(secretCommandTool?.textContent).not.toContain("collapsed-command-must-not-see-this");
     fireEvent.click(errorToggle);
     const errorDetails = errorTool?.querySelector(".tool-run-details") as HTMLDivElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("true");
