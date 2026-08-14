@@ -82,9 +82,15 @@ test.describe("Jasmine panels and tools", () => {
 
     await page.locator(".rich-composer-editor").fill("memory preferred editor?");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Memory-aware reply: My preferred editor is Neovim");
-    await expect(page.locator(".assistant-block").last().locator(".memory-used-line")).toContainText("My preferred editor is Neovim");
-    await expectNoPurpleThemeColors(page.locator(".assistant-block").last(), "memory-used message indicator");
+    const memoryAwareReply = page.locator(".assistant-block").last();
+    await expect(memoryAwareReply).toContainText("Memory-aware reply: My preferred editor is Neovim");
+    const memoryDisclosure = memoryAwareReply.getByRole("button", { name: "Memory used" });
+    await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "false");
+    await expect(memoryAwareReply.locator(".memory-used-detail")).toHaveCount(0);
+    await memoryDisclosure.click();
+    await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(memoryAwareReply.locator(".memory-used-detail")).toContainText("My preferred editor is Neovim");
+    await expectNoPurpleThemeColors(memoryAwareReply, "memory-used message indicator");
 
     await openMemoryFromCommandPalette(page);
     await expect(page.locator(".memory-panel")).toBeVisible();
