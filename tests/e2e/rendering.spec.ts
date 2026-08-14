@@ -526,6 +526,9 @@ test.describe("Jasmine message rendering", () => {
       requestAnimationFrame(sample);
     });
     const textLengthBeforeBlockedFrame = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
+    await page.evaluate(() => {
+      (window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ = [];
+    });
     // Model a long Markdown/Shiki frame while main-process stream updates keep
     // arriving. Publication should converge to the newest cumulative snapshot
     // on the next paint instead of replaying every missed prefix.
@@ -541,6 +544,14 @@ test.describe("Jasmine message rendering", () => {
       if (!scroll) return Number.POSITIVE_INFINITY;
       return Math.max(0, node.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom);
     })).toBeLessThanOrEqual(96);
+    const blockedFrameTailEnvelope = await page.evaluate(() => Math.max(
+      0,
+      ...((window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ ?? [])
+    ));
+    // The first painted frame after the blocked interval must already pair the
+    // coalesced newest text with a matching tail position. Replaying 16px catch-
+    // up steps would expose a much larger offset in this rAF sample.
+    expect(blockedFrameTailEnvelope).toBeLessThanOrEqual(96);
     // A renderer-blocked interval has no painted frames, so the amount of text
     // queued by the independent main-process stream is scheduler/platform
     // dependent. Begin the steady-state tail envelope after recovery.

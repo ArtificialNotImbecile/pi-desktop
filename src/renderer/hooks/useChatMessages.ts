@@ -7,6 +7,7 @@ import { getBridge } from "../desktopApi";
 import { errorMessage } from "../utils/errors";
 
 const MESSAGE_PAGE_SIZE = 160;
+const COALESCED_TAIL_SNAP_THRESHOLD_PX = 96;
 
 declare global {
   interface Window {
@@ -196,6 +197,15 @@ export function useChatMessages(options: {
         pendingMessageAnchorRestoreRef.current = null;
         restoreMessageAnchor(threadId, pendingMessageAnchor.anchor);
       }
+    }
+    const committed = visibleStreamCommitRef.current;
+    // Coalescing deliberately skips stale cumulative prefixes. If an expensive
+    // Markdown/Shiki render lets the newest snapshot grow by several lines at
+    // once, the ordinary 16px follower cannot keep the tail visible. Correct a
+    // large gap in this pre-paint layout phase so the reader sees the newest
+    // content and its matching scroll position in the same painted frame.
+    if (threadId && scroll && committed?.kind === "stream-frame" && shouldAutoFollow(threadId)) {
+      snapCoalescedTailBeforePaint(scroll);
     }
     // Anchor correction must precede both commit acknowledgement (which can
     // schedule the next visual batch) and the bounded tail follower.
@@ -1405,6 +1415,18 @@ export function useChatMessages(options: {
       tailScrollAnimationRef.current = window.requestAnimationFrame(tick);
     };
     tailScrollAnimationRef.current = window.requestAnimationFrame(tick);
+  }
+
+  function snapCoalescedTailBeforePaint(scroll: HTMLDivElement): void {
+    const liveAssistants = scroll.querySelectorAll<HTMLElement>(".assistant-block.live-message");
+    const activeTail = liveAssistants.item(liveAssistants.length - 1);
+    if (!activeTail) return;
+    const visualTailOffset = Math.max(
+      0,
+      activeTail.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom
+    );
+    if (visualTailOffset <= COALESCED_TAIL_SNAP_THRESHOLD_PX) return;
+    writeScrollTop(scroll, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
   }
 
   function stopTailScrollAnimation() {
