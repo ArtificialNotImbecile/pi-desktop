@@ -21,6 +21,11 @@ describe("collapsed chat display sanitization", () => {
     expect(credentialSafeText("Reviewed src/renderer/App.tsx")).toBe("Reviewed src/renderer/App.tsx");
   });
 
+  test("hides authenticated URLs embedded in otherwise ordinary text", () => {
+    expect(credentialSafeText("Mirror: https://alice:hunter2@private.example.test/report")).toBe("");
+    expect(credentialSafeText("Mirror: https://alice@private.example.test/report")).toBe("");
+  });
+
   test("keeps a safe URL path but removes credential-bearing paths, auth, query, and hash", () => {
     expect(sanitizedHttpUrl("https://user:pass@example.test/docs/guide?access_token=hidden#secret"))
       .toBe("https://example.test/docs/guide");

@@ -287,6 +287,11 @@ describe("message rendering", () => {
           title: "https://alice:hunter2@private.example.test/report?download=secret#fragment",
           url: "https://source.example.test/item",
           snippet: ""
+        },
+        {
+          title: "Mirror: https://mirror-user:mirror-pass@private.example.test/report",
+          url: "https://mirror-source.example.test/item",
+          snippet: ""
         }
       ]
     };
@@ -303,6 +308,8 @@ describe("message rendering", () => {
     expect(provenance.textContent).not.toContain("password");
     expect(provenance.textContent).not.toContain("alice");
     expect(provenance.textContent).not.toContain("hunter2");
+    expect(provenance.textContent).not.toContain("mirror-user");
+    expect(provenance.textContent).not.toContain("mirror-pass");
     expect(provenance.textContent).not.toContain("access_token");
     expect(provenance.textContent).not.toContain("provenance-must-not-see-this");
     expect(provenance.textContent).not.toContain("provenance-title-must-not-see-this");
