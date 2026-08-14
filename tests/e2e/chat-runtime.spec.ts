@@ -1425,14 +1425,17 @@ test.describe("Jasmine chat runtime", () => {
     // Stop only after the first stream chunk visibly rendered thinking + tool
     // work; a fixed sleep raced the first paint and could stop an empty run.
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(activeAssistant.locator(".tool-run-item")).toContainText("find / -name node");
+    const activeBashTool = activeAssistant.locator(".tool-run-item[data-tool-name='bash']");
+    await expect(activeBashTool).toBeVisible();
+    await expect(activeBashTool).not.toContainText("find / -name node");
+    await expect(activeBashTool.locator(".tool-run-status")).toContainText("running");
     await page.getByRole("button", { name: "Stop response" }).click();
     await expect(activeAssistant.locator(".run-recap")).toHaveCount(0);
     await expect(activeAssistant.locator(".run-completion-line")).toContainText("Stopped after");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Stopped");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("The response was stopped by the user.");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(activeAssistant.locator(".tool-run-item")).toContainText("find / -name node");
+    await expect(activeBashTool).not.toContainText("find / -name node");
     await expect(activeAssistant.locator(".tool-run-status")).toContainText("stopped");
     await expect(activeAssistant.locator(".tool-run-status")).not.toContainText("running");
     await expect(page.locator(".error-strip")).toBeHidden();
@@ -1448,7 +1451,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(reopenedAssistant.locator(".run-recap")).toHaveCount(0);
     await expect(reopenedAssistant.locator(".run-completion-line")).toContainText("Stopped after");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(reopenedAssistant.locator(".tool-run-item")).toContainText("find / -name node");
+    await expect(reopenedAssistant.locator(".tool-run-item[data-tool-name='bash']")).not.toContainText("find / -name node");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Stopped");
     await expect(reopenedAssistant.locator(".tool-run-status")).toContainText("stopped");
     await expect(reopenedAssistant.locator(".tool-run-status")).not.toContainText("running");

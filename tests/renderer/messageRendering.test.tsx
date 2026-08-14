@@ -225,6 +225,44 @@ describe("message rendering", () => {
     expect(settledThought.querySelector(".timeline-running-indicator")).toBeNull();
   });
 
+  test("collapsed thought summaries and web provenance redact credentials", () => {
+    const signedUrl = "https://user:password@api.example.test/private/report?access_token=provenance-must-not-see-this&X-Amz-Signature=signed#secret";
+    const message: ChatMessage = {
+      ...assistantMessage("safe-routine-history", [
+        {
+          id: "credential-thought",
+          kind: "thinking",
+          text: "Authorization: Bearer thought-summary-must-not-see-this"
+        },
+        { id: "safe-history-output", kind: "assistant_text", text: "Visible final answer." }
+      ]),
+      webSearchUsed: [
+        { title: signedUrl, url: signedUrl, snippet: "" },
+        {
+          title: "Authorization: Bearer provenance-title-must-not-see-this",
+          url: "https://docs.example.test/guide?api_key=another-hidden-value",
+          snippet: ""
+        }
+      ]
+    };
+    const harness = mountMessages([message]);
+    const thought = harness.container.querySelector(".thinking-item") as HTMLElement;
+    const provenance = harness.container.querySelector(".web-search-used-line") as HTMLElement;
+
+    expect(thought.textContent).toBe("Thinking");
+    expect(thought.textContent).not.toContain("thought-summary-must-not-see-this");
+    expect(thought.querySelector(".thinking-markdown")).toBeNull();
+    expect(provenance.textContent).toContain("https://api.example.test/private/report");
+    expect(provenance.textContent).toContain("https://docs.example.test/guide");
+    expect(provenance.textContent).not.toContain("password");
+    expect(provenance.textContent).not.toContain("access_token");
+    expect(provenance.textContent).not.toContain("provenance-must-not-see-this");
+    expect(provenance.textContent).not.toContain("provenance-title-must-not-see-this");
+
+    fireEvent.click(within(thought).getByRole("button", { name: "Thinking" }));
+    expect(thought.querySelector(".thinking-markdown")?.textContent).toContain("thought-summary-must-not-see-this");
+  });
+
   test("a disclosure opened live stays open after settlement and a persisted reload", () => {
     const liveMessage = {
       ...assistantMessage("stream-disclosure-navigation-0", [

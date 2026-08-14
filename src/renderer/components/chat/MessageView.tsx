@@ -2,6 +2,7 @@ import { createContext, memo, useContext, useLayoutEffect, useRef, useState, typ
 import type { ChatMessage, ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
 import { MessageTimeline } from "./MessageTimeline";
+import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 import { useI18n } from "../../i18n";
 import { MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
@@ -338,11 +339,20 @@ function RunProvenance(props: { message: ChatMessage }) {
         <div className="web-search-used-line" aria-label={t("message.webSearchUsed")}>
           <SearchIcon />
           <span>{t("message.usedWebSearch")}</span>
-          <small>{props.message.webSearchUsed.map((result) => `${result.title} - ${result.url}`).join(" / ")}</small>
+          <small>{props.message.webSearchUsed.map(safeProvenanceLabel).filter(Boolean).join(" / ")}</small>
         </div>
       )}
     </>
   );
+}
+
+function safeProvenanceLabel(result: NonNullable<ChatMessage["webSearchUsed"]>[number]): string {
+  const url = sanitizedHttpUrl(result.url);
+  const title = result.title.trim() === result.url.trim()
+    ? url
+    : credentialSafeText(result.title);
+  if (title && url && title !== url) return `${title} - ${url}`;
+  return title || url;
 }
 
 function partitionSettledTimeline(items: ChatTimelineItem[]): {

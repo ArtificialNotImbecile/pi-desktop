@@ -4,6 +4,7 @@ import { BrainIcon, ChevronDownIcon, SearchIcon, TerminalIcon, WrenchIcon } from
 import { MarkdownMessage } from "./MarkdownMessage";
 import { useI18n } from "../../i18n";
 import { languageFromPath, looksLikeDiff, looksLikeJson, ShikiCodeBlock, type CodeBlockKind } from "../code";
+import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 
 declare global {
   interface Window {
@@ -498,26 +499,11 @@ function toolTarget(
 }
 
 function sanitizedUrlTarget(value: string, limit: number): string {
-  if (!value.trim()) return "";
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return safeCollapsedTextTarget(`${parsed.origin}${parsed.pathname}`, limit);
-  } catch {
-    // An unparseable external target is safer in the explicitly opened INPUT
-    // block than in routine history, accessibility output, and screenshots.
-    return "";
-  }
+  return truncateMiddle(sanitizedHttpUrl(value), limit);
 }
 
 function safeCollapsedTextTarget(value: string, limit: number): string {
-  const trimmed = value.trim();
-  if (!trimmed || containsCredentialMarker(trimmed)) return "";
-  return truncateMiddle(trimmed, limit);
-}
-
-function containsCredentialMarker(value: string): boolean {
-  return /(?:authorization|bearer|api[-_ ]?key|access[-_ ]?token|password|passwd|secret|x-amz-(?:signature|credential|security-token)|(?:^|[?&])sig(?:nature)?=)/i.test(value);
+  return truncateMiddle(credentialSafeText(value), limit);
 }
 
 function isInternalSessionSummary(title: string): boolean {
@@ -764,7 +750,7 @@ function truncateMiddle(value: string, maxLength: number): string {
 
 function thoughtSummary(text: string, live: boolean): string {
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-  return (live ? lines.at(-1) : lines[0]) ?? "";
+  return credentialSafeText((live ? lines.at(-1) : lines[0]) ?? "");
 }
 
 function TimelineToggle(props: { label: string; summary: string; running?: boolean; expanded: boolean; icon: ReactElement; onToggle(): void }) {
