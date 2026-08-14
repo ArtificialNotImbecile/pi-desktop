@@ -582,7 +582,7 @@ test.describe("Jasmine message rendering", () => {
       const scroll = document.querySelector<HTMLElement>(".message-scroll");
       if (!scroll) return Number.POSITIVE_INFINITY;
       return Math.max(0, node.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom);
-    })).toBeLessThanOrEqual(96);
+    })).toBeLessThanOrEqual(17);
     const blockedFrameTailEnvelope = await page.evaluate(() => Math.max(
       0,
       ...((window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ ?? [])
@@ -590,7 +590,7 @@ test.describe("Jasmine message rendering", () => {
     // The first painted frame after the blocked interval must already pair the
     // coalesced newest text with a matching tail position. Replaying 16px catch-
     // up steps would expose a much larger offset in this rAF sample.
-    expect(blockedFrameTailEnvelope).toBeLessThanOrEqual(96);
+    expect(blockedFrameTailEnvelope).toBeLessThanOrEqual(17);
     // A renderer-blocked interval has no painted frames, so the amount of text
     // queued by the independent main-process stream is scheduler/platform
     // dependent. Begin the steady-state tail envelope after recovery.
@@ -655,7 +655,7 @@ test.describe("Jasmine message rendering", () => {
     expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight + 100);
     expect(streamingContinuity.sameMessageNode).toBe(true);
     expect(streamingContinuity.sameUserNode).toBe(true);
-    expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(96);
+    expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(17);
     expect(streamingContinuity.maxPaintedFrameAdvance).toBeGreaterThan(0);
     expect(streamingContinuity.finalAnswerVisible).toBe(true);
     expect(streamingContinuity.settledRenders).toEqual({});

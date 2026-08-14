@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, ChevronDownIcon, SearchIcon, TerminalIcon, WrenchIcon } from "../icons/Icons";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -754,11 +754,19 @@ function thoughtSummary(text: string, live: boolean): string {
 }
 
 function TimelineToggle(props: { label: string; summary: string; running?: boolean; expanded: boolean; icon: ReactElement; onToggle(): void }) {
+  const summaryId = useId();
   return (
-    <button type="button" className="timeline-label timeline-toggle" aria-label={props.label} aria-expanded={props.expanded} onClick={props.onToggle}>
+    <button
+      type="button"
+      className="timeline-label timeline-toggle"
+      aria-label={props.label}
+      aria-describedby={!props.expanded && props.summary ? summaryId : undefined}
+      aria-expanded={props.expanded}
+      onClick={props.onToggle}
+    >
       {props.icon}
       <span>{props.label}</span>
-      {!props.expanded && props.summary && <small className="timeline-summary">{props.summary}</small>}
+      {!props.expanded && props.summary && <small id={summaryId} className="timeline-summary">{props.summary}</small>}
       {props.running && <span className="timeline-running-indicator" aria-hidden="true" />}
       <ChevronDownIcon />
     </button>

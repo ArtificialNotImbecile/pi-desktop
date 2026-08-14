@@ -7,7 +7,7 @@ import { getBridge } from "../desktopApi";
 import { errorMessage } from "../utils/errors";
 
 const MESSAGE_PAGE_SIZE = 160;
-const COALESCED_TAIL_SNAP_THRESHOLD_PX = 96;
+const COALESCED_TAIL_MAX_OFFSET_PX = 16;
 
 declare global {
   interface Window {
@@ -1428,8 +1428,15 @@ export function useChatMessages(options: {
       0,
       activeTail.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom
     );
-    if (visualTailOffset <= COALESCED_TAIL_SNAP_THRESHOLD_PX) return;
-    writeScrollTop(scroll, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
+    if (visualTailOffset <= COALESCED_TAIL_MAX_OFFSET_PX) return;
+    const target = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    // Keep one normal follower frame of motion visible. The remainder is a
+    // content-growth compensation applied before paint, so a cumulative frame
+    // can add several lines without making the watched tail jump down the page.
+    writeScrollTop(scroll, Math.min(
+      target,
+      scroll.scrollTop + visualTailOffset - COALESCED_TAIL_MAX_OFFSET_PX
+    ));
   }
 
   function stopTailScrollAnimation() {

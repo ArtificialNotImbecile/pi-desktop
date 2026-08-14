@@ -1,10 +1,10 @@
 import { createContext, memo, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatMessage, ChatTimelineItem } from "../../../shared/ipc";
-import { BrainIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
+import { BrainIcon, ChevronDownIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
 import { MessageTimeline } from "./MessageTimeline";
 import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 import { useI18n } from "../../i18n";
-import { MenuItem, MenuSurface } from "../ui";
+import { Button, MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
 import { formatElapsedDuration, type RunStatus } from "./runPresentation";
 
@@ -312,13 +312,28 @@ function RunCompletionLine(props: {
 
 function RunProvenance(props: { message: ChatMessage }) {
   const { t } = useI18n();
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
   return (
     <>
       {props.message.memoryUsed && props.message.memoryUsed.length > 0 && (
-        <div className="memory-used-line" aria-label={t("message.memoryUsed")}>
-          <BrainIcon />
-          <span>{t("message.usedMemory")}</span>
-          <small>{props.message.memoryUsed.map((memory) => memory.content).join(" · ")}</small>
+        <div className={`memory-used-provenance ${memoryExpanded ? "expanded" : ""}`}>
+          <Button
+            className="memory-used-line"
+            size="sm"
+            variant="quiet"
+            leftIcon={<BrainIcon />}
+            rightIcon={<ChevronDownIcon />}
+            aria-label={t("message.memoryUsed")}
+            aria-expanded={memoryExpanded}
+            onClick={() => setMemoryExpanded((expanded) => !expanded)}
+          >
+            {t("message.usedMemory")}
+          </Button>
+          {memoryExpanded && (
+            <div className="memory-used-detail">
+              {props.message.memoryUsed.map((memory) => <p key={memory.id}>{memory.content}</p>)}
+            </div>
+          )}
         </div>
       )}
       {props.message.skillsUsed && props.message.skillsUsed.length > 0 && (

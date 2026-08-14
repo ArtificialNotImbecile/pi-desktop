@@ -5999,6 +5999,50 @@ button.attachment-chip-main:hover span {
   font-size: 12px;
 }
 
+.memory-used-provenance {
+  display: grid;
+  gap: 5px;
+  max-width: 640px;
+}
+
+button.memory-used-line {
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-content: stretch;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.memory-used-line > .ui-button-label {
+  min-width: 0;
+  text-align: left;
+}
+
+button.memory-used-line > .ui-button-icon:last-child svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 160ms ease;
+}
+
+.memory-used-provenance.expanded button.memory-used-line > .ui-button-icon:last-child svg {
+  transform: rotate(180deg);
+}
+
+.memory-used-detail {
+  display: grid;
+  gap: 5px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(var(--accent-rgb), 0.18);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-used-detail p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .memory-used-line small,
 .skill-used-line small,
 .plugin-used-line small,

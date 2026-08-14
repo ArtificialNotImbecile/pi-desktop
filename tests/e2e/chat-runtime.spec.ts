@@ -1307,7 +1307,6 @@ test.describe("Jasmine chat runtime", () => {
       monitor.observer.disconnect();
       cancelAnimationFrame(monitor.frameId);
 
-      let maxSmoothFrameAdvance = 0;
       let prependFrameScrollAdvance = 0;
       let prependFrameTailDrift = 0;
       let prependTransitions = 0;
@@ -1322,8 +1321,6 @@ test.describe("Jasmine chat runtime", () => {
             prependFrameTailDrift,
             Math.abs(current.anchorViewportTop - previous.anchorViewportTop)
           );
-        } else {
-          maxSmoothFrameAdvance = Math.max(maxSmoothFrameAdvance, scrollAdvance);
         }
       }
       return {
@@ -1341,7 +1338,6 @@ test.describe("Jasmine chat runtime", () => {
         ),
         maxTailBottomOffset: Math.max(0, ...monitor.frames.map((sample) => sample.tailBottomOffset)),
         allTailFramesVisible: monitor.frames.every((sample) => sample.tailVisible),
-        maxSmoothFrameAdvance,
         disconnected: monitor.disconnected,
         replaced: monitor.replaced
       };
@@ -1359,8 +1355,7 @@ test.describe("Jasmine chat runtime", () => {
     expect(continuity.mutationTailDrift).toBeLessThanOrEqual(17);
     expect(continuity.mutationNaturalTailDrift).toBeLessThanOrEqual(17);
     expect(continuity.prependFrameTailDrift).toBeLessThanOrEqual(17);
-    expect(continuity.maxTailBottomOffset).toBeLessThanOrEqual(96);
-    expect(continuity.maxSmoothFrameAdvance).toBeLessThanOrEqual(17);
+    expect(continuity.maxTailBottomOffset).toBeLessThanOrEqual(17);
     expect(continuity.disconnected).toBe(false);
     expect(continuity.replaced).toBe(false);
   });

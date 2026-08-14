@@ -201,6 +201,8 @@ describe("message rendering", () => {
     const toggle = thought.querySelector(".timeline-toggle") as HTMLButtonElement;
 
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-describedby")).toBeTruthy();
+    expect(toggle.getAttribute("aria-describedby")).toBe(thought.querySelector(".timeline-summary")?.id);
     expect(thought.textContent).toContain("Newest live step");
     expect(thought.textContent).not.toContain("First plan");
     expect(thought.querySelector(".thinking-markdown")).toBeNull();
@@ -261,6 +263,27 @@ describe("message rendering", () => {
 
     fireEvent.click(within(thought).getByRole("button", { name: "Thinking" }));
     expect(thought.querySelector(".thinking-markdown")?.textContent).toContain("thought-summary-must-not-see-this");
+  });
+
+  test("memory provenance keeps content behind deliberate disclosure", () => {
+    const message: ChatMessage = {
+      ...assistantMessage("memory-provenance-disclosure", [
+        { id: "memory-output", kind: "assistant_text", text: "Visible final answer." }
+      ]),
+      memoryUsed: [
+        { id: "sensitive-memory", content: "Authorization: Bearer memory-must-not-see-this" }
+      ]
+    };
+    const harness = mountMessages([message]);
+    const toggle = screen.getByRole("button", { name: "Memory used" });
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(harness.container.querySelector(".memory-used-detail")).toBeNull();
+    expect(harness.container.textContent).not.toContain("memory-must-not-see-this");
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(harness.container.querySelector(".memory-used-detail")?.textContent).toContain("memory-must-not-see-this");
   });
 
   test("a disclosure opened live stays open after settlement and a persisted reload", () => {
