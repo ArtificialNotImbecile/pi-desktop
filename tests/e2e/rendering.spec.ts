@@ -184,6 +184,39 @@ test.describe("Jasmine message rendering", () => {
     await expect(readTool.locator(".tool-run-status")).not.toContainText("reading");
     await expect(bashTool.locator(".tool-run-status")).not.toContainText("running");
     await expect(latestAssistant.locator(".tool-run-status.running")).toHaveCount(0);
+
+    // Real-layout regression: at the supported narrow window width with the
+    // right panel open, a long target must yield space to status + disclosure.
+    await harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(840, 720));
+    await page.getByRole("button", { name: "Open Artifacts" }).click();
+    await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
+    const longTarget = `C:\\workspace\\${"deeply-nested-segment\\".repeat(12)}document-analysis\\SKILL.md`;
+    await readTool.locator(".tool-run-target").evaluate((node, text) => {
+      node.textContent = text;
+    }, longTarget);
+    const narrowGeometry = await readTool.locator(".tool-run-toggle").evaluate((button) => {
+      const status = button.querySelector(".tool-run-status")?.getBoundingClientRect();
+      const chevron = button.querySelector(".icon:last-child")?.getBoundingClientRect();
+      const target = button.querySelector<HTMLElement>(".tool-run-target");
+      const bounds = button.getBoundingClientRect();
+      if (!status || !chevron || !target) throw new Error("Narrow tool row geometry missing.");
+      return {
+        clientWidth: button.clientWidth,
+        scrollWidth: button.scrollWidth,
+        right: bounds.right,
+        statusRight: status.right,
+        chevronRight: chevron.right,
+        targetClientWidth: target.clientWidth,
+        targetScrollWidth: target.scrollWidth
+      };
+    });
+    expect(narrowGeometry.targetScrollWidth).toBeGreaterThan(narrowGeometry.targetClientWidth);
+    expect(narrowGeometry.scrollWidth).toBeLessThanOrEqual(narrowGeometry.clientWidth + 1);
+    expect(narrowGeometry.statusRight).toBeLessThanOrEqual(narrowGeometry.right + 1);
+    expect(narrowGeometry.chevronRight).toBeLessThanOrEqual(narrowGeometry.right + 1);
+    await page.getByRole("button", { name: "Collapse panel" }).click();
+    await harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1200, 800));
+
     const toolToggle = readTool.getByRole("button");
     const details = readTool.locator(".tool-run-details");
     const codeBlocks = readTool.locator(".shiki-code-block");

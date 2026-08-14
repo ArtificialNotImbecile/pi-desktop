@@ -265,6 +265,35 @@ describe("message rendering", () => {
     expect(reloaded.container.querySelector(".thinking-markdown")?.hasAttribute("hidden")).toBe(false);
   });
 
+  test("internal Pi summaries stay behind a lazy disclosure", () => {
+    const compactionSummary = "Internal compaction detail that should not dominate routine history.";
+    const branchSummary = "Internal branch detail that should also stay compact.";
+    const message = assistantMessage("compaction-message", [
+      { id: "compaction-entry", kind: "system", title: "Compaction", text: compactionSummary },
+      { id: "branch-summary-entry", kind: "system", title: "Branch summary", text: branchSummary },
+      { id: "compaction-output", kind: "assistant_text", text: "Visible final answer." }
+    ]);
+    const harness = mountMessages([message]);
+    const rows = harness.container.querySelectorAll<HTMLElement>(".system-summary-item");
+    const compactionToggle = within(rows[0]).getByRole("button", { name: "Context compacted" });
+    const branchToggle = within(rows[1]).getByRole("button", { name: "Branch summary" });
+
+    expect(compactionToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(branchToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(rows[0].textContent).not.toContain(compactionSummary);
+    expect(rows[1].textContent).not.toContain(branchSummary);
+    expect(rows[0].querySelector(".thinking-markdown")).toBeNull();
+    expect(rows[1].querySelector(".thinking-markdown")).toBeNull();
+    expect(harness.container.querySelector(".timeline-output")?.textContent).toContain("Visible final answer.");
+
+    fireEvent.click(compactionToggle);
+    fireEvent.click(branchToggle);
+    expect(compactionToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(branchToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(rows[0].querySelector(".thinking-markdown")?.textContent).toContain(compactionSummary);
+    expect(rows[1].querySelector(".thinking-markdown")?.textContent).toContain(branchSummary);
+  });
+
   test("tool rows summarize edit and bash results and replace undecodable output", () => {
     const editMessage = assistantMessage("edit-message", toolTimeline(
       "edit",
@@ -296,7 +325,34 @@ describe("message rendering", () => {
       { command: "curl -H 'Authorization: Bearer collapsed-command-must-not-see-this' https://example.test" },
       { content: "ok" }
     ));
-    const harness = mountMessages([editMessage, bashMessage, errorMessage, secretErrorMessage, secretCommandMessage]);
+    const signedUrlMessage = assistantMessage("signed-url-message", toolTimeline(
+      "signed-url",
+      "fetch_content",
+      { url: "https://user:password@api.example.test/private/report?access_token=collapsed-url-must-not-see-this&X-Amz-Signature=signed#secret" },
+      { content: "fetched" }
+    ));
+    const secretSearchMessage = assistantMessage("secret-search-message", toolTimeline(
+      "secret-search",
+      "web_search",
+      { query: "Authorization: Bearer collapsed-query-must-not-see-this" },
+      { content: "https://result.example.test" }
+    ));
+    const signedSearchResultMessage = assistantMessage("signed-search-result-message", toolTimeline(
+      "signed-search-result",
+      "get_search_content",
+      { url: "https://results.example.test/article?id=42&X-Amz-Signature=collapsed-result-url-must-not-see-this" },
+      { content: "article" }
+    ));
+    const harness = mountMessages([
+      editMessage,
+      bashMessage,
+      errorMessage,
+      secretErrorMessage,
+      secretCommandMessage,
+      signedUrlMessage,
+      secretSearchMessage,
+      signedSearchResultMessage
+    ]);
 
     const editTool = harness.container.querySelector('[data-message-id="edit-message"] .tool-run-item');
     expect(editTool?.textContent).toContain("edit");
@@ -328,6 +384,23 @@ describe("message rendering", () => {
     const secretCommandTool = harness.container.querySelector('[data-message-id="secret-command-message"] .tool-run-item');
     expect(secretCommandTool?.querySelector(".tool-run-details")).toBeNull();
     expect(secretCommandTool?.textContent).not.toContain("collapsed-command-must-not-see-this");
+    const signedUrlTool = harness.container.querySelector('[data-message-id="signed-url-message"] .tool-run-item') as HTMLElement;
+    expect(signedUrlTool.textContent).toContain("https://api.example.test/private/report");
+    expect(signedUrlTool.textContent).not.toContain("password");
+    expect(signedUrlTool.textContent).not.toContain("access_token");
+    expect(signedUrlTool.textContent).not.toContain("collapsed-url-must-not-see-this");
+    expect(signedUrlTool.getAttribute("aria-label")).not.toContain("collapsed-url-must-not-see-this");
+    const signedUrlToggle = signedUrlTool.querySelector(".tool-run-toggle") as HTMLButtonElement;
+    fireEvent.click(signedUrlToggle);
+    expect(signedUrlTool.querySelector(".tool-run-details")?.textContent).toContain("collapsed-url-must-not-see-this");
+    const secretSearchTool = harness.container.querySelector('[data-message-id="secret-search-message"] .tool-run-item') as HTMLElement;
+    expect(secretSearchTool.textContent).not.toContain("collapsed-query-must-not-see-this");
+    expect(secretSearchTool.getAttribute("aria-label")).not.toContain("collapsed-query-must-not-see-this");
+    expect(secretSearchTool.querySelector(".tool-run-details")).toBeNull();
+    const signedSearchResultTool = harness.container.querySelector('[data-message-id="signed-search-result-message"] .tool-run-item') as HTMLElement;
+    expect(signedSearchResultTool.textContent).toContain("https://results.example.test/article");
+    expect(signedSearchResultTool.textContent).not.toContain("X-Amz-Signature");
+    expect(signedSearchResultTool.textContent).not.toContain("collapsed-result-url-must-not-see-this");
     fireEvent.click(errorToggle);
     const errorDetails = errorTool?.querySelector(".tool-run-details") as HTMLDivElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("true");

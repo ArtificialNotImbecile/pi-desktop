@@ -121,7 +121,7 @@ type TimelineDisplayItem =
   | { id: string; kind: "tool_preamble"; text: string; defaultExpanded: boolean }
   | { id: string; kind: "tool"; toolName: string; call?: Extract<ChatTimelineItem, { kind: "tool_call" }>; result?: Extract<ChatTimelineItem, { kind: "tool_result" }>; summary: ToolSummary; defaultExpanded: boolean }
   | { id: string; kind: "assistant_text"; text: string; defaultExpanded: boolean }
-  | { id: string; kind: "system"; title: string; text: string; defaultExpanded: boolean };
+  | { id: string; kind: "system"; title: string; text: string; collapsible: boolean; defaultExpanded: boolean };
 
 type ToolSummary = {
   state: "running" | "stopped" | "done" | "error";
@@ -178,9 +178,26 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
     return <ToolRunRow item={item} expanded={props.expanded} onToggle={toggle} />;
   }
   if (item.kind === "system") {
+    const title = localizedSystemTitle(item.title, t);
+    if (item.collapsible) {
+      return (
+        <section
+          data-timeline-item-id={item.id}
+          className={`timeline-item thinking-item system-summary-item ${props.expanded ? "" : "collapsed"}`}
+          aria-label={title}
+        >
+          <TimelineToggle label={title} summary="" expanded={props.expanded} onToggle={toggle} icon={<TerminalIcon />} />
+          {detailsMountedRef.current && (
+            <div className="thinking-markdown" hidden={!props.expanded}>
+              <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} />
+            </div>
+          )}
+        </section>
+      );
+    }
     return (
-      <section data-timeline-item-id={item.id} className="timeline-item system-item" aria-label={item.title}>
-        <div className="timeline-label"><TerminalIcon /><span>{item.title}</span></div>
+      <section data-timeline-item-id={item.id} className="timeline-item system-item" aria-label={title}>
+        <div className="timeline-label"><TerminalIcon /><span>{title}</span></div>
         <p>{item.text}</p>
       </section>
     );
@@ -308,7 +325,15 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
       }
       continue;
     }
-    result.push({ id: item.id, kind: "system", title: item.title, text: item.text, defaultExpanded: true });
+    const collapsible = isInternalSessionSummary(item.title);
+    result.push({
+      id: item.id,
+      kind: "system",
+      title: item.title,
+      text: item.text,
+      collapsible,
+      defaultExpanded: !collapsible
+    });
   }
   for (const pending of pendingTools.values()) {
     for (const pair of pending) {
@@ -448,14 +473,18 @@ function toolTarget(
   call: Extract<ChatTimelineItem, { kind: "tool_call" }> | undefined,
   toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined
 ): string {
-  // Shell commands frequently carry inline credentials or environment values.
-  // Keep the collapsed row and its accessible label generic; the command body
-  // remains lazy and appears only when the user deliberately opens details.
+  // Commands and search queries can carry arbitrary credentials or private
+  // context. Keep them behind the deliberate details disclosure. URL tools
+  // retain a useful origin/path while dropping credentials, query, and hash.
   if (toolName === "bash") return "";
-  if (toolName === "web_search" || toolName === "code_search") return truncateMiddle(stringValue(args.query), 72);
-  if (toolName === "fetch_content") return truncateMiddle(stringValue(args.url), 76);
-  if (toolName === "get_search_content") return truncateMiddle(stringValue(args.id) || stringValue(args.url), 76);
-  return truncateMiddle(
+  if (toolName === "web_search" || toolName === "code_search") return "";
+  if (toolName === "fetch_content") return sanitizedUrlTarget(stringValue(args.url), 76);
+  if (toolName === "get_search_content") {
+    const id = stringValue(args.id);
+    return (/^https?:\/\//i.test(id) ? sanitizedUrlTarget(id, 76) : safeCollapsedTextTarget(id, 76))
+      || sanitizedUrlTarget(stringValue(args.url), 76);
+  }
+  return safeCollapsedTextTarget(
     stringValue(args.path) ||
       stringValue(args.filePath) ||
       stringValue(args.filename) ||
@@ -466,6 +495,41 @@ function toolTarget(
       "",
     76
   );
+}
+
+function sanitizedUrlTarget(value: string, limit: number): string {
+  if (!value.trim()) return "";
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return safeCollapsedTextTarget(`${parsed.origin}${parsed.pathname}`, limit);
+  } catch {
+    // An unparseable external target is safer in the explicitly opened INPUT
+    // block than in routine history, accessibility output, and screenshots.
+    return "";
+  }
+}
+
+function safeCollapsedTextTarget(value: string, limit: number): string {
+  const trimmed = value.trim();
+  if (!trimmed || containsCredentialMarker(trimmed)) return "";
+  return truncateMiddle(trimmed, limit);
+}
+
+function containsCredentialMarker(value: string): boolean {
+  return /(?:authorization|bearer|api[-_ ]?key|access[-_ ]?token|password|passwd|secret|x-amz-(?:signature|credential|security-token)|(?:^|[?&])sig(?:nature)?=)/i.test(value);
+}
+
+function isInternalSessionSummary(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  return normalized === "compaction" || normalized === "branch summary";
+}
+
+function localizedSystemTitle(title: string, t: ReturnType<typeof useI18n>["t"]): string {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === "compaction") return t("message.compaction");
+  if (normalized === "branch summary") return t("message.branchSummary");
+  return title;
 }
 
 function toolStatus(

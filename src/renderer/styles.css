@@ -4436,7 +4436,7 @@ body:has(.settings-panel) .message-jump-rail {
   cursor: pointer;
 }
 
-.timeline-toggle > span:not(.timeline-running-indicator) {
+.timeline-toggle > span:not(.timeline-running-indicator):not(.tool-run-main) {
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -4504,18 +4504,22 @@ body:has(.settings-panel) .message-jump-rail {
 
 .tool-run-main {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: baseline;
   gap: 5px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tool-run-main b {
+  flex: 0 0 auto;
   color: var(--ink);
   font-size: 12.5px;
   font-weight: 600;
 }
 
 .tool-run-target {
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 520px;
   padding: 1px 4px;
