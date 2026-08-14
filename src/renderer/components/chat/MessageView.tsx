@@ -301,8 +301,13 @@ function RunCompletionLine(props: {
       ? duration ? t("message.failedAfter", { duration }) : t("message.failedWorkDetails")
       : duration ? t("message.workedFor", { duration }) : null;
   if (!label && !props.runMeta.model) return null;
+  const accessibleLabel = [
+    label,
+    props.runMeta.model ? `${props.responseModelLabel}: ${props.runMeta.model}` : null,
+    props.runMeta.reasoningEffort
+  ].filter(Boolean).join(", ");
   return (
-    <div className={`run-completion-line message-run-line ${props.status}`} aria-label={props.responseModelLabel}>
+    <div className={`run-completion-line message-run-line ${props.status}`} aria-label={accessibleLabel}>
       {label && <span>{label}</span>}
       {props.runMeta.model && <small>{props.runMeta.model}</small>}
       {props.runMeta.reasoningEffort && <small>{props.runMeta.reasoningEffort}</small>}

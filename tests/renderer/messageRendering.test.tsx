@@ -189,6 +189,26 @@ describe("message rendering", () => {
     expect(actions.getAttribute("aria-expanded")).toBe("false");
   });
 
+  test("completion summaries expose stopped and failed outcomes in their accessible names", () => {
+    const stopped = {
+      ...assistantMessage("stopped-completion", [
+        { id: "stopped-status", kind: "system" as const, title: "Stopped", text: "Stopped by user." }
+      ]),
+      modelId: undefined
+    };
+    const failed = {
+      ...assistantMessage("failed-completion", []),
+      modelId: undefined,
+      status: "error" as const
+    };
+    const harness = mountMessages([stopped, failed]);
+    const completionLines = Array.from(harness.container.querySelectorAll<HTMLElement>(".run-completion-line"));
+
+    expect(completionLines).toHaveLength(2);
+    expect(completionLines[0].getAttribute("aria-label")).toBe("Stopped after 1s");
+    expect(completionLines[1].getAttribute("aria-label")).toBe("Failed after 1s");
+  });
+
   test("thought rows stay compact and summarize the newest live line before settling on the first line", () => {
     const liveMessage = {
       ...assistantMessage("stream-live-thought-0", [
