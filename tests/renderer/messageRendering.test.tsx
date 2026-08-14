@@ -265,6 +265,49 @@ describe("message rendering", () => {
     expect(thought.querySelector(".thinking-markdown")?.textContent).toContain("thought-summary-must-not-see-this");
   });
 
+  test("collapsed previews redact standalone provider credentials", () => {
+    const githubToken = ["ghp_", "0123456789abcdefghijklmnopqrstuv"].join("");
+    const openAiToken = ["sk-proj-", "0123456789abcdefghijklmnopqrstuvwxyz"].join("");
+    const awsKey = ["AKIA", "0123456789ABCDEF"].join("");
+    const message: ChatMessage = {
+      ...assistantMessage("standalone-credential-history", [
+        { id: "standalone-token-thought", kind: "thinking", text: `Checking ${githubToken}` },
+        {
+          id: "standalone-token-tool-call",
+          kind: "tool_call",
+          toolCallId: "standalone-token-tool",
+          toolName: "read",
+          title: "Read file",
+          argumentsJson: JSON.stringify({ path: `/tmp/${openAiToken}` })
+        },
+        {
+          id: "standalone-token-tool-result",
+          kind: "tool_result",
+          toolCallId: "standalone-token-tool",
+          toolName: "read",
+          title: "Read file",
+          content: "Done"
+        },
+        { id: "standalone-token-output", kind: "assistant_text", text: "Visible final answer." }
+      ]),
+      webSearchUsed: [{
+        title: `Credential ${awsKey}`,
+        url: `https://api.example.test/private/${githubToken}`,
+        snippet: ""
+      }]
+    };
+    const harness = mountMessages([message]);
+    const thought = harness.container.querySelector(".thinking-item") as HTMLElement;
+    const tool = harness.container.querySelector("[data-tool-name='read']") as HTMLElement;
+    const provenance = harness.container.querySelector(".web-search-used-line") as HTMLElement;
+
+    expect(thought.textContent).toBe("Thinking");
+    expect(tool.textContent).not.toContain(openAiToken);
+    expect(provenance.textContent).toContain("https://api.example.test");
+    expect(provenance.textContent).not.toContain(githubToken);
+    expect(provenance.textContent).not.toContain(awsKey);
+  });
+
   test("memory provenance keeps content behind deliberate disclosure", () => {
     const message: ChatMessage = {
       ...assistantMessage("memory-provenance-disclosure", [

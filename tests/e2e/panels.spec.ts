@@ -82,14 +82,29 @@ test.describe("Jasmine panels and tools", () => {
 
     await page.locator(".rich-composer-editor").fill("memory preferred editor?");
     await page.getByRole("button", { name: "Send" }).click();
-    const memoryAwareReply = page.locator(".assistant-block").last();
-    await expect(memoryAwareReply).toContainText("Memory-aware reply: My preferred editor is Neovim");
+    const newestAssistant = page.locator(".assistant-block").last();
+    await expect(newestAssistant).toContainText("Memory-aware reply: My preferred editor is Neovim");
+    const memoryAwareReplyId = await newestAssistant.getAttribute("data-message-id");
+    expect(memoryAwareReplyId).toBeTruthy();
+    const memoryAwareReply = page.locator(`[data-message-id="${memoryAwareReplyId}"]`);
     const memoryDisclosure = memoryAwareReply.getByRole("button", { name: "Memory used" });
     await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "false");
     await expect(memoryAwareReply.locator(".memory-used-detail")).toHaveCount(0);
+
+    await page.locator(".rich-composer-editor").fill("return long answer smooth stream scroll intent provenance reading lock");
+    await page.getByRole("button", { name: "Send" }).click();
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    await expect(liveAssistant).toBeVisible();
+    const liveLengthBeforeDisclosure = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
     await memoryDisclosure.click();
     await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "true");
     await expect(memoryAwareReply.locator(".memory-used-detail")).toContainText("My preferred editor is Neovim");
+    const lockedScrollTop = await page.locator(".message-scroll").evaluate((node) => node.scrollTop);
+    await expect.poll(() => liveAssistant.evaluate((node) => node.textContent?.length ?? 0)).toBeGreaterThan(liveLengthBeforeDisclosure);
+    await page.waitForTimeout(100);
+    const scrollTopAfterMoreOutput = await page.locator(".message-scroll").evaluate((node) => node.scrollTop);
+    expect(Math.abs(scrollTopAfterMoreOutput - lockedScrollTop)).toBeLessThanOrEqual(1);
+    await waitForStableAssistant(page, "Long answer paragraph 42");
     await expectNoPurpleThemeColors(memoryAwareReply, "memory-used message indicator");
 
     await openMemoryFromCommandPalette(page);

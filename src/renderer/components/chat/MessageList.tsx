@@ -72,7 +72,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
       ref={props.messageScrollRef}
       onWheel={(event) => props.onMessageWheel(event.deltaY)}
       onClickCapture={(event) => {
-        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .load-older-messages")) {
+        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .memory-used-line, .load-older-messages")) {
           props.onMessageInteraction();
         }
       }}
