@@ -16,6 +16,7 @@ type MessageListProps = {
   loading: boolean;
   runState: RunState;
   runModelLabel: string | null;
+  runActivityKey: string;
   error: string | null;
   actionKey: string;
   messageScrollRef: RefObject<HTMLDivElement | null>;
@@ -140,7 +141,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
           </>
         )}
         {isRunning && (
-          <TurnActivity key={props.actionKey} label={runningLabel} stopping={props.runState === "stopping"} />
+          <TurnActivity key={props.runActivityKey} label={runningLabel} stopping={props.runState === "stopping"} />
         )}
         {props.error && (
           <div className="error-strip">
@@ -165,6 +166,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.loading === next.loading &&
     previous.runState === next.runState &&
     previous.runModelLabel === next.runModelLabel &&
+    previous.runActivityKey === next.runActivityKey &&
     previous.error === next.error &&
     previous.actionKey === next.actionKey &&
     previous.messageScrollRef === next.messageScrollRef &&

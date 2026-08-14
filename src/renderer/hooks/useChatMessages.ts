@@ -108,6 +108,9 @@ export function useChatMessages(options: {
   const activeThreadId = options.activeThread?.id ?? null;
   const runState = activeThreadId ? threadRunStates[activeThreadId] ?? "idle" : "idle";
   const runModelLabel = activeThreadId ? threadRunModels[activeThreadId] ?? null : null;
+  const runActivityKey = activeThreadId
+    ? `${activeThreadId}:${threadRequestIds[activeThreadId] ?? "idle"}`
+    : "no-thread";
   const error = activeThreadId ? threadErrors[activeThreadId] ?? null : null;
   // The shared EMPTY_QUEUE_STATE constant keeps this reference stable across
   // renders so memoized consumers (Composer) are not invalidated per stream tick.
@@ -1596,6 +1599,7 @@ export function useChatMessages(options: {
     loadOlderMessages,
     runState,
     runModelLabel,
+    runActivityKey,
     setRunState,
     error,
     setError,

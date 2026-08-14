@@ -661,6 +661,7 @@ function App(props: { initialAppSettings: AppSettings }) {
         messageActionKey={messageActionKey}
         runState={chat.runState}
         runModelLabel={chat.runModelLabel}
+        runActivityKey={chat.runActivityKey}
         error={visibleError}
         queueState={chat.queueState}
         messageScrollRef={chat.messageScrollRef}

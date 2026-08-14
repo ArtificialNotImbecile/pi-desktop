@@ -54,6 +54,7 @@ export function ChatPage(props: {
   messageActionKey: string;
   runState: RunState;
   runModelLabel: string | null;
+  runActivityKey: string;
   error: string | null;
   queueState: ChatQueueState;
   messageScrollRef: RefObject<HTMLDivElement | null>;
@@ -223,6 +224,7 @@ export function ChatPage(props: {
         actionKey={props.messageActionKey}
         runState={props.runState}
         runModelLabel={props.runModelLabel}
+        runActivityKey={props.runActivityKey}
         error={props.error}
         messageScrollRef={props.messageScrollRef}
         modelLabel={props.provider?.defaultModel ?? "model"}

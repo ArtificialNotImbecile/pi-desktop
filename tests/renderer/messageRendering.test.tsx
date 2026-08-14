@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { createRef } from "react";
 import { describe, expect, test, vi } from "vitest";
 import type { ChatMessage, ChatTimelineItem } from "../../src/shared/ipc";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { MessageView } from "../../src/renderer/components/chat/MessageView";
+import { MessageList } from "../../src/renderer/components/chat/MessageList";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -74,6 +76,65 @@ function toolTimeline(
  * identity remain in Electron E2E where jsdom can provide meaningful evidence.
  */
 describe("message rendering", () => {
+  test("activity timing follows the run identity instead of provider setting changes", () => {
+    vi.useFakeTimers();
+    const callbacks = {
+      onLoadOlderMessages: vi.fn(),
+      onCopy: vi.fn(),
+      onCopyCode: vi.fn(),
+      onRetry: vi.fn(),
+      onEditMessage: vi.fn(),
+      onRemember: vi.fn(),
+      onConfigureProvider: vi.fn(),
+      onMessageWheel: vi.fn(),
+      onMessageInteraction: vi.fn(),
+      onMessageTailIntent: vi.fn(),
+      onMessageScroll: vi.fn()
+    };
+    const messageScrollRef = createRef<HTMLDivElement>();
+    const renderList = (runActivityKey: string, actionKey: string) => (
+      <I18nProvider language="en">
+        <MessageList
+          messages={[]}
+          hasOlderMessages={false}
+          loadingOlderMessages={false}
+          loading={false}
+          runState="running"
+          runModelLabel="deepseek-v4-flash"
+          runActivityKey={runActivityKey}
+          error={null}
+          actionKey={actionKey}
+          messageScrollRef={messageScrollRef}
+          modelLabel="deepseek-v4-flash"
+          brand={{ logoDataUrl: null, mainTitle: "Jasmine", subtitle: "", updatedAt: createdAt }}
+          {...callbacks}
+        />
+      </I18nProvider>
+    );
+    const harness = render(renderList("thread-a:request-a", "settings-a"));
+    try {
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+
+      // Updating provider/settings behavior rerenders MessageList but must not
+      // restart the clock for the same request.
+      harness.rerender(renderList("thread-a:request-a", "settings-b"));
+      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+
+      // Switching to another running task and starting another request in the
+      // same thread both receive a fresh activity clock.
+      harness.rerender(renderList("thread-b:request-b", "settings-b"));
+      expect(harness.container.querySelector(".turn-activity")?.querySelector("time")).toBeNull();
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+      harness.rerender(renderList("thread-b:request-c", "settings-b"));
+      expect(harness.container.querySelector(".turn-activity")?.querySelector("time")).toBeNull();
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   test("assistant actions expose accessible names and dispatch every direct and menu callback", () => {
     const message = assistantMessage("action-message", [
       { id: "action-thinking", kind: "thinking", text: "Need to inspect." },
