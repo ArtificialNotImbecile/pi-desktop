@@ -389,9 +389,6 @@ function ToolRunRow(props: { item: Extract<TimelineDisplayItem, { kind: "tool" }
           <b>{controlAction}</b>
           {summary.target && <span className="tool-run-target">{summary.target}</span>}
         </span>
-        {isToolError(summary.state) && !props.expanded && (
-          <span className="tool-run-error-summary">{toolErrorSummary(summary.details)}</span>
-        )}
         <small className={`tool-run-status ${summary.state}`}>{controlStatus}</small>
         <ChevronDownIcon />
       </button>
@@ -700,15 +697,6 @@ function truncateMiddle(value: string, maxLength: number): string {
 function thoughtSummary(text: string, live: boolean): string {
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
   return (live ? lines.at(-1) : lines[0]) ?? "";
-}
-
-function toolErrorSummary(details: ToolDetail[]): string {
-  const error = details.find((detail) => detail.tone === "error")?.content ?? "";
-  return error.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
-}
-
-function isToolError(state: ToolSummary["state"]): boolean {
-  return state === "error";
 }
 
 function TimelineToggle(props: { label: string; summary: string; running?: boolean; expanded: boolean; icon: ReactElement; onToggle(): void }) {

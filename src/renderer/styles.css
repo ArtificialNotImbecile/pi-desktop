@@ -4509,17 +4509,6 @@ body:has(.settings-panel) .message-jump-rail {
   min-width: 0;
 }
 
-.tool-run-error-summary {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--danger) 78%, var(--muted));
-  font-family: var(--font-ui);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .tool-run-main b {
   color: var(--ink);
   font-size: 12.5px;

@@ -282,7 +282,13 @@ describe("message rendering", () => {
       { command: "taskkill /F /PID 24552" },
       { content: "����: ���� PID 24552\n\nCommand exited with code 1", isError: true }
     ));
-    const harness = mountMessages([editMessage, bashMessage, errorMessage]);
+    const secretErrorMessage = assistantMessage("secret-error-message", toolTimeline(
+      "secret-error",
+      "bash",
+      { command: "curl https://example.test" },
+      { content: "Authorization: Bearer routine-capture-must-not-see-this\nCommand exited with code 1", isError: true }
+    ));
+    const harness = mountMessages([editMessage, bashMessage, errorMessage, secretErrorMessage]);
 
     const editTool = harness.container.querySelector('[data-message-id="edit-message"] .tool-run-item');
     expect(editTool?.textContent).toContain("edit");
@@ -308,6 +314,9 @@ describe("message rendering", () => {
     const errorToggle = errorTool?.querySelector(".tool-run-toggle") as HTMLButtonElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("false");
     expect(errorTool?.querySelector(".tool-run-details")).toBeNull();
+    const secretErrorTool = harness.container.querySelector('[data-message-id="secret-error-message"] .tool-run-item.error');
+    expect(secretErrorTool?.querySelector(".tool-run-details")).toBeNull();
+    expect(secretErrorTool?.textContent).not.toContain("routine-capture-must-not-see-this");
     fireEvent.click(errorToggle);
     const errorDetails = errorTool?.querySelector(".tool-run-details") as HTMLDivElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("true");
