@@ -4348,13 +4348,14 @@ button.run-header-toggle:focus-visible {
   background: var(--line);
 }
 
+/* No glare band here. The elapsed clock is this header's liveness signal, and
+   the row below carries the only sweep, so the reader has one moving thing to
+   track instead of two competing for the same claim. */
 .run-header.live {
-  position: relative;
   display: flex;
   align-items: center;
   height: 24px;
   margin-bottom: 8px;
-  overflow: hidden;
 }
 
 .run-header.live .run-header-meta {
@@ -4371,17 +4372,6 @@ button.run-header-toggle:focus-visible {
 
 .run-header.live.stopping .run-header-title {
   color: color-mix(in srgb, var(--accent) 72%, var(--muted));
-}
-
-.run-header.live::after {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  left: 0;
-  width: 300px;
-  background: linear-gradient(90deg, transparent 0%, rgba(var(--surface-rgb), 0.72) 55%, transparent 100%);
-  animation: timeline-sweep 2600ms ease-out infinite;
-  pointer-events: none;
 }
 
 /* Stands in for the assistant block's own header until the first frame, at the
@@ -4743,8 +4733,7 @@ button.timeline-row:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .timeline-item.running .timeline-row::after,
-  .run-header.live::after {
+  .timeline-item.running .timeline-row::after {
     animation: none;
   }
 }

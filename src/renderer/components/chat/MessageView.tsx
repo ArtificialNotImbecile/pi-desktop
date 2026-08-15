@@ -101,9 +101,15 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     ? { ...props.message, content: displayedFinalText }
     : props.message;
 
-  const finalItemIds = new Set(presentation?.finalItems.map((item) => item.id) ?? []);
-  if (fallbackFinalItem) finalItemIds.add(fallbackFinalItem.id);
-  const activityItemCount = visibleTimeline.filter((item) => !finalItemIds.has(item.id)).length;
+  // Only the settled header reads this. A live block re-renders on every stream
+  // chunk, so counting activity rows there walks the timeline once per chunk to
+  // produce a number nothing displays.
+  let activityItemCount = 0;
+  if (!isLive) {
+    const finalItemIds = new Set(presentation?.finalItems.map((item) => item.id) ?? []);
+    if (fallbackFinalItem) finalItemIds.add(fallbackFinalItem.id);
+    activityItemCount = visibleTimeline.filter((item) => !finalItemIds.has(item.id)).length;
+  }
 
   return (
     <article
@@ -330,19 +336,11 @@ function AssistantRunHeader(props: {
 }) {
   const runActivity = useRunActivity();
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
-  const collapsible = !props.live && props.status === "success" && props.activityItemCount > 0;
-  const remembered = runExpansionCache.get(props.collapseScope)
-    ?? (props.collapseAliasScope ? runExpansionCache.get(props.collapseAliasScope) : undefined);
-  // A run that settles while the reader has one of its rows open must not fold
-  // that row away underneath them. The turn stays open and the header remains
-  // the control for closing it deliberately.
-  const readerEngaged = hasOpenedRowInScopes([props.collapseScope, props.collapseAliasScope]);
-  const expanded = expandedOverride ?? remembered ?? (readerEngaged || !collapsible);
-  const toggle = () => {
-    rememberRunExpansion(props.collapseScope, !expanded);
-    setExpandedOverride(!expanded);
-  };
 
+  // Everything below this point describes a settled run. Nothing here may be
+  // computed above the return: a live block re-renders on every stream chunk,
+  // and hasOpenedRowInScopes walks the whole expansion cache, so hoisting it
+  // charges each chunk for a scan the live header never reads.
   if (props.live) {
     return (
       <>
@@ -357,6 +355,19 @@ function AssistantRunHeader(props: {
       </>
     );
   }
+
+  const collapsible = props.status === "success" && props.activityItemCount > 0;
+  const remembered = runExpansionCache.get(props.collapseScope)
+    ?? (props.collapseAliasScope ? runExpansionCache.get(props.collapseAliasScope) : undefined);
+  // A run that settles while the reader has one of its rows open must not fold
+  // that row away underneath them. The turn stays open and the header remains
+  // the control for closing it deliberately.
+  const readerEngaged = hasOpenedRowInScopes([props.collapseScope, props.collapseAliasScope]);
+  const expanded = expandedOverride ?? remembered ?? (readerEngaged || !collapsible);
+  const toggle = () => {
+    rememberRunExpansion(props.collapseScope, !expanded);
+    setExpandedOverride(!expanded);
+  };
 
   const trivialRun = props.status === "success"
     && props.activityItemCount === 0
