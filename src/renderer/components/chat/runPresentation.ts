@@ -2,6 +2,17 @@ import type { AppLanguage } from "../../../shared/ipc";
 
 export type RunStatus = "success" | "stopped" | "error";
 
+// A turn that produced no activity and finished immediately gets no run header
+// at all: "Worked for 1s" under a one-line answer is noise, not provenance.
+export const TRIVIAL_RUN_MS = 3000;
+
+// The live clock counts in m:ss so a running turn reads as elapsed time rather
+// than a settled duration phrase. Tabular figures keep it from shifting width.
+export function formatRunClock(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
 export function formatElapsedDuration(elapsedMs: number | undefined, language: AppLanguage): string | null {
   if (elapsedMs === undefined || !Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
   const totalSeconds = Math.max(1, Math.round(elapsedMs / 1000));

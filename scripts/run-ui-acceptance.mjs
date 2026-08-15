@@ -64,7 +64,7 @@ try {
     await waitForText(".assistant-block", "Mock reply from Jasmine.");
     await capture("04-kimi-chat");
     const latestAssistant = page.locator(".assistant-block").last();
-    await latestAssistant.locator(".message-run-line").filter({ hasText: "kimi-k2.6" }).waitFor({ state: "visible" });
+    await latestAssistant.locator(".run-header-meta").filter({ hasText: "kimi-k2.6" }).waitFor({ state: "visible" });
   });
 
   await acceptanceStep("ACCEPT-004", "Attach image and open lightbox", async () => {

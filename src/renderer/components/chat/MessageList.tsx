@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useRef } from "react";
 import type { RefObject } from "react";
 import type { BrandSettings, ChatMessage } from "../../../shared/ipc";
 import type { RunState } from "../../types";
@@ -7,6 +7,7 @@ import { LoadingDots } from "../ui/LoadingDots";
 import { EmptyChatState } from "./EmptyChatState";
 import { MessageJumpRail } from "./MessageJumpRail";
 import { MessageActionsStateProvider, MessageView } from "./MessageView";
+import { LiveRunHeader, RunActivityProvider } from "./RunHeader";
 import { useI18n } from "../../i18n";
 
 type MessageListProps = {
@@ -35,9 +36,6 @@ type MessageListProps = {
   onMessageScroll(): void;
 };
 
-const runActivityStartedAtCache = new Map<string, number>();
-const RUN_ACTIVITY_START_CACHE_LIMIT = 500;
-
 export const MessageList = memo(function MessageList(props: MessageListProps) {
   recordHarnessRender();
   const { t } = useI18n();
@@ -62,9 +60,25 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
   }, []);
   const handleRemember = useCallback((message: ChatMessage) => handlersRef.current.onRemember(message), []);
   const handleMessageInteraction = useCallback(() => handlersRef.current.onMessageInteraction(), []);
-  const runningLabel = props.runState === "stopping"
-    ? t("message.stopping")
-    : t("message.thinkingWith", { model: props.runModelLabel ?? props.modelLabel });
+  // The assistant message that owns this run's header only exists once the
+  // first frame arrives. Until then a standalone header stands in at the same
+  // place in the stack, sharing the run's clock origin, so sending a message
+  // acknowledges immediately and nothing moves when the real block takes over.
+  const liveAssistantPresent = props.messages.some(
+    (message) => message.role === "assistant" && message.id.startsWith("stream-")
+  );
+  // Settlement renames the assistant message off its stream id before the run
+  // state reaches idle. Without this latch the stand-in would reappear for that
+  // one commit and flash "Working" over an answer that just finished.
+  const servedRunKeyRef = useRef<string | null>(null);
+  if (liveAssistantPresent) servedRunKeyRef.current = props.runActivityKey;
+  const runActivity = isRunning
+    ? {
+        runKey: props.runActivityKey,
+        stopping: props.runState === "stopping",
+        model: props.runModelLabel ?? props.modelLabel
+      }
+    : null;
 
   return (
     <div
@@ -129,22 +143,35 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
             )}
             <MessageJumpRail messages={props.messages} onNavigate={handleMessageInteraction} />
             <MessageActionsStateProvider disabled={isRunning}>
-              {props.messages.map((message) => (
-                <MessageView
-                  key={message.renderId ?? message.id}
-                  message={message}
-                  onCopy={handleCopy}
-                  onCopyCode={handleCopyCode}
-                  onRetry={handleRetry}
-                  onEdit={handleEdit}
-                  onRemember={handleRemember}
-                />
-              ))}
+              <RunActivityProvider value={runActivity}>
+                {props.messages.map((message) => (
+                  <MessageView
+                    key={message.renderId ?? message.id}
+                    message={message}
+                    onCopy={handleCopy}
+                    onCopyCode={handleCopyCode}
+                    onRetry={handleRetry}
+                    onEdit={handleEdit}
+                    onRemember={handleRemember}
+                  />
+                ))}
+              </RunActivityProvider>
             </MessageActionsStateProvider>
           </>
         )}
-        {isRunning && (
-          <TurnActivity key={props.runActivityKey} runKey={props.runActivityKey} label={runningLabel} stopping={props.runState === "stopping"} />
+        {runActivity && !liveAssistantPresent && servedRunKeyRef.current !== props.runActivityKey && (
+          // Deliberately not an .assistant-block: this is the run's
+          // acknowledgment, not a message. Sharing that selector would make
+          // "the live assistant message" ambiguous for the moment before the
+          // first frame arrives.
+          <div className="run-placeholder">
+            <LiveRunHeader
+              key={runActivity.runKey}
+              runKey={runActivity.runKey}
+              stopping={runActivity.stopping}
+              model={runActivity.model}
+            />
+          </div>
         )}
         {props.error && (
           <div className="error-strip">
@@ -180,38 +207,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
 
 function isRunActive(runState: RunState): boolean {
   return runState === "running" || runState === "stopping";
-}
-
-function TurnActivity(props: { runKey: string; label: string; stopping: boolean }) {
-  const [startedAt] = useState(() => startedAtForRun(props.runKey));
-  const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [startedAt]);
-  const clock = elapsedSeconds >= 15
-    ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`
-    : null;
-  return (
-    <div className={`turn-activity ${props.stopping ? "stopping" : ""}`} role="status" aria-live="polite">
-      <span>{props.label}</span>
-      {clock && <time aria-hidden="true">{clock}</time>}
-    </div>
-  );
-}
-
-function startedAtForRun(runKey: string): number {
-  const remembered = runActivityStartedAtCache.get(runKey);
-  if (remembered !== undefined) return remembered;
-  if (runActivityStartedAtCache.size >= RUN_ACTIVITY_START_CACHE_LIMIT) {
-    const oldest = runActivityStartedAtCache.keys().next().value;
-    if (oldest !== undefined) runActivityStartedAtCache.delete(oldest);
-  }
-  const startedAt = Date.now();
-  runActivityStartedAtCache.set(runKey, startedAt);
-  return startedAt;
 }
 
 function isScrollbarGutterPointer(scroll: HTMLDivElement, clientX: number): boolean {

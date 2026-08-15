@@ -152,8 +152,14 @@ test.describe("Jasmine streaming Markdown", () => {
     await expect(settled).not.toHaveClass(/live-message/);
     await expect(settledFinalRow).toHaveClass(/final-answer/);
     await expect(settledFinalRow.locator(".markdown-heading")).toHaveCount(70);
-    await expect(settled.locator(".run-recap")).toHaveCount(0);
-    await expect(settled.locator("[data-timeline-item-id='settlement-preamble']")).toBeVisible();
+    
+    // Settling folds a successful run's activity behind its header, but folding
+    // keeps the rows mounted in place rather than discarding them.
+    const settledPreamble = settled.locator("[data-timeline-item-id='settlement-preamble']");
+    await expect(settledPreamble).toHaveCount(1);
+    await expect(settledPreamble).toBeHidden();
+    await settled.locator(".run-header-toggle").click();
+    await expect(settledPreamble).toBeVisible();
 
     const continuity = await page.evaluate(() => {
       const scope = window as Window & {
@@ -478,7 +484,7 @@ test.describe("Jasmine streaming Markdown", () => {
     const settled = page.locator(`[data-message-id='${persistedId}']`);
     const settledTarget = settled.locator(`[data-timeline-item-id='${targetItemId}']`);
     await expect(settled).not.toHaveClass(/live-message/);
-    await expect(settled.locator(".run-recap")).toHaveCount(0);
+    
     await expect(settledTarget).toBeVisible();
     await expect(settledTarget.getByRole("button")).toHaveAttribute("aria-expanded", "true");
     await waitAnimationFrames(page, 12);

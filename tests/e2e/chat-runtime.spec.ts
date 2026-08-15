@@ -67,22 +67,31 @@ test.describe("Jasmine chat runtime", () => {
 
     const liveAssistant = page.locator(".assistant-block.live-message").last();
     await expect(liveAssistant).toBeVisible();
-    await expect(page.locator(".turn-activity")).toBeVisible();
+    await expect(liveAssistant.locator(".run-header.live")).toBeVisible();
     await expect(liveAssistant.locator(".thinking-item")).toContainText("Need to inspect");
-    await expect(liveAssistant.locator(".thinking-markdown")).toHaveCount(0);
+    await expect(liveAssistant.locator(".timeline-row-thought")).toHaveCount(0);
+    // A running row carries its state as a class and a sweep, never a status
+    // word, so the row itself only ever names what the tool is acting on.
     const writeTool = liveAssistant.locator(".tool-run-item", { hasText: "src/example.ts" });
-    await expect(writeTool).toContainText("writing");
-    await expect(writeTool).not.toContainText("wrote -");
+    await expect(writeTool).toHaveClass(/running/);
+    await expect(writeTool).not.toContainText("wrote");
     await expect(liveAssistant.locator(".timeline-output")).toContainText("Slow", { timeout: 2000 });
-    await expect(page.locator(".turn-activity")).toBeVisible();
+    await expect(liveAssistant.locator(".run-header.live")).toBeVisible();
     await expect(page.locator(".message-actions:visible")).toHaveCount(0);
 
     const settledAssistant = await waitForStableAssistant(page, "Slow response complete.");
     await expect(settledAssistant.getByLabel("Assistant output")).toContainText("Slow response complete.");
-    await expect(settledAssistant.locator(".run-recap")).toHaveCount(0);
-    await expect(settledAssistant.locator(".run-completion-line")).toContainText("Worked for");
-    await expect(settledAssistant).toContainText("wrote - 4 lines, 44 bytes");
-    await expect(page.locator(".turn-activity")).toHaveCount(0);
+    await expect(page.locator(".run-header.live")).toHaveCount(0);
+    const settledHeader = settledAssistant.locator(".run-header-toggle");
+    await expect(settledHeader).toContainText("Worked for");
+    // A successful run folds its activity away; the answer stays.
+    await expect(settledHeader).toHaveAttribute("aria-expanded", "false");
+    await expect(settledAssistant.locator(".tool-run-item")).toBeHidden();
+    await settledHeader.click();
+    const settledWrite = settledAssistant.locator(".tool-run-item", { hasText: "src/example.ts" });
+    await expect(settledWrite).toBeVisible();
+    await expect(settledWrite).toHaveClass(/done/);
+    await expect(settledWrite.locator(".timeline-row-suffix")).toHaveText("+4");
   });
 
   test("a second run shows Thinking before its first live chunk without repainting settled history", async () => {
@@ -145,7 +154,7 @@ test.describe("Jasmine chat runtime", () => {
         postSettlementActivityInsertions: 0
       };
       scope.__JASMINE_SECOND_RUN_MONITOR__ = monitor;
-      const activitySelector = ".turn-activity";
+      const activitySelector = ".run-header.live";
       const containsTurnActivity = (node: Node) => node instanceof Element && (
         node.matches(activitySelector) || Boolean(node.querySelector(activitySelector))
       );
@@ -205,9 +214,12 @@ test.describe("Jasmine chat runtime", () => {
     // The mock provider waits 750ms before publishing its first live chunk. The
     // prior settled answer still has a stream renderId. The new turn's stable
     // activity line must appear before its first assistant snapshot.
-    const turnActivity = page.locator(".turn-activity");
+    const turnActivity = page.locator(".run-header.live");
     await expect(turnActivity).toBeVisible({ timeout: 500 });
-    await expect(turnActivity).toContainText("Thinking");
+    await expect(turnActivity).toContainText("Working");
+    // The stand-in header is not an assistant message: no assistant block
+    // exists until the run's first frame arrives.
+    await expect(page.locator(".run-placeholder .run-header.live")).toHaveCount(1);
     await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
     // Mutation observers run after React's layout effects and before the next
     // paint, so this captures the first busy commit rather than racing the
@@ -1422,17 +1434,20 @@ test.describe("Jasmine chat runtime", () => {
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
     const activeBashTool = activeAssistant.locator(".tool-run-item[data-tool-name='bash']");
     await expect(activeBashTool).toBeVisible();
-    await expect(activeBashTool).not.toContainText("find / -name node");
-    await expect(activeBashTool.locator(".tool-run-status")).toContainText("running");
+    await expect(activeBashTool).toContainText("find / -name node");
+    await expect(activeBashTool).toHaveClass(/running/);
     await page.getByRole("button", { name: "Stop response" }).click();
-    await expect(activeAssistant.locator(".run-recap")).toHaveCount(0);
-    await expect(activeAssistant.locator(".run-completion-line")).toContainText("Stopped after");
+    await expect(activeAssistant.locator(".run-header-toggle")).toContainText("Stopped after");
+    // An interrupted run is never folded away: the reader has to see where it
+    // got to, so the header is a label rather than a disclosure.
+    await expect(activeAssistant.locator(".run-header-toggle")).not.toHaveAttribute("aria-expanded", "false");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Stopped");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("The response was stopped by the user.");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(activeBashTool).not.toContainText("find / -name node");
-    await expect(activeAssistant.locator(".tool-run-status")).toContainText("stopped");
-    await expect(activeAssistant.locator(".tool-run-status")).not.toContainText("running");
+    await expect(activeBashTool).toContainText("find / -name node");
+    await expect(activeBashTool).toHaveClass(/stopped/);
+    await expect(activeBashTool).not.toHaveClass(/running/);
+    await expect(activeBashTool.locator(".timeline-row-state-text")).toHaveText("Stopped");
     await expect(page.locator(".error-strip")).toBeHidden();
     await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
 
@@ -1443,13 +1458,13 @@ test.describe("Jasmine chat runtime", () => {
     await expect(stoppedThreadRow).toBeVisible();
     await stoppedThreadRow.click();
     const reopenedAssistant = reopenedPage.locator(".assistant-block").last();
-    await expect(reopenedAssistant.locator(".run-recap")).toHaveCount(0);
-    await expect(reopenedAssistant.locator(".run-completion-line")).toContainText("Stopped after");
+    await expect(reopenedAssistant.locator(".run-header-toggle")).toContainText("Stopped after");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(reopenedAssistant.locator(".tool-run-item[data-tool-name='bash']")).not.toContainText("find / -name node");
+    const reopenedBashTool = reopenedAssistant.locator(".tool-run-item[data-tool-name='bash']");
+    await expect(reopenedBashTool).toContainText("find / -name node");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Stopped");
-    await expect(reopenedAssistant.locator(".tool-run-status")).toContainText("stopped");
-    await expect(reopenedAssistant.locator(".tool-run-status")).not.toContainText("running");
+    await expect(reopenedBashTool).toHaveClass(/stopped/);
+    await expect(reopenedBashTool).not.toHaveClass(/running/);
 
     await reopenedPage.locator(".rich-composer-editor").fill("continue after stopped tool run");
     await reopenedPage.getByRole("button", { name: "Send" }).click();

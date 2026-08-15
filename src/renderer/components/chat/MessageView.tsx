@@ -1,12 +1,13 @@
 import { createContext, memo, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatMessage, ChatTimelineItem } from "../../../shared/ipc";
 import { BrainIcon, ChevronDownIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
-import { MessageTimeline } from "./MessageTimeline";
+import { hasOpenedRowInScopes, MessageTimeline } from "./MessageTimeline";
 import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 import { useI18n } from "../../i18n";
 import { Button, MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
-import { formatElapsedDuration, type RunStatus } from "./runPresentation";
+import { LiveRunHeader, RunProvenanceLine, SettledRunHeader, useRunActivity } from "./RunHeader";
+import { TRIVIAL_RUN_MS, type RunStatus } from "./runPresentation";
 
 declare global {
   interface Window {
@@ -100,35 +101,46 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     ? { ...props.message, content: displayedFinalText }
     : props.message;
 
+  const finalItemIds = new Set(presentation?.finalItems.map((item) => item.id) ?? []);
+  if (fallbackFinalItem) finalItemIds.add(fallbackFinalItem.id);
+  const activityItemCount = visibleTimeline.filter((item) => !finalItemIds.has(item.id)).length;
+
   return (
     <article
       className={`assistant-block ${isLive ? "live-message" : ""} ${props.message.status === "error" ? "error-message" : ""}`}
       data-message-id={props.message.id}
       data-run-id={props.message.runId}
     >
-      <MessageTimeline
-        key="timeline"
-        cacheScope={`${props.message.threadId}:${props.message.id}`}
-        cacheAliasScopes={props.message.renderId && props.message.renderId !== props.message.id
-          ? [`${props.message.threadId}:${props.message.renderId}`]
-          : undefined}
-        items={visibleTimeline}
-        onCopyCode={props.onCopyCode}
+      <AssistantRunHeader
         live={isLive}
-        modelId={runMeta.model}
-        settled={isLive ? undefined : {
-          finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
-          fallbackFinalItem
-        }}
-      />
-      {!isLive && (
-        <RunCompletionLine
-          status={runStatus}
-          elapsedMs={props.message.elapsedMs}
-          runMeta={runMeta}
-          responseModelLabel={t("message.responseModel")}
-        />
-      )}
+        status={runStatus}
+        elapsedMs={props.message.elapsedMs}
+        runMeta={runMeta}
+        activityItemCount={activityItemCount}
+        collapseScope={`${props.message.threadId}:${props.message.id}`}
+        collapseAliasScope={props.message.renderId && props.message.renderId !== props.message.id
+          ? `${props.message.threadId}:${props.message.renderId}`
+          : undefined}
+      >
+        {(collapsed) => (
+          <MessageTimeline
+            key="timeline"
+            cacheScope={`${props.message.threadId}:${props.message.id}`}
+            cacheAliasScopes={props.message.renderId && props.message.renderId !== props.message.id
+              ? [`${props.message.threadId}:${props.message.renderId}`]
+              : undefined}
+            items={visibleTimeline}
+            onCopyCode={props.onCopyCode}
+            live={isLive}
+            modelId={runMeta.model}
+            collapsed={collapsed}
+            settled={isLive ? undefined : {
+              finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
+              fallbackFinalItem
+            }}
+          />
+        )}
+      </AssistantRunHeader>
       <RunProvenance key="provenance" message={props.message} />
       <AssistantMessageActions
         message={props.message}
@@ -287,31 +299,90 @@ function isHiddenExtensionStateItem(item: ChatTimelineItem): boolean {
   return item.kind === "system" && Boolean(item.customType);
 }
 
-function RunCompletionLine(props: {
+// A reader who opens a settled run expects it open again after paging or
+// navigating away, the same way individual rows remember their disclosure.
+const runExpansionCache = new Map<string, boolean>();
+const RUN_EXPANSION_CACHE_LIMIT = 500;
+
+function rememberRunExpansion(scope: string, expanded: boolean) {
+  if (runExpansionCache.size >= RUN_EXPANSION_CACHE_LIMIT && !runExpansionCache.has(scope)) {
+    runExpansionCache.clear();
+  }
+  runExpansionCache.set(scope, expanded);
+}
+
+/**
+ * Renders the turn's run header above its timeline and tells the timeline
+ * whether to fold. A successful run collapses by default once it has produced
+ * activity; a stopped or failed run stays open, because the reason it ended is
+ * the thing worth reading. A turn with no activity that finished immediately
+ * gets no header at all.
+ */
+function AssistantRunHeader(props: {
+  live: boolean;
   status: RunStatus;
   elapsedMs?: number;
   runMeta: { model: string | null; reasoningEffort: string | null };
-  responseModelLabel: string;
+  activityItemCount: number;
+  collapseScope: string;
+  collapseAliasScope?: string;
+  children(collapsed: boolean): ReactNode;
 }) {
-  const { language, t } = useI18n();
-  const duration = formatElapsedDuration(props.elapsedMs, language);
-  const label = props.status === "stopped"
-    ? duration ? t("message.stoppedAfter", { duration }) : t("message.stoppedWorkDetails")
-    : props.status === "error"
-      ? duration ? t("message.failedAfter", { duration }) : t("message.failedWorkDetails")
-      : duration ? t("message.workedFor", { duration }) : null;
-  if (!label && !props.runMeta.model) return null;
-  const accessibleLabel = [
-    label,
-    props.runMeta.model ? `${props.responseModelLabel}: ${props.runMeta.model}` : null,
-    props.runMeta.reasoningEffort
-  ].filter(Boolean).join(", ");
+  const runActivity = useRunActivity();
+  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
+  const collapsible = !props.live && props.status === "success" && props.activityItemCount > 0;
+  const remembered = runExpansionCache.get(props.collapseScope)
+    ?? (props.collapseAliasScope ? runExpansionCache.get(props.collapseAliasScope) : undefined);
+  // A run that settles while the reader has one of its rows open must not fold
+  // that row away underneath them. The turn stays open and the header remains
+  // the control for closing it deliberately.
+  const readerEngaged = hasOpenedRowInScopes([props.collapseScope, props.collapseAliasScope]);
+  const expanded = expandedOverride ?? remembered ?? (readerEngaged || !collapsible);
+  const toggle = () => {
+    rememberRunExpansion(props.collapseScope, !expanded);
+    setExpandedOverride(!expanded);
+  };
+
+  if (props.live) {
+    return (
+      <>
+        {runActivity && (
+          <LiveRunHeader
+            runKey={runActivity.runKey}
+            stopping={runActivity.stopping}
+            model={runActivity.model}
+          />
+        )}
+        {props.children(false)}
+      </>
+    );
+  }
+
+  const trivialRun = props.status === "success"
+    && props.activityItemCount === 0
+    && (props.elapsedMs ?? 0) < TRIVIAL_RUN_MS;
+  if (trivialRun) {
+    return (
+      <>
+        <RunProvenanceLine model={props.runMeta.model} reasoningEffort={props.runMeta.reasoningEffort} />
+        {props.children(false)}
+      </>
+    );
+  }
+
   return (
-    <div className={`run-completion-line message-run-line ${props.status}`} aria-label={accessibleLabel}>
-      {label && <span>{label}</span>}
-      {props.runMeta.model && <small>{props.runMeta.model}</small>}
-      {props.runMeta.reasoningEffort && <small>{props.runMeta.reasoningEffort}</small>}
-    </div>
+    <>
+      <SettledRunHeader
+        status={props.status}
+        elapsedMs={props.elapsedMs}
+        model={props.runMeta.model}
+        reasoningEffort={props.runMeta.reasoningEffort}
+        expandable={collapsible}
+        expanded={expanded}
+        onToggle={toggle}
+      />
+      {props.children(collapsible && !expanded)}
+    </>
   );
 }
 

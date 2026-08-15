@@ -88,10 +88,15 @@ try {
   await capture(page, "04-markdown-message", "Markdown message with table, link, and code copy action");
   await page.getByRole("button", { name: "New chat" }).first().click();
   await sendComposerMessage(page, "show write timeline");
-  await page.waitForSelector(".tool-run-item");
-  await capture(page, "04-agent-timeline", "Completed agent run with chronological compact tool summary and final answer");
+  // The settled run folds its activity behind the header; open it so the matrix
+  // captures the rows themselves rather than the folded turn.
+  await page.waitForSelector(".run-header-toggle");
+  await capture(page, "04-agent-timeline-folded", "Settled agent run folded behind its Worked for header, leaving the final answer");
+  await page.locator(".run-header-toggle").last().click();
+  await page.waitForSelector(".tool-run-item:not([hidden])");
+  await capture(page, "04-agent-timeline", "Reopened agent run with chronological compact tool summary and final answer");
   await page.locator(".tool-run-item").last().getByRole("button").click();
-  await page.waitForSelector(".tool-run-details:not([hidden])");
+  await page.waitForSelector(".tool-run-card");
   await capture(page, "04-agent-tool-details", "Independently expanded tool arguments and output");
   await sendComposerMessage(page, "show edit timeline");
   await page.waitForSelector(".message-jump-rail");

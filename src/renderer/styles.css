@@ -3239,6 +3239,10 @@ body.resizing-right-panel {
   min-height: 100%;
   margin: 0 auto;
   padding: 8px 0 22px;
+  /* The single content axis. Every assistant surface — run header, activity
+     rows, expanded bodies, answer Markdown — is either this wide or indented
+     from it by a known amount, so nothing in the column is off-axis. */
+  --chat-col: min(760px, 100%);
 }
 
 .message-jump-rail {
@@ -3614,7 +3618,8 @@ body:has(.settings-panel) .message-jump-rail {
 .assistant-block {
   display: grid;
   gap: 12px;
-  max-width: 760px;
+  width: var(--chat-col);
+  max-width: 100%;
   color: var(--ink);
   font-size: 14px;
 }
@@ -4117,39 +4122,22 @@ body:has(.settings-panel) .message-jump-rail {
   font-weight: 600;
 }
 
-.thought-line, .tool-line, .message-run-line {
+/* Application load state, not a turn: the only remaining user of this line. */
+.thought-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 22px;
-  color: var(--faint);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-}
-
-.thought-line {
   width: fit-content;
   min-height: 28px;
   padding: 0 4px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
 }
 
-.thought-toggle {
-  max-width: min(100%, 720px);
-  text-align: left;
-}
-
-.thought-toggle > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thought-toggle svg:last-child {
-  margin-left: 2px;
-  transition: transform 140ms ease;
+.thought-line .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .thought-line:hover {
@@ -4255,50 +4243,152 @@ body:has(.settings-panel) .message-jump-rail {
 
 .tool-line { color: var(--muted); }
 
-.message-run-line {
-  width: fit-content;
+/* ── Run header ───────────────────────────────────────────────────────────
+   One element per turn. Live it reads "Working 0:12"; settled it becomes
+   "Worked for 12s" and, on success, the control that folds the turn's activity
+   away. Both phases sit at the top of the assistant block on the shared
+   content axis, so the header does not move when the run ends. */
+
+.run-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--chat-col);
+  max-width: 100%;
+}
+
+.run-header-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+button.run-header-toggle {
+  cursor: pointer;
+}
+
+.run-header-title {
+  flex: none;
   color: var(--muted);
-  font-size: 12px;
-}
-
-.message-run-line small {
-  color: var(--faint);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 24px;
 }
 
-.turn-activity {
-  position: relative;
+.run-header-chevron {
+  flex: none;
   display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  width: fit-content;
-  max-width: 720px;
-  min-height: 24px;
-  margin-top: 10px;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--faint);
+}
+
+.run-header-chevron .icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 140ms ease;
+}
+
+.run-header.collapsed .run-header-chevron .icon {
+  transform: rotate(-90deg);
+}
+
+button.run-header-toggle:hover .run-header-title,
+button.run-header-toggle:hover .run-header-chevron {
+  color: var(--ink);
+}
+
+button.run-header-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+/* Provenance, not outcome: the model sits at the far end of the header so the
+   duration keeps the reading edge. */
+.run-header-meta {
+  flex: none;
+  margin-left: auto;
+  padding-left: 16px;
   overflow: hidden;
   color: var(--faint);
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
-.turn-activity::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.22), transparent);
-  content: "";
-  transform: translateX(-100%);
-  animation: timeline-shimmer 1250ms ease-in-out infinite;
-  pointer-events: none;
+/* A run that did no work reports only its model: no duration, no disclosure,
+   and no rule, since there is no activity for a rule to separate. */
+.run-header.provenance-only {
+  display: flex;
+  align-items: center;
+  height: 24px;
 }
 
-.turn-activity.stopping {
+.run-header.provenance-only .run-header-meta {
+  margin-left: 0;
+  padding-left: 0;
+}
+
+/* The rule under a settled header is what makes the answer below it read as
+   the result rather than one more row in the flow. */
+.run-header-rule {
+  height: 1px;
+  margin: 9px 0 14px;
+  background: var(--line);
+}
+
+.run-header.live {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.run-header.live .run-header-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-left: 12px;
+}
+
+.run-header.live .run-header-meta small {
+  color: inherit;
+  font-size: inherit;
+}
+
+.run-header.live.stopping .run-header-title {
   color: color-mix(in srgb, var(--accent) 72%, var(--muted));
 }
 
-.turn-activity time {
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
+.run-header.live::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(90deg, transparent 0%, rgba(var(--surface-rgb), 0.72) 55%, transparent 100%);
+  animation: timeline-sweep 2600ms ease-out infinite;
+  pointer-events: none;
+}
+
+/* Stands in for the assistant block's own header until the first frame, at the
+   same place in the stack and on the same axis, so nothing moves at handoff. */
+.run-placeholder {
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .sidebar-feature-row:has(.sidebar-feature-badge) {
@@ -4340,393 +4430,321 @@ body:has(.settings-panel) .message-jump-rail {
 }
 
 .final-answer {
-  max-width: 720px;
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .message-timeline {
   display: grid;
-  gap: 10px;
+  gap: 2px;
 }
+
+/* ── The one activity-row grammar ─────────────────────────────────────────
+   Thinking, tool calls, compaction and system notices all draw the same 24px
+   single line:
+
+     [16px leading][6][title 14/24][8][2px dot][8][summary fill, ellipsis][suffix]
+
+   The leading slot holds the icon at rest and the chevron on hover or while
+   open, so nothing sits at the row's end and every row shares one left axis
+   with the answer body. */
 
 .timeline-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  max-width: 720px;
+  width: var(--chat-col);
+  max-width: 100%;
   color: var(--muted);
 }
 
-.timeline-item::before {
-  display: none;
-}
-
-.thinking-item {
-  max-width: 720px;
-}
-
-.thinking-item .timeline-label {
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: 13px;
-}
-
-.thinking-item .timeline-label .icon:first-child {
-  color: var(--faint);
-}
-
-.thinking-item.running .timeline-label .icon:first-child {
-  color: var(--accent);
-}
-
-.thinking-item .timeline-toggle .icon:last-child {
-  color: var(--muted);
-}
-
-.thinking-markdown {
+.timeline-row {
+  position: relative;
+  display: flex;
+  align-items: center;
   width: 100%;
-  max-width: 700px;
-  margin-top: 8px;
-  padding: 2px 0 2px 20px;
-  border-left: 1px solid var(--line-strong);
-}
-
-.thinking-markdown .markdown-message {
-  display: block;
-  width: 100%;
-}
-
-.thinking-markdown .markdown-message > * + * {
-  margin-top: 12px;
-}
-
-.thinking-markdown .markdown-message p,
-.thinking-markdown .markdown-message ul,
-.thinking-markdown .markdown-message ol {
-  width: 100%;
-  color: color-mix(in srgb, var(--ink) 82%, var(--muted));
-  font-size: 14px;
-  line-height: 1.7;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  font: inherit;
   text-align: left;
 }
 
-.thinking-markdown .markdown-message pre {
-  max-width: 640px;
-  background: color-mix(in srgb, var(--accent-soft) 38%, var(--soft));
-}
-
-.timeline-item.collapsed::before {
-  grid-row: 1;
-}
-
-.timeline-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  min-height: 22px;
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: 13px;
-}
-
-.timeline-toggle {
-  width: min(100%, 720px);
-  padding: 0;
-  border: 0;
-  background: transparent;
+button.timeline-row {
   cursor: pointer;
 }
 
-.timeline-toggle > span:not(.timeline-running-indicator):not(.tool-run-main) {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.timeline-summary {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.timeline-running-indicator {
-  position: relative;
-  width: 22px;
-  height: 1px;
-  overflow: hidden;
-  background: var(--line-strong);
-}
-
-.timeline-running-indicator::after {
-  position: absolute;
-  inset: 0;
-  background: var(--accent);
-  content: "";
-  transform: translateX(-100%);
-  animation: timeline-shimmer 1000ms ease-in-out infinite;
-}
-
-.timeline-toggle:focus-visible,
-.tool-run-toggle:focus-visible {
+button.timeline-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
 }
 
-.timeline-toggle:hover {
-  color: var(--ink);
-}
-
-.timeline-toggle .icon:last-child {
-  width: 12px;
-  height: 12px;
-  color: var(--faint);
-  transition: transform 120ms ease, color 120ms ease;
-}
-
-.timeline-toggle:hover .icon:last-child {
-  color: var(--muted);
-}
-
-.timeline-toggle[aria-expanded="false"] .icon:last-child {
-  transform: rotate(-90deg);
-}
-
-.tool-run-toggle {
-  display: flex;
-  gap: 7px;
-  max-width: min(720px, 100%);
-}
-
-.tool-run-main {
-  display: inline-flex;
-  /* Hug the action + target so status and disclosure sit right after them as
-     one compact cluster. The toggle button itself stays full-row, preserving
-     the click target; shrinking still yields at narrow widths. */
-  flex: 0 1 auto;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.tool-run-main b {
-  flex: 0 0 auto;
-  color: var(--ink);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.tool-run-target {
-  /* Hug the target text: growing to fill the row stretched the pill into a
-     wide gray band. Shrinking (never growing) still yields to status +
-     disclosure at narrow widths and ellipsizes long targets. */
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 520px;
-  padding: 1px 4px;
-  border-radius: 5px;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--ink) 72%, var(--muted));
-  background: color-mix(in srgb, var(--soft) 64%, transparent);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-run-status {
+.timeline-row-lead {
   position: relative;
-  align-self: center;
-  grid-column: auto;
-  margin: 0;
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.timeline-item .tool-run-status {
-  grid-column: auto;
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0;
-}
-
-.tool-run-status.done {
-  color: var(--success);
-}
-
-.tool-run-status.error {
-  color: var(--danger);
-}
-
-.tool-run-status.running {
-  color: var(--accent);
-}
-
-.tool-run-status.stopped {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
   color: var(--faint);
 }
 
-.tool-run-status.running::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.22), transparent);
-  transform: translateX(-100%);
-  animation: timeline-shimmer 1100ms ease-in-out infinite;
-}
-
-.tool-run-item.running .timeline-label .icon:first-child {
-  color: var(--accent);
-}
-
-.tool-run-item.done .timeline-label .icon:first-child {
-  color: var(--success);
-}
-
-.tool-run-item.error .timeline-label .icon:first-child {
-  color: var(--danger);
-}
-
-.tool-run-item.stopped .timeline-label .icon:first-child {
-  color: var(--faint);
-}
-
-.tool-run-details {
-  display: grid;
-  gap: 14px;
-  width: 100%;
-  max-width: 700px;
-  margin-top: 7px;
-  padding-left: 20px;
-}
-
-.tool-run-details > div {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-}
-
-/* The uppercase section label ("INPUT"/"OUTPUT"/...) already headers each
-   detail card; the code block's own caption bar only repeated it in lowercase.
-   Drop the duplicate so the card keeps a single, lighter header. */
-.tool-run-details .code-block figcaption {
-  display: none;
-}
-
-.tool-run-details small {
-  grid-column: auto;
-  margin: 0;
-  text-align: left;
-}
-
-.tool-run-details > div > pre {
-  box-sizing: border-box;
-  grid-column: auto;
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
-}
-
-.tool-run-details .error > pre {
-  border-color: rgba(var(--danger-rgb), 0.22);
-  color: var(--danger-ink);
-  background: var(--danger-soft);
-}
-
-.tool-run-details .error .code-block {
-  border-color: rgba(var(--danger-rgb), 0.22);
-}
-
-.tool-run-details .error .code-block figcaption {
-  background: var(--danger-soft);
-}
-
-.timeline-label .icon,
-.message-run-line .icon {
+.timeline-row-lead .icon {
   width: 14px;
   height: 14px;
 }
 
-.timeline-item p {
-  margin: 5px 0 0;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.55;
-  white-space: pre-wrap;
+.timeline-row-icon {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
 }
 
-.timeline-item small {
-  margin-top: 14px;
+/* The chevron takes the icon's place rather than claiming a slot of its own,
+   which is what keeps both row edges aligned across every row. */
+.timeline-row-chevron {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.timeline-row:hover .timeline-row-icon,
+.timeline-item:not(.collapsed) .timeline-row-icon {
+  opacity: 0;
+}
+
+.timeline-row:hover .timeline-row-chevron,
+.timeline-item:not(.collapsed) .timeline-row-chevron {
+  opacity: 1;
+}
+
+.timeline-item.collapsed .timeline-row-chevron .icon {
+  transform: rotate(-90deg);
+}
+
+.timeline-row-title {
+  flex: none;
   color: var(--muted);
   font-family: var(--font-ui);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
 }
 
-.timeline-item > pre {
-  grid-column: 2;
-  max-width: 510px;
-  margin: 7px 0 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--ink);
-  background: var(--soft);
-  font-family: var(--font-code);
-  font-size: 12px;
-  line-height: 1.55;
-  overflow: auto;
-  white-space: pre-wrap;
+.timeline-row-dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--faint);
 }
 
-.timeline-item .tool-run-details small {
-  grid-column: auto;
-  margin: 0;
+.timeline-row-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-row-summary.error {
+  color: var(--danger);
+}
+
+/* A mutation magnitude stays out of the summary's ellipsis: on a narrow row the
+   path gives way before the count that says how much changed. */
+.timeline-row-suffix {
+  flex: none;
+  margin-left: 8px;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 24px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-row-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.timeline-row-state-dot.error {
+  background: var(--danger);
+}
+
+.timeline-row-state-dot.stopped {
+  background: var(--attention);
+}
+
+/* Run state is carried by colour and motion, both aria-hidden, so a row that is
+   running, failed or interrupted also emits this text for assistive tech. */
+.timeline-row-state-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A running row wears a single glare band sweeping across it. Only the segment
+   currently producing output carries it, so at most one row animates. */
+.timeline-item.running .timeline-row::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(90deg, transparent 0%, rgba(var(--surface-rgb), 0.72) 55%, transparent 100%);
+  animation: timeline-sweep 2600ms ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes timeline-sweep {
+  0% { left: -300px; }
+  90%, 100% { left: 100%; }
+}
+
+/* ── Expanded bodies ──────────────────────────────────────────────────────
+   22px = leading 16 + gap 6, so every expanded body starts under the first
+   character of its own title. */
+
+.timeline-row-body {
+  padding: 4px 0 6px 22px;
+}
+
+.timeline-row-thought .markdown-message {
+  display: block;
+  width: 100%;
+}
+
+.timeline-row-thought .markdown-message > * + * {
+  margin-top: 12px;
+}
+
+.timeline-row-thought .markdown-message p,
+.timeline-row-thought .markdown-message ul,
+.timeline-row-thought .markdown-message ol {
+  width: 100%;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 24px;
   text-align: left;
 }
 
-.timeline-item .tool-run-details > div > pre {
-  grid-column: auto;
+.timeline-row-thought .markdown-message pre {
+  max-width: 100%;
+  background: var(--soft);
+}
+
+/* One card with an IN/OUT gutter, replacing the pair of separately captioned
+   cards. Each section scrolls on its own so a long input cannot bury a short
+   output, and the label stays put while its payload scrolls under it. */
+.tool-run-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.tool-run-slot {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: baseline;
+  max-height: 150px;
+  padding: 11px 14px;
+  overflow: auto;
+}
+
+.tool-run-slot-label {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  margin: 0;
+  color: var(--faint);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 18px;
+  letter-spacing: 0.06em;
+}
+
+.tool-run-divider {
+  display: block;
+  height: 1px;
+  background: var(--line);
+}
+
+/* The gutter label is the section's only heading; the code block's own caption
+   bar would repeat it. */
+.tool-run-slot .code-block figcaption {
+  display: none;
+}
+
+/* The card is the surface. The code block inside a slot contributes only its
+   highlighting, so it drops its own border, radius, fill and padding rather
+   than drawing a second box inside the first. */
+.tool-run-slot .code-block,
+.tool-run-slot > pre {
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
-@keyframes timeline-shimmer {
-  to { transform: translateX(100%); }
+.tool-run-slot .code-block-scroll {
+  max-height: none;
+  overflow: visible;
 }
 
-.run-completion-line {
-  width: fit-content;
-  color: var(--faint);
-  font-family: var(--font-ui);
+/* Shiki writes the theme's background straight onto the <pre> as an inline
+   style, so only !important can hand the surface back to the card. Without it
+   the slot draws a white box inside the tinted card. */
+.tool-run-slot .code-block .shiki,
+.tool-run-slot > pre {
+  padding: 0;
+  background: transparent !important;
   font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.run-completion-line.stopped {
-  color: color-mix(in srgb, var(--accent) 68%, var(--muted));
+.tool-run-slot.error .code-block pre,
+.tool-run-slot.error > pre {
+  color: var(--danger-ink);
 }
 
-.run-completion-line.error {
-  color: var(--danger);
+.system-item .timeline-row-summary {
+  color: var(--muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .turn-activity::after,
-  .timeline-running-indicator::after,
-  .tool-run-status.running::after {
+  .timeline-item.running .timeline-row::after,
+  .run-header.live::after {
     animation: none;
   }
 }
@@ -4734,6 +4752,8 @@ body:has(.settings-panel) .message-jump-rail {
 .timeline-output {
   display: grid;
   gap: 10px;
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .trace-link {

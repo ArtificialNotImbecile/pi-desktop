@@ -20,6 +20,15 @@ function assistantMessage(id: string, timeline: ChatTimelineItem[]): ChatMessage
   };
 }
 
+// A settled successful run folds its activity behind the run header, so a test
+// that reads an activity row has to open the turn first, exactly as a reader
+// does. Turns that carry no header (trivial runs) are left alone.
+function expandRun(container: HTMLElement) {
+  for (const toggle of Array.from(container.querySelectorAll<HTMLButtonElement>(".run-header-toggle"))) {
+    if (toggle.getAttribute("aria-expanded") === "false") fireEvent.click(toggle);
+  }
+}
+
 function mountMessages(messages: ChatMessage[], language: "en" | "zh" = "en") {
   const onCopy = vi.fn();
   const onRetry = vi.fn();
@@ -113,24 +122,25 @@ describe("message rendering", () => {
     );
     const harness = render(renderList("thread-a:request-a", "settings-a"));
     try {
+      const clock = () => harness.container.querySelector(".run-header.live")?.textContent;
       act(() => vi.advanceTimersByTime(15_000));
-      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+      expect(clock()).toContain("0:15");
 
       // Updating provider/settings behavior rerenders MessageList but must not
       // restart the clock for the same request.
       harness.rerender(renderList("thread-a:request-a", "settings-b"));
-      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+      expect(clock()).toContain("0:15");
 
       // Switching to another running task and starting another request in the
       // same thread both receive a fresh activity clock.
       harness.rerender(renderList("thread-b:request-b", "settings-b"));
-      expect(harness.container.querySelector(".turn-activity")?.querySelector("time")).toBeNull();
+      expect(clock()).toContain("0:00");
       act(() => vi.advanceTimersByTime(15_000));
-      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:15");
+      expect(clock()).toContain("0:15");
       harness.rerender(renderList("thread-b:request-c", "settings-b"));
-      expect(harness.container.querySelector(".turn-activity")?.querySelector("time")).toBeNull();
+      expect(clock()).toContain("0:00");
       harness.rerender(renderList("thread-a:request-a", "settings-b"));
-      expect(harness.container.querySelector(".turn-activity")?.textContent).toContain("0:30");
+      expect(clock()).toContain("0:30");
     } finally {
       harness.unmount();
       vi.useRealTimers();
@@ -150,9 +160,12 @@ describe("message rendering", () => {
     expect(copy.getAttribute("title")).toBe("Copy message");
     expect(regenerate.getAttribute("title")).toBe("Regenerate this response");
     expect(actions.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Show work details" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Thinking" }).getAttribute("aria-expanded")).toBe("false");
+    // A successful run with activity settles collapsed: the header is the only
+    // way into the thought row.
+    expect(screen.queryByRole("button", { name: "Thinking" })).toBeNull();
     expect(screen.getByText("Worked for 1s")).toBeDefined();
+    expandRun(harness.container);
+    expect(screen.getByRole("button", { name: "Thinking" }).getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("button", { name: "Open trace" })).toBeNull();
 
     fireEvent.click(copy);
@@ -202,11 +215,75 @@ describe("message rendering", () => {
       status: "error" as const
     };
     const harness = mountMessages([stopped, failed]);
-    const completionLines = Array.from(harness.container.querySelectorAll<HTMLElement>(".run-completion-line"));
+    const headers = Array.from(harness.container.querySelectorAll<HTMLElement>(".run-header-toggle"));
 
-    expect(completionLines).toHaveLength(2);
-    expect(completionLines[0].getAttribute("aria-label")).toBe("Stopped after 1s");
-    expect(completionLines[1].getAttribute("aria-label")).toBe("Failed after 1s");
+    expect(headers).toHaveLength(2);
+    expect(headers[0].getAttribute("aria-label")).toBe("Stopped after 1s");
+    expect(headers[1].getAttribute("aria-label")).toBe("Failed after 1s");
+    // An outcome the reader has to act on is never folded away, so neither
+    // header is a disclosure control.
+    expect(headers.every((header) => header.tagName === "DIV")).toBe(true);
+  });
+
+  test("a settled run folds its activity away and reopens it on demand", () => {
+    const message = assistantMessage("collapsing-run", [
+      { id: "collapsing-thought", kind: "thinking", text: "Checked the settle path." },
+      { id: "collapsing-output", kind: "assistant_text", text: "Visible final answer." }
+    ]);
+    const harness = mountMessages([message]);
+    const header = harness.container.querySelector(".run-header-toggle") as HTMLButtonElement;
+    const thought = harness.container.querySelector(".thinking-item") as HTMLElement;
+    const answer = harness.container.querySelector(".timeline-output") as HTMLElement;
+
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(thought.hidden).toBe(true);
+    // The answer is the point of the turn and is never folded with the activity.
+    expect(answer.hidden).toBe(false);
+    expect(answer.textContent).toContain("Visible final answer.");
+
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(thought.hidden).toBe(false);
+    // Folding keeps the row mounted so reopening costs nothing and the reader's
+    // own disclosures survive.
+    fireEvent.click(header);
+    expect(harness.container.querySelector(".thinking-item")).toBe(thought);
+    expect(thought.hidden).toBe(true);
+  });
+
+  test("a run that ends badly stays open and a trivial run carries no header at all", () => {
+    const stopped = assistantMessage("stopped-run", [
+      { id: "stopped-thought", kind: "thinking", text: "Started work." },
+      { id: "stopped-status", kind: "system", title: "Stopped", text: "Stopped by user." },
+      { id: "stopped-output", kind: "assistant_text", text: "Partial answer." }
+    ]);
+    const stoppedHarness = mountMessages([stopped]);
+    expect(stoppedHarness.container.querySelector(".run-header")).not.toBeNull();
+    expect((stoppedHarness.container.querySelector(".thinking-item") as HTMLElement).hidden).toBe(false);
+    stoppedHarness.unmount();
+
+    // Nothing happened and it took no time: a "Worked for 1s" footnote under a
+    // one-line reply is noise. Which model answered is not, so that survives.
+    const trivial = {
+      ...assistantMessage("trivial-run", [
+        { id: "trivial-output", kind: "assistant_text" as const, text: "Hello." }
+      ]),
+      elapsedMs: 900,
+      modelId: "deepseek-v4-flash"
+    };
+    const trivialHarness = mountMessages([trivial]);
+    expect(trivialHarness.container.querySelector(".run-header-toggle")).toBeNull();
+    expect(trivialHarness.container.textContent).not.toContain("Worked for");
+    expect(trivialHarness.container.querySelector(".run-header.provenance-only")?.textContent)
+      .toBe("deepseek-v4-flash");
+    expect(trivialHarness.container.textContent).toContain("Hello.");
+    trivialHarness.unmount();
+
+    // The same turn that actually took time keeps its header.
+    const slow = { ...trivial, id: "slow-trivial-run", elapsedMs: 9_000 };
+    const slowHarness = mountMessages([slow]);
+    expect(slowHarness.container.querySelector(".run-header")).not.toBeNull();
+    expect(slowHarness.container.querySelector(".run-header-toggle")?.tagName).toBe("DIV");
   });
 
   test("thought rows stay compact and summarize the newest live line before settling on the first line", () => {
@@ -222,11 +299,13 @@ describe("message rendering", () => {
 
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.getAttribute("aria-describedby")).toBeTruthy();
-    expect(toggle.getAttribute("aria-describedby")).toBe(thought.querySelector(".timeline-summary")?.id);
+    expect(toggle.getAttribute("aria-describedby")).toBe(thought.querySelector(".timeline-row-summary")?.id);
     expect(thought.textContent).toContain("Newest live step");
     expect(thought.textContent).not.toContain("First plan");
-    expect(thought.querySelector(".thinking-markdown")).toBeNull();
-    expect(thought.querySelector(".timeline-running-indicator")).not.toBeNull();
+    expect(thought.querySelector(".timeline-row-thought")).toBeNull();
+    // Run state is colour and motion only, so the row also carries it as text.
+    expect(thought.classList.contains("running")).toBe(true);
+    expect(thought.querySelector(".timeline-row-state-text")?.textContent).toBe("Running");
 
     harness.rerender(
       <I18nProvider language="en">
@@ -241,10 +320,12 @@ describe("message rendering", () => {
       </I18nProvider>
     );
 
+    expandRun(harness.container);
     const settledThought = harness.container.querySelector(".thinking-item") as HTMLElement;
     expect(settledThought.textContent).toContain("First plan");
     expect(settledThought.textContent).not.toContain("Newest live step");
-    expect(settledThought.querySelector(".timeline-running-indicator")).toBeNull();
+    expect(settledThought.classList.contains("running")).toBe(false);
+    expect(settledThought.querySelector(".timeline-row-state-text")).toBeNull();
   });
 
   test("only the active timeline segment keeps live thought presentation", () => {
@@ -278,11 +359,11 @@ describe("message rendering", () => {
     expect(thoughts[0].classList.contains("done")).toBe(true);
     expect(thoughts[0].textContent).toContain("Completed plan");
     expect(thoughts[0].textContent).not.toContain("Completed latest line");
-    expect(thoughts[0].querySelector(".timeline-running-indicator")).toBeNull();
+    expect(thoughts[0].querySelector(".timeline-row-state-text")).toBeNull();
     expect(thoughts[1].classList.contains("running")).toBe(true);
     expect(thoughts[1].textContent).toContain("Active latest line");
     expect(thoughts[1].textContent).not.toContain("Active plan");
-    expect(thoughts[1].querySelector(".timeline-running-indicator")).not.toBeNull();
+    expect(thoughts[1].querySelector(".timeline-row-state-text")?.textContent).toBe("Running");
   });
 
   test("collapsed thought summaries and web provenance redact credentials", () => {
@@ -316,12 +397,13 @@ describe("message rendering", () => {
       ]
     };
     const harness = mountMessages([message]);
+    expandRun(harness.container);
     const thought = harness.container.querySelector(".thinking-item") as HTMLElement;
     const provenance = harness.container.querySelector(".web-search-used-line") as HTMLElement;
 
     expect(thought.textContent).toBe("Thinking");
     expect(thought.textContent).not.toContain("thought-summary-must-not-see-this");
-    expect(thought.querySelector(".thinking-markdown")).toBeNull();
+    expect(thought.querySelector(".timeline-row-thought")).toBeNull();
     expect(provenance.textContent).toContain("https://api.example.test/private/report");
     expect(provenance.textContent).toContain("https://docs.example.test/guide");
     expect(provenance.textContent).toContain("https://private.example.test/report");
@@ -335,7 +417,7 @@ describe("message rendering", () => {
     expect(provenance.textContent).not.toContain("provenance-title-must-not-see-this");
 
     fireEvent.click(within(thought).getByRole("button", { name: "Thinking" }));
-    expect(thought.querySelector(".thinking-markdown")?.textContent).toContain("thought-summary-must-not-see-this");
+    expect(thought.querySelector(".timeline-row-thought")?.textContent).toContain("thought-summary-must-not-see-this");
   });
 
   test("collapsed previews redact standalone provider credentials", () => {
@@ -433,13 +515,17 @@ describe("message rendering", () => {
         />
       </I18nProvider>
     );
+    // Settling folds the turn, but the row keeps the disclosure the reader
+    // chose: reopening the run shows it open, not reset.
+    expandRun(harness.container);
     expect(screen.getByRole("button", { name: "Thinking" }).getAttribute("aria-expanded")).toBe("true");
 
     harness.unmount();
     const reloaded = mountMessages([{ ...settledMessage, renderId: undefined }]);
+    expandRun(reloaded.container);
     const reloadedToggle = screen.getByRole("button", { name: "Thinking" });
     expect(reloadedToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(reloaded.container.querySelector(".thinking-markdown")?.hasAttribute("hidden")).toBe(false);
+    expect(reloaded.container.querySelector(".timeline-row-thought")?.parentElement?.hasAttribute("hidden")).toBe(false);
   });
 
   test("internal Pi summaries stay behind a lazy disclosure", () => {
@@ -451,6 +537,7 @@ describe("message rendering", () => {
       { id: "compaction-output", kind: "assistant_text", text: "Visible final answer." }
     ]);
     const harness = mountMessages([message]);
+    expandRun(harness.container);
     const rows = harness.container.querySelectorAll<HTMLElement>(".system-summary-item");
     const compactionToggle = within(rows[0]).getByRole("button", { name: "Context compacted" });
     const branchToggle = within(rows[1]).getByRole("button", { name: "Branch summary" });
@@ -459,16 +546,16 @@ describe("message rendering", () => {
     expect(branchToggle.getAttribute("aria-expanded")).toBe("false");
     expect(rows[0].textContent).not.toContain(compactionSummary);
     expect(rows[1].textContent).not.toContain(branchSummary);
-    expect(rows[0].querySelector(".thinking-markdown")).toBeNull();
-    expect(rows[1].querySelector(".thinking-markdown")).toBeNull();
+    expect(rows[0].querySelector(".timeline-row-thought")).toBeNull();
+    expect(rows[1].querySelector(".timeline-row-thought")).toBeNull();
     expect(harness.container.querySelector(".timeline-output")?.textContent).toContain("Visible final answer.");
 
     fireEvent.click(compactionToggle);
     fireEvent.click(branchToggle);
     expect(compactionToggle.getAttribute("aria-expanded")).toBe("true");
     expect(branchToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(rows[0].querySelector(".thinking-markdown")?.textContent).toContain(compactionSummary);
-    expect(rows[1].querySelector(".thinking-markdown")?.textContent).toContain(branchSummary);
+    expect(rows[0].querySelector(".timeline-row-thought")?.textContent).toContain(compactionSummary);
+    expect(rows[1].querySelector(".timeline-row-thought")?.textContent).toContain(branchSummary);
   });
 
   test("tool rows summarize edit and bash results and replace undecodable output", () => {
@@ -531,55 +618,64 @@ describe("message rendering", () => {
       signedSearchResultMessage
     ]);
 
+    expandRun(harness.container);
+
+    // The row states what the tool acted on. Success carries no status word at
+    // all; only a mutation magnitude earns a slot beside the target.
     const editTool = harness.container.querySelector('[data-message-id="edit-message"] .tool-run-item');
-    expect(editTool?.textContent).toContain("edit");
+    expect(editTool?.textContent).toContain("Edit");
     expect(editTool?.textContent).toContain("src/example.ts");
-    expect(editTool?.textContent).toContain("edited - +1 -1");
+    expect(editTool?.querySelector(".timeline-row-suffix")?.textContent).toBe("+1 −1");
+    expect(editTool?.textContent).not.toContain("edited");
 
     const bashTool = harness.container.querySelector('[data-message-id="bash-message"] .tool-run-item');
-    expect(bashTool?.textContent).toContain("bash");
-    expect(bashTool?.textContent).not.toContain("ls src/renderer/components/chat");
-    expect(bashTool?.textContent).toContain("done - 3 lines");
-    expect(bashTool?.querySelector(".tool-run-details")).toBeNull();
-    const bashToggle = bashTool?.querySelector(".tool-run-toggle") as HTMLButtonElement;
+    expect(bashTool?.textContent).toContain("Bash");
+    // A command with no credential marker is the row's subject, so it reads in
+    // the summary instead of being withheld behind the disclosure.
+    expect(bashTool?.textContent).toContain("ls src/renderer/components/chat");
+    expect(bashTool?.textContent).not.toContain("3 lines");
+    expect(bashTool?.querySelector(".tool-run-card")).toBeNull();
+    const bashToggle = bashTool?.querySelector(".timeline-toggle") as HTMLButtonElement;
     expect(bashToggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(bashToggle);
-    const bashDetails = bashTool?.querySelector(".tool-run-details") as HTMLDivElement;
+    const bashDetails = bashTool?.querySelector(".timeline-row-body") as HTMLDivElement;
     expect(bashToggle.getAttribute("aria-expanded")).toBe("true");
     expect(bashDetails.hidden).toBe(false);
-    expect(bashDetails.textContent).toContain("COMMAND");
+    expect(bashDetails.textContent).toContain("IN");
     expect(bashDetails.textContent).toContain("MessageTimeline.tsx");
 
+    // A failed row replaces its target with the failure's first line, so the
+    // reason is readable without opening anything.
     const errorTool = harness.container.querySelector('[data-message-id="error-message"] .tool-run-item.error');
-    expect(errorTool?.textContent).toContain("exit 1");
-    const errorToggle = errorTool?.querySelector(".tool-run-toggle") as HTMLButtonElement;
+    expect(errorTool?.querySelector(".timeline-row-summary.error")?.textContent)
+      .toContain("Output encoding could not be decoded.");
+    expect(errorTool?.textContent).not.toContain("taskkill");
+    const errorToggle = errorTool?.querySelector(".timeline-toggle") as HTMLButtonElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("false");
-    expect(errorTool?.querySelector(".tool-run-details")).toBeNull();
+    expect(errorTool?.querySelector(".tool-run-card")).toBeNull();
     const secretErrorTool = harness.container.querySelector('[data-message-id="secret-error-message"] .tool-run-item.error');
-    expect(secretErrorTool?.querySelector(".tool-run-details")).toBeNull();
+    expect(secretErrorTool?.querySelector(".tool-run-card")).toBeNull();
     expect(secretErrorTool?.textContent).not.toContain("routine-capture-must-not-see-this");
     const secretCommandTool = harness.container.querySelector('[data-message-id="secret-command-message"] .tool-run-item');
-    expect(secretCommandTool?.querySelector(".tool-run-details")).toBeNull();
+    expect(secretCommandTool?.querySelector(".tool-run-card")).toBeNull();
     expect(secretCommandTool?.textContent).not.toContain("collapsed-command-must-not-see-this");
     const signedUrlTool = harness.container.querySelector('[data-message-id="signed-url-message"] .tool-run-item') as HTMLElement;
     expect(signedUrlTool.textContent).toContain("https://api.example.test/private/report");
     expect(signedUrlTool.textContent).not.toContain("password");
     expect(signedUrlTool.textContent).not.toContain("access_token");
     expect(signedUrlTool.textContent).not.toContain("collapsed-url-must-not-see-this");
-    expect(signedUrlTool.getAttribute("aria-label")).not.toContain("collapsed-url-must-not-see-this");
-    const signedUrlToggle = signedUrlTool.querySelector(".tool-run-toggle") as HTMLButtonElement;
+    const signedUrlToggle = signedUrlTool.querySelector(".timeline-toggle") as HTMLButtonElement;
     fireEvent.click(signedUrlToggle);
-    expect(signedUrlTool.querySelector(".tool-run-details")?.textContent).toContain("collapsed-url-must-not-see-this");
+    expect(signedUrlTool.querySelector(".tool-run-card")?.textContent).toContain("collapsed-url-must-not-see-this");
     const secretSearchTool = harness.container.querySelector('[data-message-id="secret-search-message"] .tool-run-item') as HTMLElement;
     expect(secretSearchTool.textContent).not.toContain("collapsed-query-must-not-see-this");
-    expect(secretSearchTool.getAttribute("aria-label")).not.toContain("collapsed-query-must-not-see-this");
-    expect(secretSearchTool.querySelector(".tool-run-details")).toBeNull();
+    expect(secretSearchTool.querySelector(".tool-run-card")).toBeNull();
     const signedSearchResultTool = harness.container.querySelector('[data-message-id="signed-search-result-message"] .tool-run-item') as HTMLElement;
     expect(signedSearchResultTool.textContent).toContain("https://results.example.test/article");
     expect(signedSearchResultTool.textContent).not.toContain("X-Amz-Signature");
     expect(signedSearchResultTool.textContent).not.toContain("collapsed-result-url-must-not-see-this");
     fireEvent.click(errorToggle);
-    const errorDetails = errorTool?.querySelector(".tool-run-details") as HTMLDivElement;
+    const errorDetails = errorTool?.querySelector(".timeline-row-body") as HTMLDivElement;
     expect(errorToggle.getAttribute("aria-expanded")).toBe("true");
     expect(errorDetails.hidden).toBe(false);
     expect(errorDetails.textContent).toContain("Output encoding could not be decoded.");
@@ -652,10 +748,17 @@ describe("message rendering", () => {
     };
 
     const harness = mountMessages([toolMessage, imageMessage], "zh");
+    // A tool row is named for the tool, which is not translated: "Edit" is the
+    // command the reader can find in the transcript. The narrated rows around it
+    // still follow the interface language.
     const localizedTool = harness.container.querySelector('[data-message-id="localized-tool"] .tool-run-item');
-    expect(localizedTool?.getAttribute("aria-label")).toBe("工具 edit src/example.ts");
-    expect(localizedTool?.querySelector(".tool-run-toggle")?.getAttribute("aria-label"))
-      .toBe("编辑 src/example.ts 已编辑 · +1 -1");
+    const localizedToggle = localizedTool?.querySelector(".timeline-toggle");
+    expect(localizedToggle?.getAttribute("aria-label")).toBe("Edit");
+    expect(localizedToggle?.getAttribute("aria-describedby"))
+      .toBe(localizedTool?.querySelector(".timeline-row-summary")?.id);
+    expect(localizedTool?.querySelector(".timeline-row-summary")?.textContent).toBe("src/example.ts");
+    expect(harness.container.querySelector(".run-header-toggle")?.getAttribute("aria-label"))
+      .toContain("本轮用时");
     expect(screen.getByRole("button", { name: "预览 red-square.png" })).toBeDefined();
   });
 });

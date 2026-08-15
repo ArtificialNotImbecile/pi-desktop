@@ -167,6 +167,15 @@ test.describe("Jasmine message jump rail", () => {
 
     const firstAssistant = page.locator("[data-message-id='large-0001']");
     const laterUser = page.locator("[data-message-id='large-0006']");
+    // Seeded history settles with each successful run folded behind its header,
+    // so open them first: this case measures how the rail remeasures when an
+    // earlier thought disclosure moves later messages, which needs those rows
+    // reachable.
+    const runHeaders = page.locator(".run-header-toggle[aria-expanded='false']");
+    await expect(runHeaders.first()).toBeVisible();
+    for (let remaining = await runHeaders.count(); remaining > 0; remaining -= 1) {
+      await runHeaders.first().click();
+    }
     const thoughtToggle = firstAssistant.getByRole("button", { name: "Thinking" });
     await expect(thoughtToggle).toBeVisible();
     await expect(thoughtToggle).toHaveAttribute("aria-expanded", "false");
@@ -186,9 +195,14 @@ test.describe("Jasmine message jump rail", () => {
     expect(expandedAlignment.monotonic).toBe(true);
     expect(expandedAlignment.maxDelta).toBeLessThanOrEqual(1);
 
-    await laterUser.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    // The rail marks whichever user message sits nearest the viewport centre.
+    // Centre a message that has content below it: scrolling to the last one
+    // clamps at the bottom, which leaves its neighbour nearest the centre and
+    // makes the assertion depend on the fixture's exact height rather than on
+    // the rail.
+    await page.locator("[data-message-id='large-0004']").evaluate((node) => node.scrollIntoView({ block: "center" }));
     await page.waitForTimeout(50);
-    await expect(page.locator("[data-message-jump-id='large-0006']")).toHaveClass(/current/);
+    await expect(page.locator("[data-message-jump-id='large-0004']")).toHaveClass(/current/);
 
     await page.locator(".message-jump-trigger").click();
     await page.locator(".message-jump-menu button[title^='large import message 5']").click();
