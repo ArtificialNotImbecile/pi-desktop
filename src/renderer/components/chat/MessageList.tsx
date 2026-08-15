@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import type { RefObject } from "react";
 import type { BrandSettings, ChatMessage } from "../../../shared/ipc";
 import type { RunState } from "../../types";
@@ -72,13 +72,23 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
   // one commit and flash "Working" over an answer that just finished.
   const servedRunKeyRef = useRef<string | null>(null);
   if (liveAssistantPresent) servedRunKeyRef.current = props.runActivityKey;
-  const runActivity = isRunning
-    ? {
-        runKey: props.runActivityKey,
-        stopping: props.runState === "stopping",
-        model: props.runModelLabel ?? props.modelLabel
-      }
-    : null;
+  // Every settled turn's header consumes this context, and a context consumer
+  // re-renders on a new value even behind memo. A fresh object per streamed
+  // snapshot therefore re-renders the whole thread — and re-maps every
+  // historical timeline's rows — once per chunk, making each chunk cost
+  // proportional to the history above it. None of these fields change within a
+  // run, so hold the identity steady and let the live turn be the only thing
+  // that repaints.
+  const runActivity = useMemo(
+    () => (isRunning
+      ? {
+          runKey: props.runActivityKey,
+          stopping: props.runState === "stopping",
+          model: props.runModelLabel ?? props.modelLabel
+        }
+      : null),
+    [isRunning, props.runActivityKey, props.runState, props.runModelLabel, props.modelLabel]
+  );
 
   return (
     <div

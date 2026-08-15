@@ -104,7 +104,10 @@ test.describe("Jasmine panels and tools", () => {
     await page.waitForTimeout(100);
     const scrollTopAfterMoreOutput = await page.locator(".message-scroll").evaluate((node) => node.scrollTop);
     expect(Math.abs(scrollTopAfterMoreOutput - lockedScrollTop)).toBeLessThanOrEqual(1);
-    await waitForStableAssistant(page, "Long answer paragraph 42");
+    // 15s matches the other three call sites for this 42-paragraph fixture.
+    // This was the only one left on the default 10s, and settling now takes
+    // ~9.9s (UI-101), so it had no margin left on a loaded CI runner.
+    await waitForStableAssistant(page, "Long answer paragraph 42", 15_000);
     await expectNoPurpleThemeColors(memoryAwareReply, "memory-used message indicator");
 
     await openMemoryFromCommandPalette(page);
