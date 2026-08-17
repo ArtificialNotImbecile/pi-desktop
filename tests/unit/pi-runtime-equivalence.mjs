@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
+const invalidProviderSecret = ["sk", "invalid-provider-fixture-0987654321"].join("-");
 
 const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
 const {
@@ -28,6 +29,7 @@ const { prepareEnabledSkillManifests } = await import("../../dist/main/main/serv
 const { jasmineSessionDir } = await import("../../dist/main/main/services/piSessions.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
+const { testProvider } = await import("../../dist/main/main/services/providers.js");
 const {
   listPluginPackages,
   listPluginSkills,
@@ -553,6 +555,18 @@ const server = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   captures.push(body);
 
+  if (request.headers.authorization === `Bearer ${invalidProviderSecret}`) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "AuthError",
+        message: `Invalid API key ${invalidProviderSecret}.`
+      }
+    }));
+    return;
+  }
+
   const requestText = JSON.stringify(body.messages ?? body.input ?? []);
   if (requestText.includes("foreign reasoning history regression")) {
     response.writeHead(200, {
@@ -783,6 +797,22 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (requestText.includes("provider auth failure regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "AuthError",
+        message: `Invalid API key ${fakeProviderSecret}.`
+      }
+    }));
+    return;
+  }
+  if (requestText.includes("provider base url failure regression")) {
+    response.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+    response.end("<!DOCTYPE html><html><head><title>Not Found</title></head><body>API route not found</body></html>");
+    return;
+  }
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache",
@@ -994,6 +1024,54 @@ try {
   assert.equal(typeof address, "object");
   const baseUrl = `http://127.0.0.1:${address.port}/v1`;
   const systemPrompt = "You are Jasmine. Keep replies concise.";
+
+  const now = new Date().toISOString();
+  const providerUnderTest = {
+    id: "third-party-openai-compatible",
+    name: "Third-party OpenAI-compatible",
+    type: "openai-compatible",
+    baseUrl,
+    apiKeyRef: `key:${invalidProviderSecret}`,
+    models: [],
+    defaultModel: "jasmine-test",
+    enabled: true,
+    status: "unchecked",
+    createdAt: now,
+    updatedAt: now
+  };
+  let savedProviderCheck;
+  const providerTestDatabase = {
+    getProvider(providerId) {
+      return providerId === providerUnderTest.id ? providerUnderTest : undefined;
+    },
+    updateProviderCheck(providerId, check) {
+      assert.equal(providerId, providerUnderTest.id);
+      savedProviderCheck = check;
+      return {
+        ...providerUnderTest,
+        status: check.status,
+        lastError: check.lastError ?? undefined,
+        lastCheckedAt: now
+      };
+    }
+  };
+  const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  let failedProviderTest;
+  try {
+    failedProviderTest = await testProvider(providerTestDatabase, providerUnderTest.id);
+  } finally {
+    if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+  }
+  assert.equal(failedProviderTest.status, "failed");
+  assert.equal(failedProviderTest.provider.status, "failed");
+  assert.equal(savedProviderCheck.status, "failed");
+  assert.match(savedProviderCheck.lastError, /authentication failed \(401\)/);
+  assert.match(savedProviderCheck.lastError, /Invalid API key/);
+  assert.doesNotMatch(savedProviderCheck.lastError, new RegExp(invalidProviderSecret));
+  assert.doesNotMatch(savedProviderCheck.lastError, /completed without final assistant text/);
+  captures.length = 0;
 
   await writeFile(
     path.join(agentDir, "models.json"),
@@ -1904,6 +1982,60 @@ try {
   });
   assert.match(totallyEmptyReply.content, /completed without final assistant text or visible activity/);
   assert.equal(totallyEmptyReply.timeline.some((item) => item.kind === "assistant_text" && item.text === totallyEmptyReply.content), true);
+  const providerFailureConfig = {
+    providerName: "third-party-openai-compatible",
+    apiKey: fakeProviderSecret,
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: {
+      vision: false,
+      imageOutput: false,
+      toolCalling: true,
+      reasoning: true,
+      embedding: false
+    },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  };
+  await assert.rejects(
+    () => generateAssistantReply({
+      threadId: "provider-auth-failure-thread",
+      messages: [{ role: "user", content: "provider auth failure regression" }],
+      content: "provider auth failure regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig),
+    (error) => {
+      assert.match(error.message, /third-party-openai-compatible authentication failed \(401\)/);
+      assert.match(error.message, /Invalid API key/);
+      assert.match(error.message, /Check or replace the API key/);
+      assert.doesNotMatch(error.message, new RegExp(fakeProviderSecret));
+      assert.doesNotMatch(error.message, /completed without final assistant text/);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () => generateAssistantReply({
+      threadId: "provider-base-url-failure-thread",
+      messages: [{ role: "user", content: "provider base url failure regression" }],
+      content: "provider base url failure regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig),
+    (error) => {
+      assert.match(error.message, /request failed \(404 Not Found\)/);
+      assert.match(error.message, /Base URL/);
+      assert.match(error.message, /\/v1/);
+      assert.doesNotMatch(error.message, /<!DOCTYPE|<html>/i);
+      assert.doesNotMatch(error.message, /completed without final assistant text/);
+      return true;
+    }
+  );
   assert.equal(fallbackTitle("来玩成语接龙"), "来玩成语接龙");
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
   const generatedTitle = await generateTitleWithProvider({
