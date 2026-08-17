@@ -787,8 +787,10 @@ test.describe("Jasmine chat runtime", () => {
     await page.getByRole("button", { name: "Queue message" }).click();
     await expect(page.locator(".queue-item", { hasText: failedFollowUp })).toBeVisible();
 
-    await expect(page.locator(".assistant-block:not(.live-message)", { hasText: "Slow response complete." })).toBeVisible({ timeout: 10_000 });
+    const completedPartialAssistants = page.locator(".assistant-block:not(.live-message)", { hasText: "Slow response complete." });
     await expect(page.locator(".assistant-block.error-message")).toContainText("Mock queued provider failure.");
+    await expect(completedPartialAssistants).toHaveCount(1);
+    await expect(completedPartialAssistants.first()).toBeVisible();
     await expect(page.locator(".queue-item")).toHaveCount(0);
 
     const queuedFailureState = await page.evaluate(async (title) => {

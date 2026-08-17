@@ -320,9 +320,14 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const resultFromCurrentSession = (providerError?: string): PiCodingAgentChatResult => {
     const newEntries = sessionManager.getEntries().slice(previousEntryCount);
     linkCurrentPromptEntry(newEntries);
-    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
-    const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
-    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
+    // A failed provider turn can leave latestUpdate pointing at the previous
+    // successful assistant. Reusing that live fallback would synthesize a
+    // duplicate assistant for the error turn; committed session entries are
+    // authoritative once a provider failure has settled.
+    const fallbackText = providerError ? "" : latestUpdate.content;
+    const timeline = sessionEntriesToTimeline(newEntries, fallbackText, timelineIdentities);
+    const content = (assistantTextFromTimeline(timeline) || fallbackText).trim();
+    const generatedMessages = sessionEntriesToMessages(newEntries, fallbackText, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
     return {
       content,
       timeline,
