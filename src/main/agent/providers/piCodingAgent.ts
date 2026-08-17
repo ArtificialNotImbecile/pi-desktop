@@ -541,12 +541,11 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
 }
 
 function throwIfProviderTurnFailed(entries: SessionEntry[], provider: RuntimeProviderConfig): void {
-  const latestAssistant = [...entries].reverse().find((entry) =>
-    entry.type === "message" && entry.message.role === "assistant"
-  );
-  if (latestAssistant?.type !== "message" || latestAssistant.message.role !== "assistant") return;
-  if (latestAssistant.message.stopReason !== "error") return;
-  throw new Error(formatProviderFailure(latestAssistant.message.errorMessage, provider));
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+    if (entry.message.stopReason !== "error") continue;
+    throw new Error(formatProviderFailure(entry.message.errorMessage, provider));
+  }
 }
 
 function formatProviderFailure(errorMessage: string | undefined, provider: RuntimeProviderConfig): string {

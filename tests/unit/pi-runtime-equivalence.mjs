@@ -568,6 +568,9 @@ const server = createServer(async (request, response) => {
   }
 
   const requestText = JSON.stringify(body.messages ?? body.input ?? []);
+  const latestUserRequestText = JSON.stringify(
+    [...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content ?? ""
+  );
   if (requestText.includes("foreign reasoning history regression")) {
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -804,6 +807,17 @@ const server = createServer(async (request, response) => {
       error: {
         type: "AuthError",
         message: `Invalid API key ${fakeProviderSecret}.`
+      }
+    }));
+    return;
+  }
+  if (latestUserRequestText.includes("queued provider error then success regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "ProviderError",
+        message: "Initial queued run authentication failure."
       }
     }));
     return;
@@ -2035,6 +2049,45 @@ try {
       assert.doesNotMatch(error.message, /completed without final assistant text/);
       return true;
     }
+  );
+  const queuedProviderFailureCaptureStart = captures.length;
+  const queuedProviderFailureSession = SessionManager.inMemory(tempDir);
+  await assert.rejects(
+    () => generateAssistantReply({
+      threadId: "queued-provider-failure-thread",
+      messages: [{ role: "user", content: "queued provider error then success regression" }],
+      content: "queued provider error then success regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      sessionManager: queuedProviderFailureSession,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig, {
+      onQueueReady(controls) {
+        void controls.queueMessage({
+          mode: "followUp",
+          content: "queued provider recovery success",
+          attachments: []
+        });
+      }
+    }),
+    (error) => {
+      assert.match(error.message, /authentication failed \(401\)/);
+      assert.match(error.message, /Initial queued run authentication failure/);
+      return true;
+    }
+  );
+  assert.deepEqual(
+    queuedProviderFailureSession.getEntries()
+      .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
+      .map((entry) => entry.message.stopReason),
+    ["error", "stop"]
+  );
+  const queuedProviderFailurePayloads = captures.slice(queuedProviderFailureCaptureStart);
+  assert.equal(queuedProviderFailurePayloads.length, 2);
+  assert.equal(
+    JSON.stringify(queuedProviderFailurePayloads[1].messages).includes("queued provider recovery success"),
+    true
   );
   assert.equal(fallbackTitle("来玩成语接龙"), "来玩成语接龙");
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
