@@ -64,8 +64,13 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
   // first frame arrives. Until then a standalone header stands in at the same
   // place in the stack, sharing the run's clock origin, so sending a message
   // acknowledges immediately and nothing moves when the real block takes over.
-  const liveAssistantPresent = props.messages.some(
-    (message) => message.role === "assistant" && message.id.startsWith("stream-")
+  // Cumulative queued/steered snapshots retain completed assistant turns ahead
+  // of the current one, and every member carries a stream id for reconciliation.
+  // Only the trailing assistant owns the active run; using `some` here gives
+  // every completed prefix assistant the same Working header.
+  const tailMessage = props.messages.at(-1);
+  const liveAssistantPresent = Boolean(
+    tailMessage?.role === "assistant" && tailMessage.id.startsWith("stream-")
   );
   // Settlement renames the assistant message off its stream id before the run
   // state reaches idle. Without this latch the stand-in would reappear for that
@@ -96,7 +101,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
       ref={props.messageScrollRef}
       onWheel={(event) => props.onMessageWheel(event.deltaY)}
       onClickCapture={(event) => {
-        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .memory-used-line, .load-older-messages")) {
+        if (event.target instanceof Element && event.target.closest(".timeline-toggle, .run-header-toggle, .memory-used-line, .load-older-messages")) {
           props.onMessageInteraction();
         }
       }}
@@ -158,6 +163,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
                   <MessageView
                     key={message.renderId ?? message.id}
                     message={message}
+                    activeRunOwner={liveAssistantPresent && message === tailMessage}
                     onCopy={handleCopy}
                     onCopyCode={handleCopyCode}
                     onRetry={handleRetry}

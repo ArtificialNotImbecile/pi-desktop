@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, type ComponentProps } from "react";
 import { describe, expect, test, vi } from "vitest";
 import type { ChatMessage, ChatTimelineItem } from "../../src/shared/ipc";
 import { I18nProvider } from "../../src/renderer/i18n";
@@ -51,6 +51,47 @@ function mountMessages(messages: ChatMessage[], language: "en" | "zh" = "en") {
     </I18nProvider>
   );
   return { ...view, onCopy, onRetry, onEdit, onRemember, onCopyCode };
+}
+
+function mountMessageList(
+  messages: ChatMessage[],
+  overrides: Partial<ComponentProps<typeof MessageList>> = {}
+) {
+  const callbacks = {
+    onLoadOlderMessages: vi.fn(),
+    onCopy: vi.fn(),
+    onCopyCode: vi.fn(),
+    onRetry: vi.fn(),
+    onEditMessage: vi.fn(),
+    onRemember: vi.fn(),
+    onConfigureProvider: vi.fn(),
+    onMessageWheel: vi.fn(),
+    onMessageInteraction: vi.fn(),
+    onMessageTailIntent: vi.fn(),
+    onMessageScroll: vi.fn()
+  };
+  const props: ComponentProps<typeof MessageList> = {
+    messages,
+    hasOlderMessages: false,
+    loadingOlderMessages: false,
+    loading: false,
+    runState: "running",
+    runModelLabel: "deepseek-v4-flash",
+    runActivityKey: "renderer-message-thread:active-request",
+    error: null,
+    actionKey: "settings-a",
+    messageScrollRef: createRef<HTMLDivElement>(),
+    modelLabel: "deepseek-v4-flash",
+    brand: { logoDataUrl: null, mainTitle: "Jasmine", subtitle: "", updatedAt: createdAt },
+    ...callbacks,
+    ...overrides
+  };
+  const view = render(
+    <I18nProvider language="en">
+      <MessageList {...props} />
+    </I18nProvider>
+  );
+  return { ...view, callbacks };
 }
 
 function toolTimeline(
@@ -123,8 +164,15 @@ describe("message rendering", () => {
     const harness = render(renderList("thread-a:request-a", "settings-a"));
     try {
       const clock = () => harness.container.querySelector(".run-header.live")?.textContent;
+      const accessibleName = () => harness.container.querySelector('[role="status"]')?.getAttribute("aria-label");
+      const clockNode = () => harness.container.querySelector(".run-header.live time");
+      // The visible clock may tick, but a polite live region must not announce
+      // the full status again every second.
+      expect(accessibleName()).toBe("Working deepseek-v4-flash");
+      expect(clockNode()?.closest('[role="status"]')).toBeNull();
       act(() => vi.advanceTimersByTime(15_000));
       expect(clock()).toContain("0:15");
+      expect(accessibleName()).toBe("Working deepseek-v4-flash");
 
       // Updating provider/settings behavior rerenders MessageList but must not
       // restart the clock for the same request.
@@ -145,6 +193,46 @@ describe("message rendering", () => {
       harness.unmount();
       vi.useRealTimers();
     }
+  });
+
+  test("only the trailing streamed assistant owns the active run header", () => {
+    const firstAssistant = assistantMessage("stream-active-request-0", [
+      { id: "first-output", kind: "assistant_text", text: "First answer." }
+    ]);
+    const queuedUser: ChatMessage = {
+      id: "stream-active-request-1",
+      threadId: "renderer-message-thread",
+      role: "user",
+      content: "Queued follow-up",
+      createdAt
+    };
+    const activeAssistant = assistantMessage("stream-active-request-2", [
+      { id: "active-output", kind: "assistant_text", text: "Follow-up answer in progress." }
+    ]);
+    const harness = mountMessageList([firstAssistant, queuedUser, activeAssistant]);
+
+    expect(harness.container.querySelectorAll(".run-header.live")).toHaveLength(1);
+    expect(harness.container.querySelectorAll(".assistant-block.live-message")).toHaveLength(1);
+    expect(harness.container.querySelector('[data-message-id="stream-active-request-0"] .run-header')).toBeNull();
+    expect(harness.container.querySelector('[data-message-id="stream-active-request-0"] .run-header.live')).toBeNull();
+    expect(harness.container.querySelector('[data-message-id="stream-active-request-2"] .run-header.live')).not.toBeNull();
+  });
+
+  test("opening a settled run during later streaming records reading intent", () => {
+    const settledAssistant = assistantMessage("settled-prior-run", [
+      { id: "settled-thought", kind: "thinking", text: "Earlier work." },
+      { id: "settled-output", kind: "assistant_text", text: "Earlier answer." }
+    ]);
+    const activeAssistant = assistantMessage("stream-active-request-0", [
+      { id: "active-thought", kind: "thinking", text: "New work." }
+    ]);
+    const harness = mountMessageList([settledAssistant, activeAssistant]);
+    const settledToggle = harness.container.querySelector(
+      '[data-message-id="settled-prior-run"] .run-header-toggle'
+    ) as HTMLButtonElement;
+
+    fireEvent.click(settledToggle);
+    expect(harness.callbacks.onMessageInteraction).toHaveBeenCalledOnce();
   });
 
   test("assistant actions expose accessible names and dispatch every direct and menu callback", () => {

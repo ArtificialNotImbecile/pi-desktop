@@ -1119,6 +1119,12 @@ test.describe("Jasmine chat runtime", () => {
     // Zero-latency steer: the steered user turn renders at the delivery instant in a live
     // streaming state, before the steered reply emits any token (not after the run finishes).
     await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
+    // The cumulative steer snapshot includes completed assistant prefixes with
+    // stream ids, but only the trailing assistant owns the current Working
+    // header and live styling.
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(1);
+    await expect(page.locator(".run-header.live")).toHaveCount(1);
+    await expect(page.locator(".assistant-block").last().locator(".run-header.live")).toHaveCount(1);
     await expect(page.locator(".message-stack")).not.toContainText("Steered response complete: steer correction request slow timeline");
     await expect(page.locator(".assistant-block.live-message", { hasText: "Steered response" }).last()).toBeVisible({ timeout: 5000 });
     await expect(page.locator(".queue-item")).toHaveCount(1);

@@ -18,6 +18,7 @@ declare global {
 }
 type MessageViewProps = {
   message: ChatMessage;
+  activeRunOwner?: boolean;
   onCopy: (message: ChatMessage) => void;
   onCopyCode: (code: string) => void;
   onRetry: (message: ChatMessage) => void;
@@ -43,12 +44,12 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
   recordHarnessRender(props.message.id);
   const { t } = useI18n();
   const [previewImage, setPreviewImage] = useState<NonNullable<ChatMessage["attachments"]>[number] | null>(null);
-  const isLive = props.message.id.startsWith("stream-");
+  const isStreamMessage = props.message.id.startsWith("stream-");
 
   if (props.message.role === "user") {
     return (
       <>
-        <div className={`user-message-wrap ${isLive ? "live-message" : ""}`} data-message-id={props.message.id}>
+        <div className={`user-message-wrap ${isStreamMessage ? "live-message" : ""}`} data-message-id={props.message.id}>
           <div className="user-bubble">
             <AttachmentPreviewGrid attachments={props.message.attachments ?? []} onPreview={setPreviewImage} />
             {props.message.skillsUsed && props.message.skillsUsed.length > 0 && (
@@ -81,6 +82,13 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
       </>
     );
   }
+
+  // A cumulative queue/steer snapshot contains completed assistant prefixes as
+  // well as the trailing active assistant. Stream ids identify reconciliation
+  // membership, not liveness; MessageList names the one turn that owns the run.
+  // Direct component tests retain the historical single-message default.
+  const isLive = isStreamMessage && (props.activeRunOwner ?? true);
+  const suppressRunHeader = isStreamMessage && !isLive;
 
   const modelLabel = props.message.modelId ?? null;
   const timeline = normalizeTimeline(props.message);
@@ -119,6 +127,7 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     >
       <AssistantRunHeader
         live={isLive}
+        suppressed={suppressRunHeader}
         status={runStatus}
         elapsedMs={props.message.elapsedMs}
         runMeta={runMeta}
@@ -255,6 +264,7 @@ function AssistantMessageActions(props: {
 
 function areMessageViewPropsEqual(previous: MessageViewProps, next: MessageViewProps): boolean {
   return previous.message === next.message
+    && previous.activeRunOwner === next.activeRunOwner
     && previous.onCopy === next.onCopy
     && previous.onCopyCode === next.onCopyCode
     && previous.onRetry === next.onRetry
@@ -326,6 +336,7 @@ function rememberRunExpansion(scope: string, expanded: boolean) {
  */
 function AssistantRunHeader(props: {
   live: boolean;
+  suppressed: boolean;
   status: RunStatus;
   elapsedMs?: number;
   runMeta: { model: string | null; reasoningEffort: string | null };
@@ -355,6 +366,12 @@ function AssistantRunHeader(props: {
       </>
     );
   }
+
+  // Completed assistants carried in a cumulative live snapshot belong to the
+  // same still-running request, but not to its active tail. Their answer should
+  // read normally without acquiring either a duplicate live header or a fake
+  // settled header before the request itself has settled.
+  if (props.suppressed) return <>{props.children(false)}</>;
 
   const collapsible = props.status === "success" && props.activityItemCount > 0;
   const remembered = runExpansionCache.get(props.collapseScope)

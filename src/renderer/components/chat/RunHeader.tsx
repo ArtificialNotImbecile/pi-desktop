@@ -49,24 +49,20 @@ export function LiveRunHeader(props: { runKey: string; stopping: boolean; model:
   }, [startedAt]);
   const label = props.stopping ? t("message.stopping") : t("message.working");
   const clock = formatRunClock(elapsedMs);
-  // aria-label replaces the descendant text, and the meta span that carries the
-  // model is aria-hidden so the clock is not read digit by digit. Name the model
-  // here or it is absent from the accessibility tree for the whole run, which is
-  // exactly when a reader needs to know which model is answering.
-  const accessibleName = [label, props.model, clock].filter(Boolean).join(" ");
+  // Keep the polite status stable while the visible clock ticks. Including the
+  // clock in this name queues a fresh full announcement every second; the time
+  // remains ordinary accessible text beside (and outside) the live region.
+  const accessibleName = [label, props.model].filter(Boolean).join(" ");
   // The model rides the same trailing slot the settled header uses, so the
   // header's shape does not change when the run ends. It names the model this
   // run is using, which a mid-run switch in the composer must not rewrite.
   return (
     <div
       className={`run-header live ${props.stopping ? "stopping" : ""}`}
-      role="status"
-      aria-live="polite"
-      aria-label={accessibleName}
     >
-      <span className="run-header-title">{label}</span>
-      <span className="run-header-meta" aria-hidden="true">
-        {props.model && <small>{props.model}</small>}
+      <span className="run-header-title" role="status" aria-live="polite" aria-label={accessibleName}>{label}</span>
+      <span className="run-header-meta">
+        {props.model && <small aria-hidden="true">{props.model}</small>}
         <time>{clock}</time>
       </span>
     </div>
