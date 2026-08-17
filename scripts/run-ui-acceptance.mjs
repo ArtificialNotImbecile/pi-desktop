@@ -47,8 +47,13 @@ try {
     await fillComposer("show timeline tool call");
     await page.getByRole("button", { name: "Send" }).click();
     await waitForText(".assistant-block", "Mock reply from Jasmine.");
-    await assertVisible(".thinking-item");
-    await assertVisible(".tool-run-item");
+    const latestAssistant = page.locator(".assistant-block").last();
+    const runToggle = latestAssistant.locator(".run-header-toggle");
+    await runToggle.waitFor({ state: "visible" });
+    assert.equal(await runToggle.getAttribute("aria-expanded"), "false");
+    await runToggle.click();
+    await latestAssistant.locator(".thinking-item").waitFor({ state: "visible" });
+    await latestAssistant.locator(".tool-run-item").waitFor({ state: "visible" });
     await capture("02-text-chat");
   });
 
