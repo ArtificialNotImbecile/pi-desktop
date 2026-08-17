@@ -363,6 +363,28 @@ describe("message rendering", () => {
     expect(thought.hidden).toBe(true);
   });
 
+  test("trailing system metadata does not fold the final assistant answer", () => {
+    const message = assistantMessage("answer-before-system-metadata", [
+      { id: "metadata-thought", kind: "thinking", text: "Prepared the answer." },
+      { id: "metadata-answer", kind: "assistant_text", text: "Visible answer before metadata." },
+      {
+        id: "metadata-compaction",
+        kind: "system",
+        title: "Compaction summary",
+        text: "Internal summary emitted after the answer."
+      }
+    ]);
+    const harness = mountMessages([message]);
+    const header = harness.container.querySelector(".run-header-toggle") as HTMLButtonElement;
+    const answer = harness.container.querySelector('[data-timeline-item-id="metadata-answer"]') as HTMLElement;
+    const metadata = harness.container.querySelector('[data-timeline-item-id="metadata-compaction"]') as HTMLElement;
+
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(answer.hidden).toBe(false);
+    expect(answer.textContent).toContain("Visible answer before metadata.");
+    expect(metadata.hidden).toBe(true);
+  });
+
   test("a run that ends badly stays open and a trivial run carries no header at all", () => {
     const stopped = assistantMessage("stopped-run", [
       { id: "stopped-thought", kind: "thinking", text: "Started work." },

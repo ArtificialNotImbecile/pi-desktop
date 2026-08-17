@@ -483,7 +483,11 @@ function partitionSettledTimeline(items: ChatTimelineItem[]): {
   finalText: string;
 } {
   let suffixEnd = items.length - 1;
-  while (suffixEnd >= 0 && isTerminalStatusItem(items[suffixEnd])) suffixEnd -= 1;
+  // Pi can append displayed custom messages, compaction records, branch
+  // summaries, or terminal status after the actual assistant answer. They are
+  // run detail, not a reason to stop recognizing the preceding assistant-text
+  // suffix as the final answer that must remain visible while details fold.
+  while (suffixEnd >= 0 && items[suffixEnd].kind === "system") suffixEnd -= 1;
 
   let suffixStart = suffixEnd;
   while (suffixStart >= 0) {
