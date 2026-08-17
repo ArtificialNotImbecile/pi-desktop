@@ -20,6 +20,7 @@ export type AssistantReply = {
   elapsedMs: number;
   timeline: ChatTimelineItem[];
   webSearchUsed: WebSearchResult[];
+  providerError?: string;
   contextTaxonomy?: ContextTaxonomy;
   contextTaxonomies?: ContextTaxonomy[];
   fileChangeCaptures?: FileChangeCaptureInput[];
@@ -115,6 +116,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     const imageCount = countModelVisibleImages(parsed.messages, request.attachments ?? [], parsed.content);
     const lastUserText = parsed.content || parsed.messages.at(-1)?.content || "";
     let mockTaxonomy: ContextTaxonomy | null = null;
+    let mockProviderError: string | undefined;
     const captureMockProviderRequest = (content: string, attachments: PickedPath[], taskIndex: number) => {
       if (!captureContextTaxonomy()) return;
       const structured = content.toLowerCase().includes("structured taxonomy")
@@ -180,7 +182,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
         }),
         ...(initialAssistantEntryId ? { sessionEntryId: initialAssistantEntryId } : {})
       });
-      await drainMockQueue(mockQueue, request, provider, options, content, lastUserText, mockSession, captureMockProviderRequest);
+      mockProviderError = await drainMockQueue(mockQueue, request, provider, options, content, lastUserText, mockSession, captureMockProviderRequest);
     } catch (error) {
       if (!isAbortError(error)) throw error;
       const stoppedContent = latestUpdate.current?.content || "Response stopped.";
@@ -216,7 +218,8 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
       webSearchUsed: [],
       ...(mockTaxonomy ? { contextTaxonomy: mockTaxonomy, contextTaxonomies: [mockTaxonomy] } : {}),
       fileChangeCaptures,
-      generatedMessages: mockQueue.generatedMessages
+      generatedMessages: mockQueue.generatedMessages,
+      ...(mockProviderError ? { providerError: mockProviderError } : {})
     };
   }
 
@@ -270,7 +273,9 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     }
   });
 
-  const normalizedResult = normalizeEmptyAssistantResult(result, provider, request.reasoningEffort);
+  const normalizedResult = result.providerError
+    ? result
+    : normalizeEmptyAssistantResult(result, provider, request.reasoningEffort);
 
   return {
     content: normalizedResult.content,
@@ -278,6 +283,7 @@ export async function generateAssistantReply(request: RuntimeChatRequest, provid
     elapsedMs: Date.now() - startedAt,
     timeline: normalizedResult.timeline,
     webSearchUsed: result.webSearchUsed,
+    ...(result.providerError ? { providerError: result.providerError } : {}),
     ...(capturedTaxonomy ? {
       contextTaxonomy: capturedTaxonomy,
       contextTaxonomies: [capturedTaxonomy]
@@ -591,7 +597,8 @@ function appendMockAssistant(
   sessionManager: SessionManager | undefined,
   provider: RuntimeProviderConfig,
   content: string,
-  stopReason: AssistantMessage["stopReason"] = "stop"
+  stopReason: AssistantMessage["stopReason"] = "stop",
+  errorMessage?: string
 ): string | undefined {
   if (!sessionManager) return undefined;
   return sessionManager.appendMessage({
@@ -609,6 +616,7 @@ function appendMockAssistant(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
     },
     stopReason,
+    ...(errorMessage ? { errorMessage } : {}),
     timestamp: Date.now()
   } satisfies AssistantMessage);
 }
@@ -671,7 +679,7 @@ async function drainMockQueue(
   initialUserText: string,
   sessionManager: SessionManager | undefined,
   onProviderRequest: (content: string, attachments: PickedPath[], taskIndex: number) => void
-): Promise<void> {
+): Promise<string | undefined> {
   let taskIndex = 1;
   while (mockQueue.queue.steering.length > 0 || mockQueue.queue.followUp.length > 0) {
     const submitted = mockQueue.queue.steering.shift() ?? mockQueue.queue.followUp.shift();
@@ -705,6 +713,21 @@ async function drainMockQueue(
       timeline: [],
       liveMessages: [...liveMessagesPrefix, { role: "assistant", content: "", timeline: [] }]
     });
+    if (submitted.content.toLowerCase().includes("mock queued provider failure")) {
+      const errorMessage = "Mock queued provider failure.";
+      const userEntryId = appendMockUser(sessionManager, submitted.content);
+      mockQueue.generatedMessages.push({
+        role: "user",
+        content: submitted.content,
+        attachments: submitted.attachments,
+        ...(userEntryId ? { sessionEntryId: userEntryId } : {})
+      });
+      appendMockAssistant(sessionManager, provider, "", "error", errorMessage);
+      mockQueue.queue.steering.length = 0;
+      mockQueue.queue.followUp.length = 0;
+      options.onQueueUpdate?.(emptyQueueState());
+      return errorMessage;
+    }
     await streamMockReply(replyContent, submitted.content, request.toolsEnabled ?? true, {
       modelId: provider.modelId,
       reasoningEffort: request.reasoningEffort,
@@ -730,6 +753,7 @@ async function drainMockQueue(
     });
   }
   options.onQueueUpdate?.(emptyQueueState());
+  return undefined;
 }
 
 function emptyQueueState(): ChatQueueState {

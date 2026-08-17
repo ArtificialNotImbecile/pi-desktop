@@ -76,7 +76,7 @@ export async function testProvider(db: JasmineDatabase, providerId: string): Pro
   const startedAt = Date.now();
   try {
     const { generateAssistantReply } = await import("../agent/runtime.js");
-    await generateAssistantReply(
+    const reply = await generateAssistantReply(
       {
         threadId: "provider-test",
         content: "Reply with ok.",
@@ -89,6 +89,7 @@ export async function testProvider(db: JasmineDatabase, providerId: string): Pro
         modelId: provider.defaultModel
       }
     );
+    if (reply.providerError) throw new Error(reply.providerError);
 
     const updated = db.updateProviderCheck(provider.id, { status: "connected", lastError: null });
     return { provider: toClientProvider(updated), status: "connected", elapsedMs: Date.now() - startedAt };

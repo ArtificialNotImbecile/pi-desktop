@@ -63,7 +63,10 @@ export type PiCodingAgentChatResult = {
   webSearchUsed: WebSearchResult[];
   generatedMessages?: RuntimeGeneratedMessage[];
   liveMessages?: RuntimeGeneratedMessage[];
+  providerError?: string;
 };
+
+class ProviderTurnError extends Error {}
 
 const JASMINE_FILE_CHANGES_PACKAGE_NAME = "@jasmine-ai/pi-file-changes";
 
@@ -303,6 +306,8 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   const trackedQueue = createTrackedQueue(input.onQueueUpdate);
   const timelineIdentities = new PiTimelineIdentityRegistry();
   const steeringTasks = new Set<Promise<void>>();
+  const steeringFailures: unknown[] = [];
+  let acceptingQueue = true;
   let latestUpdate: PiCodingAgentChatResult = { content: "", timeline: [], webSearchUsed: [] };
   let currentPromptLinked = false;
   const linkCurrentPromptEntry = (entries: SessionEntry[]) => {
@@ -311,6 +316,20 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     if (!entry) return;
     input.onSessionEntriesLinked?.([{ messageId: input.currentMessageId, sessionEntryId: entry.id }]);
     currentPromptLinked = true;
+  };
+  const resultFromCurrentSession = (providerError?: string): PiCodingAgentChatResult => {
+    const newEntries = sessionManager.getEntries().slice(previousEntryCount);
+    linkCurrentPromptEntry(newEntries);
+    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
+    const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
+    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
+    return {
+      content,
+      timeline,
+      webSearchUsed: derivedWebSearchResults(newEntries),
+      generatedMessages,
+      ...(providerError ? { providerError } : {})
+    };
   };
   // The assistant message that is currently streaming (thinking / text / tool
   // starts) but has not yet been committed to the session timeline. It is folded
@@ -379,10 +398,12 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     inFlightFollowsDeliveredId = queued.id;
     activeTaskIndex += 1;
     activePromptAnchorText = promptAnchorText(queued.content, queued.attachments ?? []);
+    const promptEntryCount = sessionManager.getEntries().length;
     await session.prompt(queued.piText, {
       images: await imageContent(queuedImages),
       streamingBehavior: mode
     });
+    throwIfProviderTurnFailed(sessionManager.getEntries().slice(promptEntryCount), input.provider);
     // Pi may resolve a queued prompt normally when session.abort() stops it.
     // Preserve the runtime abort contract so the stopped queued turn is still
     // reconciled instead of falling through as a successful user-only result.
@@ -400,17 +421,23 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
         // Once a steer has been delivered its user row is authoritative. Keep
         // it for abort reconciliation; otherwise a stop before Pi commits the
         // user entry can silently erase the already-painted turn.
-        if (!input.signal?.aborted) trackedQueue.remove(queued.id);
+        if (!input.signal?.aborted && !trackedQueue.isDelivered(queued.id)) trackedQueue.remove(queued.id);
+        steeringFailures.push(error);
         throw error;
       })
       .finally(() => {
         steeringTasks.delete(task);
       });
     steeringTasks.add(task);
+    // The task is joined at the idle boundary, but a fast failure can settle
+    // before that join. Attach a handler immediately to prevent an unhandled
+    // rejection while retaining the original promise and captured failure.
+    void task.catch(() => undefined);
     return task;
   };
   const queueControls: RuntimeQueueControls = {
     queueMessage: async (message) => {
+      if (!acceptingQueue) throw new Error("This response is no longer accepting queued messages.");
       const queued = trackedQueue.add(message.mode, message.content, message.attachments);
       if (message.mode === "steer") void startSteeringTask(queued);
       return trackedQueue.publicState();
@@ -424,6 +451,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       return trackedQueue.publicState();
     },
     steerMessage: async (id) => {
+      if (!acceptingQueue) throw new Error("This response is no longer accepting queued messages.");
       const queued = trackedQueue.steer(id);
       void startSteeringTask(queued);
       return trackedQueue.publicState();
@@ -452,6 +480,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   input.signal?.addEventListener("abort", abortSession, { once: true });
 
   try {
+    const initialPromptEntryCount = sessionManager.getEntries().length;
     const initialPrompt = session.prompt(currentPromptText, {
       images: await imageContent(imageAttachments)
     });
@@ -460,30 +489,38 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       initialPrompt,
       abortPromise
     ]);
+    let initialProviderError: ProviderTurnError | null = null;
+    try {
+      throwIfProviderTurnFailed(sessionManager.getEntries().slice(initialPromptEntryCount), input.provider);
+    } catch (error) {
+      if (!(error instanceof ProviderTurnError)) throw error;
+      initialProviderError = error;
+    }
+    if (initialProviderError) {
+      acceptingQueue = false;
+      // Steers start immediately and can still be in flight when the initial
+      // provider turn settles. Join every fire-and-forget task before the
+      // session is disposed so none can reject unobserved or use a dead session.
+      await Promise.allSettled(Array.from(steeringTasks));
+      throw initialProviderError;
+    }
     // A queued steer can be held by an input extension until the initial agent
     // run becomes idle, then start as a separate prompt. Clear the completed
     // turn's live timeline at that idle boundary so it cannot be folded after
     // the delivered user as a duplicate "new" assistant before the steer emits
     // its first token.
     if (session.isIdle || !inFlightFollowsDeliveredId) inFlightTimeline = null;
-    await Promise.allSettled(Array.from(steeringTasks));
+    const steeringResults = await Promise.allSettled(Array.from(steeringTasks));
+    const rejectedSteering = steeringResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejectedSteering) throw rejectedSteering.reason;
+    if (steeringFailures.length > 0) throw steeringFailures[0];
     if (input.signal?.aborted) throw abortError();
     while (trackedQueue.hasPendingFollowUps()) {
       const queued = trackedQueue.shiftNextFollowUp();
       if (!queued) break;
       await sendQueuedMessage(queued, "followUp");
     }
-    const newEntries = sessionManager.getEntries().slice(previousEntryCount);
-    linkCurrentPromptEntry(newEntries);
-    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
-    const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
-    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
-    return {
-      content,
-      timeline,
-      webSearchUsed: derivedWebSearchResults(newEntries),
-      generatedMessages
-    };
+    return resultFromCurrentSession();
   } catch (error) {
     if (input.signal?.aborted) {
       const fallbackContent = (latestUpdate.content || assistantTextFromTimeline(latestUpdate.timeline) || "Response stopped.").trim();
@@ -530,6 +567,9 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
         generatedMessages
       };
     }
+    if (error instanceof ProviderTurnError) {
+      return resultFromCurrentSession(error.message);
+    }
     throw error;
   } finally {
     input.signal?.removeEventListener("abort", abortSession);
@@ -537,6 +577,40 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     unsubscribe?.();
     session.dispose();
   }
+}
+
+function throwIfProviderTurnFailed(entries: SessionEntry[], provider: RuntimeProviderConfig): void {
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+    if (entry.message.stopReason !== "error") continue;
+    throw new ProviderTurnError(formatProviderFailure(entry.message.errorMessage, provider));
+  }
+}
+
+function formatProviderFailure(errorMessage: string | undefined, provider: RuntimeProviderConfig): string {
+  const providerName = provider.providerName.trim() || "Provider";
+  const statusMatch = errorMessage?.match(/^\s*(\d{3})(?::|\s|$)/);
+  const status = statusMatch ? Number(statusMatch[1]) : undefined;
+
+  if (status === 401) {
+    return `${providerName} authentication failed (401): Invalid API key. Check or replace the API key.`;
+  }
+  if (status === 403) {
+    return `${providerName} authorization failed (403). Check the API key permissions and account access.`;
+  }
+  if (status === 404) {
+    return `${providerName} request failed (404 Not Found). Check the provider Base URL and model ID; OpenAI-compatible Base URLs usually include an API version path such as /v1.`;
+  }
+  if (status === 429) {
+    return `${providerName} request was rate limited (429). Retry later or check the provider quota.`;
+  }
+  if (status && status >= 500) {
+    return `${providerName} service failed (${status}). Retry later or check the provider status.`;
+  }
+  if (status) {
+    return `${providerName} request failed (${status}). Check the provider configuration.`;
+  }
+  return `${providerName} request failed. Check the provider configuration and network connection.`;
 }
 
 function runtimeSkillPaths(
@@ -647,6 +721,9 @@ function createTrackedQueue(onUpdate?: (queue: ChatQueueState) => void) {
     publicState,
     deliveredMessages() {
       return delivered.map((item) => ({ ...item, attachments: item.attachments ? [...item.attachments] : undefined }));
+    },
+    isDelivered(id: string) {
+      return delivered.some((item) => item.id === id);
     }
   };
 }

@@ -11,6 +11,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
+const invalidProviderSecret = ["sk", "invalid-provider-fixture-0987654321"].join("-");
+const unrelatedAccessToken = "access-token-fixture-abcdef1234567890";
+const unrelatedJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYXNtaW5lIn0.fixture-signature";
 
 const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
 const {
@@ -28,6 +31,7 @@ const { prepareEnabledSkillManifests } = await import("../../dist/main/main/serv
 const { jasmineSessionDir } = await import("../../dist/main/main/services/piSessions.js");
 const { listExecutableDiscovery, resolveConfiguredExecutable } = await import("../../dist/main/main/services/executables.js");
 const { fallbackTitle, generateTitleWithProvider, generateTitleWithProviderResult } = await import("../../dist/main/main/services/threadTitles.js");
+const { testProvider } = await import("../../dist/main/main/services/providers.js");
 const {
   listPluginPackages,
   listPluginSkills,
@@ -553,7 +557,22 @@ const server = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   captures.push(body);
 
+  if (request.headers.authorization === `Bearer ${invalidProviderSecret}`) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "AuthError",
+        message: `Invalid API key ${invalidProviderSecret}.`
+      }
+    }));
+    return;
+  }
+
   const requestText = JSON.stringify(body.messages ?? body.input ?? []);
+  const latestUserRequestText = JSON.stringify(
+    [...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content ?? ""
+  );
   if (requestText.includes("foreign reasoning history regression")) {
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -783,6 +802,76 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (requestText.includes("provider auth failure regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "AuthError",
+        message: `Invalid API key ${fakeProviderSecret}. token=${unrelatedAccessToken} jwt=${unrelatedJwt}`
+      }
+    }));
+    return;
+  }
+  if (latestUserRequestText.includes("queued provider error then success regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "ProviderError",
+        message: "Initial queued run authentication failure."
+      }
+    }));
+    return;
+  }
+  if (latestUserRequestText.includes("queued provider later failure regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "ProviderError",
+        message: "Queued follow-up authentication failure."
+      }
+    }));
+    return;
+  }
+  if (latestUserRequestText.includes("initial provider error with active steer regression")) {
+    response.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+    response.write(`data: ${JSON.stringify({
+      id: "chatcmpl-initial-error-active-steer",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: body.model,
+      choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }]
+    })}\n\n`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    response.write("data: [DONE]\n\n");
+    response.end();
+    return;
+  }
+  if (latestUserRequestText.includes("active steer failure after initial error")) {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ type: "error", error: { type: "ProviderError", message: "Steer provider failure." } }));
+    return;
+  }
+  if (latestUserRequestText.includes("failed steer attachment regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ type: "error", error: { type: "ProviderError", message: "Attachment steer provider failure." } }));
+    return;
+  }
+  if (latestUserRequestText.includes("steer attachment initial success")) {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  if (requestText.includes("provider base url failure regression")) {
+    response.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+    response.end("<!DOCTYPE html><html><head><title>Not Found</title></head><body>API route not found</body></html>");
+    return;
+  }
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache",
@@ -994,6 +1083,54 @@ try {
   assert.equal(typeof address, "object");
   const baseUrl = `http://127.0.0.1:${address.port}/v1`;
   const systemPrompt = "You are Jasmine. Keep replies concise.";
+
+  const now = new Date().toISOString();
+  const providerUnderTest = {
+    id: "third-party-openai-compatible",
+    name: "Third-party OpenAI-compatible",
+    type: "openai-compatible",
+    baseUrl,
+    apiKeyRef: `key:${invalidProviderSecret}`,
+    models: [],
+    defaultModel: "jasmine-test",
+    enabled: true,
+    status: "unchecked",
+    createdAt: now,
+    updatedAt: now
+  };
+  let savedProviderCheck;
+  const providerTestDatabase = {
+    getProvider(providerId) {
+      return providerId === providerUnderTest.id ? providerUnderTest : undefined;
+    },
+    updateProviderCheck(providerId, check) {
+      assert.equal(providerId, providerUnderTest.id);
+      savedProviderCheck = check;
+      return {
+        ...providerUnderTest,
+        status: check.status,
+        lastError: check.lastError ?? undefined,
+        lastCheckedAt: now
+      };
+    }
+  };
+  const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  let failedProviderTest;
+  try {
+    failedProviderTest = await testProvider(providerTestDatabase, providerUnderTest.id);
+  } finally {
+    if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+  }
+  assert.equal(failedProviderTest.status, "failed");
+  assert.equal(failedProviderTest.provider.status, "failed");
+  assert.equal(savedProviderCheck.status, "failed");
+  assert.match(savedProviderCheck.lastError, /authentication failed \(401\)/);
+  assert.match(savedProviderCheck.lastError, /Invalid API key/);
+  assert.doesNotMatch(savedProviderCheck.lastError, new RegExp(invalidProviderSecret));
+  assert.doesNotMatch(savedProviderCheck.lastError, /completed without final assistant text/);
+  captures.length = 0;
 
   await writeFile(
     path.join(agentDir, "models.json"),
@@ -1904,6 +2041,197 @@ try {
   });
   assert.match(totallyEmptyReply.content, /completed without final assistant text or visible activity/);
   assert.equal(totallyEmptyReply.timeline.some((item) => item.kind === "assistant_text" && item.text === totallyEmptyReply.content), true);
+  const providerFailureConfig = {
+    providerName: "third-party-openai-compatible",
+    apiKey: fakeProviderSecret,
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: {
+      vision: false,
+      imageOutput: false,
+      toolCalling: true,
+      reasoning: true,
+      embedding: false
+    },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  };
+  const authFailureReply = await generateAssistantReply({
+      threadId: "provider-auth-failure-thread",
+      messages: [{ role: "user", content: "provider auth failure regression" }],
+      content: "provider auth failure regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig);
+  assert.match(authFailureReply.providerError, /third-party-openai-compatible authentication failed \(401\)/);
+  assert.match(authFailureReply.providerError, /Invalid API key/);
+  assert.match(authFailureReply.providerError, /Check or replace the API key/);
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(fakeProviderSecret));
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(unrelatedAccessToken));
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(unrelatedJwt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(authFailureReply.providerError, /completed without final assistant text/);
+  assert.equal(authFailureReply.generatedMessages.length, 0);
+
+  const baseUrlFailureReply = await generateAssistantReply({
+      threadId: "provider-base-url-failure-thread",
+      messages: [{ role: "user", content: "provider base url failure regression" }],
+      content: "provider base url failure regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig);
+  assert.match(baseUrlFailureReply.providerError, /request failed \(404 Not Found\)/);
+  assert.match(baseUrlFailureReply.providerError, /Base URL/);
+  assert.match(baseUrlFailureReply.providerError, /\/v1/);
+  assert.doesNotMatch(baseUrlFailureReply.providerError, /<!DOCTYPE|<html>/i);
+  assert.doesNotMatch(baseUrlFailureReply.providerError, /completed without final assistant text/);
+
+  const queuedProviderFailureCaptureStart = captures.length;
+  const queuedProviderFailureSession = SessionManager.inMemory(tempDir);
+  const queuedProviderFailureReply = await generateAssistantReply({
+      threadId: "queued-provider-failure-thread",
+      messages: [{ role: "user", content: "queued provider error then success regression" }],
+      content: "queued provider error then success regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      sessionManager: queuedProviderFailureSession,
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig, {
+      onQueueReady(controls) {
+        void controls.queueMessage({
+          mode: "followUp",
+          content: "queued provider recovery success",
+          attachments: []
+        });
+      }
+  });
+  assert.match(queuedProviderFailureReply.providerError, /authentication failed \(401\)/);
+  assert.deepEqual(
+    queuedProviderFailureSession.getEntries()
+      .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
+      .map((entry) => entry.message.stopReason),
+    ["error"]
+  );
+  const queuedProviderFailurePayloads = captures.slice(queuedProviderFailureCaptureStart);
+  assert.equal(queuedProviderFailurePayloads.length, 1);
+  assert.equal(JSON.stringify(queuedProviderFailureSession.getEntries()).includes("queued provider recovery success"), false);
+
+  const laterQueuedFailureCaptureStart = captures.length;
+  const laterQueuedFailureSession = SessionManager.inMemory(tempDir);
+  const laterQueuedFailureReply = await generateAssistantReply({
+    threadId: "later-queued-provider-failure-thread",
+    messages: [{ role: "user", content: "queued provider initial success" }],
+    content: "queued provider initial success",
+    attachments: [],
+    piAgentDir: agentDir,
+    sessionManager: laterQueuedFailureSession,
+    toolsEnabled: true,
+    reasoningEffort: "high"
+  }, providerFailureConfig, {
+    onQueueReady(controls) {
+      void controls.queueMessage({
+        mode: "followUp",
+        content: "queued provider later failure regression",
+        attachments: []
+      });
+    }
+  });
+  assert.match(laterQueuedFailureReply.providerError, /authentication failed \(401\)/);
+  assert.deepEqual(laterQueuedFailureReply.generatedMessages.map((message) => message.role), ["assistant", "user"]);
+  assert.equal(laterQueuedFailureReply.generatedMessages[0].content, "ok");
+  assert.equal(laterQueuedFailureReply.generatedMessages[1].content, "queued provider later failure regression");
+  assert.deepEqual(
+    laterQueuedFailureSession.getEntries()
+      .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
+      .map((entry) => entry.message.stopReason),
+    ["stop", "error"]
+  );
+  assert.equal(captures.slice(laterQueuedFailureCaptureStart).length, 2);
+
+  const activeSteerFailureCaptureStart = captures.length;
+  const activeSteerUnhandledRejections = [];
+  const captureActiveSteerRejection = (error) => activeSteerUnhandledRejections.push(error);
+  process.on("unhandledRejection", captureActiveSteerRejection);
+  let activeSteerFailureReply;
+  let activeSteerControls;
+  try {
+    activeSteerFailureReply = await generateAssistantReply({
+      threadId: "initial-provider-error-active-steer-thread",
+      messages: [{ role: "user", content: "initial provider error with active steer regression" }],
+      content: "initial provider error with active steer regression",
+      attachments: [],
+      piAgentDir: agentDir,
+      sessionManager: SessionManager.inMemory(tempDir),
+      toolsEnabled: true,
+      reasoningEffort: "high"
+    }, providerFailureConfig, {
+      onQueueReady(controls) {
+        activeSteerControls = controls;
+        setTimeout(() => {
+          void controls.queueMessage({
+            mode: "steer",
+            content: "active steer failure after initial error",
+            attachments: []
+          });
+        }, 30);
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally {
+    process.off("unhandledRejection", captureActiveSteerRejection);
+  }
+  assert.match(activeSteerFailureReply.providerError, /request failed/);
+  assert.equal(activeSteerUnhandledRejections.length, 0);
+  assert.equal(captures.slice(activeSteerFailureCaptureStart).length, 2);
+  await assert.rejects(
+    () => activeSteerControls.queueMessage({ mode: "followUp", content: "must not queue after failure", attachments: [] }),
+    /no longer accepting queued messages/
+  );
+
+  const failedSteerAttachmentCaptureStart = captures.length;
+  const failedSteerAttachment = {
+    kind: "file",
+    name: "steer-notes.txt",
+    path: path.join(tempDir, "reasoning-replay.txt"),
+    isImage: false
+  };
+  const failedSteerAttachmentSession = SessionManager.inMemory(tempDir);
+  const failedSteerAttachmentReply = await generateAssistantReply({
+    threadId: "failed-steer-attachment-thread",
+    messages: [{ role: "user", content: "steer attachment initial success" }],
+    content: "steer attachment initial success",
+    attachments: [],
+    piAgentDir: agentDir,
+    sessionManager: failedSteerAttachmentSession,
+    toolsEnabled: true,
+    reasoningEffort: "high"
+  }, providerFailureConfig, {
+    onQueueReady(controls) {
+      setTimeout(() => {
+        void controls.queueMessage({
+          mode: "steer",
+          content: "failed steer attachment regression",
+          attachments: [failedSteerAttachment]
+        });
+      }, 30);
+    }
+  });
+  assert.match(failedSteerAttachmentReply.providerError, /authentication failed \(401\)/);
+  const failedSteerPiUserText = failedSteerAttachmentSession.getEntries()
+    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
+    .map((entry) => typeof entry.message.content === "string" ? entry.message.content : JSON.stringify(entry.message.content))
+    .join("\n");
+  assert.match(failedSteerPiUserText, /Attached local paths/);
+  const persistedFailedSteerUser = failedSteerAttachmentReply.generatedMessages.find((message) => message.role === "user");
+  assert.equal(persistedFailedSteerUser.content, "failed steer attachment regression");
+  assert.deepEqual(persistedFailedSteerUser.attachments, [failedSteerAttachment]);
+  assert.doesNotMatch(persistedFailedSteerUser.content, /Attached local paths/);
+  assert.equal(captures.slice(failedSteerAttachmentCaptureStart).length, 2);
   assert.equal(fallbackTitle("来玩成语接龙"), "来玩成语接龙");
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
   const generatedTitle = await generateTitleWithProvider({
