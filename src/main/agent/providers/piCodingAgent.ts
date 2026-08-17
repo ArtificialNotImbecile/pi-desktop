@@ -565,67 +565,28 @@ function throwIfProviderTurnFailed(entries: SessionEntry[], provider: RuntimePro
 
 function formatProviderFailure(errorMessage: string | undefined, provider: RuntimeProviderConfig): string {
   const providerName = provider.providerName.trim() || "Provider";
-  const safe = redactProviderFailure(errorMessage?.trim() || "", provider.apiKey);
-  const statusMatch = safe.match(/^\s*(\d{3})(?::|\s|$)/);
+  const statusMatch = errorMessage?.match(/^\s*(\d{3})(?::|\s|$)/);
   const status = statusMatch ? Number(statusMatch[1]) : undefined;
-  const body = statusMatch ? safe.slice(statusMatch[0].length).trim() : safe;
-  const isHtml = /<!doctype\s+html|<html(?:\s|>)/i.test(body);
-  const detail = isHtml ? "" : providerFailureDetail(body);
 
   if (status === 401) {
-    return `${providerName} authentication failed (401): ${detail || "Invalid API key."} Check or replace the API key.`;
+    return `${providerName} authentication failed (401): Invalid API key. Check or replace the API key.`;
   }
   if (status === 403) {
-    return `${providerName} authorization failed (403)${detail ? `: ${detail}` : "."} Check the API key permissions and account access.`;
+    return `${providerName} authorization failed (403). Check the API key permissions and account access.`;
   }
-  if (status === 404 && (isHtml || !detail)) {
-    return `${providerName} request failed (404 Not Found). Check the provider Base URL; OpenAI-compatible Base URLs usually include an API version path such as /v1.`;
+  if (status === 404) {
+    return `${providerName} request failed (404 Not Found). Check the provider Base URL and model ID; OpenAI-compatible Base URLs usually include an API version path such as /v1.`;
   }
   if (status === 429) {
-    return `${providerName} request was rate limited (429)${detail ? `: ${detail}` : "."}`;
+    return `${providerName} request was rate limited (429). Retry later or check the provider quota.`;
+  }
+  if (status && status >= 500) {
+    return `${providerName} service failed (${status}). Retry later or check the provider status.`;
   }
   if (status) {
-    return `${providerName} request failed (${status})${detail ? `: ${detail}` : "."}`;
+    return `${providerName} request failed (${status}). Check the provider configuration.`;
   }
-  return detail
-    ? `${providerName} request failed: ${detail}`
-    : `${providerName} request failed without an error message.`;
-}
-
-function redactProviderFailure(value: string, apiKey: string): string {
-  const withoutConfiguredKey = apiKey ? value.replaceAll(apiKey, "[redacted]") : value;
-  return withoutConfiguredKey
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(/\b[A-Za-z0-9_-]*sk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
-    .replace(/([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|x-amz-signature)=)[^&#\s]+/gi, "$1[redacted]");
-}
-
-function providerFailureDetail(value: string): string {
-  if (!value) return "";
-  const parsed = parseProviderFailureJson(value);
-  if (parsed) return parsed.slice(0, 500);
-  return value.replace(/\s+/g, " ").trim().slice(0, 500);
-}
-
-function parseProviderFailureJson(value: string): string | null {
-  const jsonStart = value.search(/[\[{]/);
-  if (jsonStart < 0) return null;
-  try {
-    return nestedProviderErrorMessage(JSON.parse(value.slice(jsonStart)));
-  } catch {
-    return null;
-  }
-}
-
-function nestedProviderErrorMessage(value: unknown): string | null {
-  if (typeof value === "string") return value.trim() || null;
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  for (const key of ["message", "error", "detail"]) {
-    const nested = nestedProviderErrorMessage(record[key]);
-    if (nested) return nested;
-  }
-  return null;
+  return `${providerName} request failed. Check the provider configuration and network connection.`;
 }
 
 function runtimeSkillPaths(

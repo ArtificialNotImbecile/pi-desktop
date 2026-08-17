@@ -12,6 +12,8 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 const fakeProviderSecret = ["sk", "test-fixture-1234567890"].join("-");
 const invalidProviderSecret = ["sk", "invalid-provider-fixture-0987654321"].join("-");
+const unrelatedAccessToken = "access-token-fixture-abcdef1234567890";
+const unrelatedJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYXNtaW5lIn0.fixture-signature";
 
 const { buildJasminePromptAppend, buildLocalRuntimePromptAppend, generateAssistantReply, resolvePiShellRuntime } = await import("../../dist/main/main/agent/runtime.js");
 const {
@@ -806,7 +808,7 @@ const server = createServer(async (request, response) => {
       type: "error",
       error: {
         type: "AuthError",
-        message: `Invalid API key ${fakeProviderSecret}.`
+        message: `Invalid API key ${fakeProviderSecret}. token=${unrelatedAccessToken} jwt=${unrelatedJwt}`
       }
     }));
     return;
@@ -2036,6 +2038,8 @@ try {
   assert.match(authFailureReply.providerError, /Invalid API key/);
   assert.match(authFailureReply.providerError, /Check or replace the API key/);
   assert.doesNotMatch(authFailureReply.providerError, new RegExp(fakeProviderSecret));
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(unrelatedAccessToken));
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(unrelatedJwt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(authFailureReply.providerError, /completed without final assistant text/);
   assert.equal(authFailureReply.generatedMessages.length, 0);
 
@@ -2073,9 +2077,8 @@ try {
           attachments: []
         });
       }
-    });
+  });
   assert.match(queuedProviderFailureReply.providerError, /authentication failed \(401\)/);
-  assert.match(queuedProviderFailureReply.providerError, /Initial queued run authentication failure/);
   assert.deepEqual(
     queuedProviderFailureSession.getEntries()
       .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
@@ -2107,7 +2110,6 @@ try {
     }
   });
   assert.match(laterQueuedFailureReply.providerError, /authentication failed \(401\)/);
-  assert.match(laterQueuedFailureReply.providerError, /Queued follow-up authentication failure/);
   assert.deepEqual(laterQueuedFailureReply.generatedMessages.map((message) => message.role), ["assistant", "user"]);
   assert.equal(laterQueuedFailureReply.generatedMessages[0].content, "ok");
   assert.equal(laterQueuedFailureReply.generatedMessages[1].content, "queued provider later failure regression");
