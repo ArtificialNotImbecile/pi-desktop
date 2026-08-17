@@ -3239,6 +3239,10 @@ body.resizing-right-panel {
   min-height: 100%;
   margin: 0 auto;
   padding: 8px 0 22px;
+  /* The single content axis. Every assistant surface — run header, activity
+     rows, expanded bodies, answer Markdown — is either this wide or indented
+     from it by a known amount, so nothing in the column is off-axis. */
+  --chat-col: min(760px, 100%);
 }
 
 .message-jump-rail {
@@ -3614,7 +3618,8 @@ body:has(.settings-panel) .message-jump-rail {
 .assistant-block {
   display: grid;
   gap: 12px;
-  max-width: 760px;
+  width: var(--chat-col);
+  max-width: 100%;
   color: var(--ink);
   font-size: 14px;
 }
@@ -4117,39 +4122,22 @@ body:has(.settings-panel) .message-jump-rail {
   font-weight: 600;
 }
 
-.thought-line, .tool-line, .message-run-line {
+/* Application load state, not a turn: the only remaining user of this line. */
+.thought-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 22px;
-  color: var(--faint);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-}
-
-.thought-line {
   width: fit-content;
   min-height: 28px;
   padding: 0 4px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
 }
 
-.thought-toggle {
-  max-width: min(100%, 720px);
-  text-align: left;
-}
-
-.thought-toggle > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thought-toggle svg:last-child {
-  margin-left: 2px;
-  transition: transform 140ms ease;
+.thought-line .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .thought-line:hover {
@@ -4255,16 +4243,142 @@ body:has(.settings-panel) .message-jump-rail {
 
 .tool-line { color: var(--muted); }
 
-.message-run-line {
-  width: fit-content;
-  color: var(--muted);
-  font-size: 12px;
+/* ── Run header ───────────────────────────────────────────────────────────
+   One element per turn. Live it reads "Working 0:12"; settled it becomes
+   "Worked for 12s" and, on success, the control that folds the turn's activity
+   away. Both phases sit at the top of the assistant block on the shared
+   content axis, so the header does not move when the run ends. */
+
+.run-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
-.message-run-line small {
+.run-header-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+button.run-header-toggle {
+  cursor: pointer;
+}
+
+.run-header-title {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 24px;
+}
+
+.run-header-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--faint);
+}
+
+.run-header-chevron .icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 140ms ease;
+}
+
+.run-header.collapsed .run-header-chevron .icon {
+  transform: rotate(-90deg);
+}
+
+button.run-header-toggle:hover .run-header-title,
+button.run-header-toggle:hover .run-header-chevron {
+  color: var(--ink);
+}
+
+button.run-header-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+/* Provenance, not outcome: the model sits at the far end of the header so the
+   duration keeps the reading edge. */
+.run-header-meta {
+  flex: none;
+  margin-left: auto;
+  padding-left: 16px;
+  overflow: hidden;
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A run that did no work reports only its model: no duration, no disclosure,
+   and no rule, since there is no activity for a rule to separate. */
+.run-header.provenance-only {
+  display: flex;
+  align-items: center;
+  height: 24px;
+}
+
+.run-header.provenance-only .run-header-meta {
+  margin-left: 0;
+  padding-left: 0;
+}
+
+/* The rule under a settled header is what makes the answer below it read as
+   the result rather than one more row in the flow. */
+.run-header-rule {
+  height: 1px;
+  margin: 9px 0 14px;
+  background: var(--line);
+}
+
+/* No glare band here. The elapsed clock is this header's liveness signal, and
+   the row below carries the only sweep, so the reader has one moving thing to
+   track instead of two competing for the same claim. */
+.run-header.live {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  margin-bottom: 8px;
+}
+
+.run-header.live .run-header-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-left: 12px;
+}
+
+.run-header.live .run-header-meta small {
+  color: inherit;
+  font-size: inherit;
+}
+
+.run-header.live.stopping .run-header-title {
+  color: color-mix(in srgb, var(--accent) 72%, var(--muted));
+}
+
+/* Stands in for the assistant block's own header until the first frame, at the
+   same place in the stack and on the same axis, so nothing moves at handoff. */
+.run-placeholder {
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .sidebar-feature-row:has(.sidebar-feature-badge) {
@@ -4298,403 +4412,337 @@ body:has(.settings-panel) .message-jump-rail {
   color: var(--attention);
 }
 
-.run-recap {
-  display: grid;
-  max-width: 720px;
-}
-
-.run-recap-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  min-height: 32px;
-  padding: 0;
-  border: 0;
-  color: var(--faint);
-  background: transparent;
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.run-recap-toggle::after {
-  min-width: 24px;
-  height: 1px;
-  margin-left: 6px;
-  background: var(--line);
-  content: "";
-  flex: 1;
-}
-
-.run-recap-toggle:hover {
-  color: var(--ink);
-}
-
-.run-recap.stopped .run-recap-toggle {
-  color: color-mix(in srgb, var(--accent) 68%, var(--muted));
-}
-
-.run-recap.error .run-recap-toggle {
-  color: var(--danger);
-}
-
-.run-recap-toggle .icon {
-  width: 12px;
-  height: 12px;
-  transition: transform 120ms ease;
-}
-
-.run-recap-toggle[aria-expanded="true"] .icon {
-  transform: rotate(180deg);
-}
-
-.run-recap-details {
-  width: 100%;
-  min-height: 1px;
-}
-
-.run-recap-details[hidden] {
-  display: none;
-}
-
-/* Several timeline/detail nodes deliberately stay mounted across live ->
-   settled so their Markdown DOM can be reused. The browser's UA [hidden]
-   rule loses to component display declarations such as .timeline-output;
-   make the hidden contract authoritative for every retained row. */
+/* Opened thought/tool details stay mounted when collapsed so their Markdown
+   and highlighting can be reused. Component display rules can outrank the
+   browser's UA [hidden] rule, so keep this contract authoritative. */
 .message-timeline [hidden] {
   display: none !important;
 }
 
-.run-recap-detail-row:empty {
-  display: none;
-}
-
-.run-recap-meta,
-.run-recap-provenance {
-  min-width: 0;
-}
-
 .final-answer {
-  max-width: 720px;
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .message-timeline {
   display: grid;
-  gap: 12px;
+  gap: 2px;
 }
+
+/* ── The one activity-row grammar ─────────────────────────────────────────
+   Thinking, tool calls, compaction and system notices all draw the same 24px
+   single line:
+
+     [16px leading][6][title 14/24][8][2px dot][8][summary fill, ellipsis][suffix]
+
+   The leading slot holds the icon at rest and the chevron on hover or while
+   open, so nothing sits at the row's end and every row shares one left axis
+   with the answer body. */
 
 .timeline-item {
   display: grid;
-  grid-template-columns: 1px minmax(0, 1fr);
-  gap: 0 14px;
-  max-width: 720px;
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--chat-col);
+  max-width: 100%;
   color: var(--muted);
 }
 
-.timeline-item::before {
-  content: "";
-  grid-row: 1 / span 3;
-  width: 1px;
-  background: var(--line-strong);
-}
-
-.thinking-item {
-  gap: 0 12px;
-  max-width: 720px;
-}
-
-.thinking-item::before {
-  background: var(--accent-line);
-}
-
-.thinking-item .timeline-label {
-  color: color-mix(in srgb, var(--accent) 76%, var(--muted));
-  font-family: var(--font-ui);
-  font-size: 15px;
-}
-
-.thinking-item .timeline-label .icon:first-child {
-  color: var(--accent);
-}
-
-.thinking-item .timeline-toggle .icon:last-child {
-  color: var(--muted);
-}
-
-.thinking-markdown {
-  grid-column: 2;
+.timeline-row {
+  position: relative;
+  display: flex;
+  align-items: center;
   width: 100%;
-  max-width: 700px;
-  margin-top: 9px;
-}
-
-.thinking-markdown .markdown-message {
-  display: block;
-  width: 100%;
-}
-
-.thinking-markdown .markdown-message > * + * {
-  margin-top: 12px;
-}
-
-.thinking-markdown .markdown-message p,
-.thinking-markdown .markdown-message ul,
-.thinking-markdown .markdown-message ol {
-  width: 100%;
-  color: color-mix(in srgb, var(--ink) 82%, var(--muted));
-  font-size: 14px;
-  line-height: 1.7;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  font: inherit;
   text-align: left;
 }
 
-.thinking-markdown .markdown-message pre {
-  max-width: 640px;
-  background: color-mix(in srgb, var(--accent-soft) 38%, var(--soft));
-}
-
-.timeline-item.collapsed::before {
-  grid-row: 1;
-}
-
-.timeline-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 22px;
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: 13px;
-}
-
-.timeline-toggle {
-  width: fit-content;
-  padding: 0;
-  border: 0;
-  background: transparent;
+button.timeline-row {
   cursor: pointer;
 }
 
-.timeline-toggle:hover {
-  color: var(--ink);
+button.timeline-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
-.timeline-toggle .icon:last-child {
-  width: 12px;
-  height: 12px;
-  color: var(--faint);
-  transition: transform 120ms ease, color 120ms ease;
-}
-
-.timeline-toggle:hover .icon:last-child {
-  color: var(--muted);
-}
-
-.timeline-toggle[aria-expanded="false"] .icon:last-child {
-  transform: rotate(-90deg);
-}
-
-.tool-run-toggle {
-  display: grid;
-  grid-template-columns: 14px minmax(0, auto) auto 12px;
-  gap: 7px;
-  max-width: min(720px, 100%);
-}
-
-.tool-run-main {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-}
-
-.tool-run-main b {
-  color: var(--ink);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.tool-run-target {
-  min-width: 0;
-  max-width: 520px;
-  padding: 1px 4px;
-  border-radius: 5px;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--ink) 72%, var(--muted));
-  background: color-mix(in srgb, var(--soft) 64%, transparent);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-run-status {
+.timeline-row-lead {
   position: relative;
-  align-self: center;
-  grid-column: auto;
-  margin: 0;
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0;
-  white-space: nowrap;
-}
-
-.timeline-item .tool-run-status {
-  grid-column: auto;
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0;
-}
-
-.tool-run-status.done {
-  color: var(--success);
-}
-
-.tool-run-status.error {
-  color: var(--danger);
-}
-
-.tool-run-status.running {
-  color: var(--accent);
-}
-
-.tool-run-status.stopped {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
   color: var(--faint);
 }
 
-.tool-run-status.running::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.22), transparent);
-  transform: translateX(-100%);
-  animation: timeline-shimmer 1100ms ease-in-out infinite;
-}
-
-.tool-run-item.running .timeline-label .icon:first-child {
-  color: var(--accent);
-}
-
-.tool-run-item.done .timeline-label .icon:first-child {
-  color: var(--success);
-}
-
-.tool-run-item.error .timeline-label .icon:first-child {
-  color: var(--danger);
-}
-
-.tool-run-item.stopped .timeline-label .icon:first-child {
-  color: var(--faint);
-}
-
-.tool-run-details {
-  grid-column: 2;
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  max-width: 700px;
-  margin-top: 7px;
-}
-
-.tool-run-details > div {
-  display: grid;
-  gap: 6px;
-  width: 100%;
-}
-
-.tool-run-details small {
-  grid-column: auto;
-  margin: 0;
-  text-align: left;
-}
-
-.tool-run-details > div > pre {
-  box-sizing: border-box;
-  grid-column: auto;
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
-}
-
-.tool-run-details .error > pre {
-  border-color: rgba(var(--danger-rgb), 0.22);
-  color: var(--danger-ink);
-  background: var(--danger-soft);
-}
-
-.tool-run-details .error .code-block {
-  border-color: rgba(var(--danger-rgb), 0.22);
-}
-
-.tool-run-details .error .code-block figcaption {
-  background: var(--danger-soft);
-}
-
-.timeline-label .icon,
-.message-run-line .icon {
+.timeline-row-lead .icon {
   width: 14px;
   height: 14px;
 }
 
-.timeline-item p {
-  grid-column: 2;
-  margin: 5px 0 0;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.55;
-  white-space: pre-wrap;
+.timeline-row-icon {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
 }
 
-.timeline-item small {
-  grid-column: 2;
-  margin-top: 14px;
+/* The chevron takes the icon's place rather than claiming a slot of its own,
+   which is what keeps both row edges aligned across every row. */
+.timeline-row-chevron {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.timeline-row:hover .timeline-row-icon,
+.timeline-item:not(.collapsed) .timeline-row-icon {
+  opacity: 0;
+}
+
+.timeline-row:hover .timeline-row-chevron,
+.timeline-item:not(.collapsed) .timeline-row-chevron {
+  opacity: 1;
+}
+
+.timeline-item.collapsed .timeline-row-chevron .icon {
+  transform: rotate(-90deg);
+}
+
+.timeline-row-title {
+  flex: none;
   color: var(--muted);
   font-family: var(--font-ui);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
 }
 
-.timeline-item > pre {
-  grid-column: 2;
-  max-width: 510px;
-  margin: 7px 0 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--ink);
-  background: var(--soft);
-  font-family: var(--font-code);
-  font-size: 12px;
-  line-height: 1.55;
-  overflow: auto;
-  white-space: pre-wrap;
+.timeline-row-dot {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--faint);
 }
 
-.timeline-item .tool-run-details small {
-  grid-column: auto;
-  margin: 0;
+.timeline-row-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-row-summary.error {
+  color: var(--danger);
+}
+
+/* A mutation magnitude stays out of the summary's ellipsis: on a narrow row the
+   path gives way before the count that says how much changed. */
+.timeline-row-suffix {
+  flex: none;
+  margin-left: 8px;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 24px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-row-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.timeline-row-state-dot.error {
+  background: var(--danger);
+}
+
+.timeline-row-state-dot.stopped {
+  background: var(--attention);
+}
+
+/* Run state is carried by colour and motion, both aria-hidden, so a row that is
+   running, failed or interrupted also emits this text for assistive tech. */
+.timeline-row-state-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A running row wears a single glare band sweeping across it. Only the segment
+   currently producing output carries it, so at most one row animates. */
+.timeline-item.running .timeline-row::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(90deg, transparent 0%, rgba(var(--surface-rgb), 0.72) 55%, transparent 100%);
+  animation: timeline-sweep 2600ms ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes timeline-sweep {
+  0% { left: -300px; }
+  90%, 100% { left: 100%; }
+}
+
+/* ── Expanded bodies ──────────────────────────────────────────────────────
+   22px = leading 16 + gap 6, so every expanded body starts under the first
+   character of its own title. */
+
+.timeline-row-body {
+  padding: 4px 0 6px 22px;
+}
+
+.timeline-row-thought .markdown-message {
+  display: block;
+  width: 100%;
+}
+
+.timeline-row-thought .markdown-message > * + * {
+  margin-top: 12px;
+}
+
+.timeline-row-thought .markdown-message p,
+.timeline-row-thought .markdown-message ul,
+.timeline-row-thought .markdown-message ol {
+  width: 100%;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 24px;
   text-align: left;
 }
 
-.timeline-item .tool-run-details > div > pre {
-  grid-column: auto;
+.timeline-row-thought .markdown-message pre {
+  max-width: 100%;
+  background: var(--soft);
+}
+
+/* One card with an IN/OUT gutter, replacing the pair of separately captioned
+   cards. Each section scrolls on its own so a long input cannot bury a short
+   output, and the label stays put while its payload scrolls under it. */
+.tool-run-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.tool-run-slot {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: baseline;
+  max-height: 150px;
+  padding: 11px 14px;
+  overflow: auto;
+}
+
+.tool-run-slot-label {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  margin: 0;
+  color: var(--faint);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 18px;
+  letter-spacing: 0.06em;
+}
+
+.tool-run-divider {
+  display: block;
+  height: 1px;
+  background: var(--line);
+}
+
+/* The gutter label is the section's only heading; the code block's own caption
+   bar would repeat it. */
+.tool-run-slot .code-block figcaption {
+  display: none;
+}
+
+/* The card is the surface. The code block inside a slot contributes only its
+   highlighting, so it drops its own border, radius, fill and padding rather
+   than drawing a second box inside the first. */
+.tool-run-slot .code-block,
+.tool-run-slot > pre {
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
-@keyframes timeline-shimmer {
-  to { transform: translateX(100%); }
+.tool-run-slot .code-block-scroll {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Shiki writes the theme's background straight onto the <pre> as an inline
+   style, so only !important can hand the surface back to the card. Without it
+   the slot draws a white box inside the tinted card. */
+.tool-run-slot .code-block .shiki,
+.tool-run-slot > pre {
+  padding: 0;
+  background: transparent !important;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-run-slot.error .code-block pre,
+.tool-run-slot.error > pre {
+  color: var(--danger-ink);
+}
+
+.system-item .timeline-row-summary {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-item.running .timeline-row::after {
+    animation: none;
+  }
 }
 
 .timeline-output {
   display: grid;
   gap: 10px;
+  width: var(--chat-col);
+  max-width: 100%;
 }
 
 .trace-link {
@@ -4737,6 +4785,9 @@ body:has(.settings-panel) .message-jump-rail {
   position: relative;
   display: flex;
   gap: 10px;
+  /* Pull the row left by the first button's inner inset so the icon glyph
+     sits on the same content edge as the answer text and completion line. */
+  margin-left: -4px;
   color: var(--muted);
 }
 
@@ -5971,6 +6022,50 @@ button.attachment-chip-main:hover span {
   color: var(--accent);
   background: var(--blue-soft);
   font-size: 12px;
+}
+
+.memory-used-provenance {
+  display: grid;
+  gap: 5px;
+  max-width: 640px;
+}
+
+button.memory-used-line {
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-content: stretch;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.memory-used-line > .ui-button-label {
+  min-width: 0;
+  text-align: left;
+}
+
+button.memory-used-line > .ui-button-icon:last-child svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 160ms ease;
+}
+
+.memory-used-provenance.expanded button.memory-used-line > .ui-button-icon:last-child svg {
+  transform: rotate(180deg);
+}
+
+.memory-used-detail {
+  display: grid;
+  gap: 5px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(var(--accent-rgb), 0.18);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-used-detail p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .memory-used-line small,

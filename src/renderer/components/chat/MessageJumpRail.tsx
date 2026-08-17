@@ -127,7 +127,7 @@ export const MessageJumpRail = memo(function MessageJumpRail(props: { messages: 
     stackObserver?.observe(observedElement);
 
     // A cached contentTop is no longer valid when an earlier settled message
-    // changes height (for example, a recap opens or an async historical code
+    // changes height (for example, a thought/tool row opens or historical code
     // block finishes laying out). Observe message rows separately so that such
     // a change coalesces into one full measurement. The live row is deliberately
     // ignored here: its high-frequency growth is already handled by the cheap

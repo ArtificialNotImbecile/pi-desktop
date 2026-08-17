@@ -675,7 +675,7 @@ type StreamUpdate = {
 
 // Test hook: the destroyed-WebContents regression needs a wide throttle window
 // to deterministically leave a trailing timer pending when the window closes.
-const STREAM_THROTTLE_MS = Number(process.env.JASMINE_E2E_STREAM_THROTTLE_MS ?? "") || 45;
+const STREAM_THROTTLE_MS = Number(process.env.JASMINE_E2E_STREAM_THROTTLE_MS ?? "") || 16;
 // Force a full snapshot at least this often so any renderer/main divergence in the
 // delta stream self-heals within a bounded number of ticks.
 const STREAM_SNAPSHOT_INTERVAL = 40;

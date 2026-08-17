@@ -82,9 +82,33 @@ test.describe("Jasmine panels and tools", () => {
 
     await page.locator(".rich-composer-editor").fill("memory preferred editor?");
     await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.locator(".assistant-block").last()).toContainText("Memory-aware reply: My preferred editor is Neovim");
-    await expect(page.locator(".assistant-block").last().locator(".memory-used-line")).toContainText("My preferred editor is Neovim");
-    await expectNoPurpleThemeColors(page.locator(".assistant-block").last(), "memory-used message indicator");
+    const newestAssistant = page.locator(".assistant-block").last();
+    await expect(newestAssistant).toContainText("Memory-aware reply: My preferred editor is Neovim");
+    const memoryAwareReplyId = await newestAssistant.getAttribute("data-message-id");
+    expect(memoryAwareReplyId).toBeTruthy();
+    const memoryAwareReply = page.locator(`[data-message-id="${memoryAwareReplyId}"]`);
+    const memoryDisclosure = memoryAwareReply.getByRole("button", { name: "Memory used" });
+    await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "false");
+    await expect(memoryAwareReply.locator(".memory-used-detail")).toHaveCount(0);
+
+    await page.locator(".rich-composer-editor").fill("return long answer smooth stream scroll intent provenance reading lock");
+    await page.getByRole("button", { name: "Send" }).click();
+    const liveAssistant = page.locator(".assistant-block.live-message").last();
+    await expect(liveAssistant).toBeVisible();
+    const liveLengthBeforeDisclosure = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
+    await memoryDisclosure.click();
+    await expect(memoryDisclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(memoryAwareReply.locator(".memory-used-detail")).toContainText("My preferred editor is Neovim");
+    const lockedScrollTop = await page.locator(".message-scroll").evaluate((node) => node.scrollTop);
+    await expect.poll(() => liveAssistant.evaluate((node) => node.textContent?.length ?? 0)).toBeGreaterThan(liveLengthBeforeDisclosure);
+    await page.waitForTimeout(100);
+    const scrollTopAfterMoreOutput = await page.locator(".message-scroll").evaluate((node) => node.scrollTop);
+    expect(Math.abs(scrollTopAfterMoreOutput - lockedScrollTop)).toBeLessThanOrEqual(1);
+    // 15s matches the other three call sites for this 42-paragraph fixture.
+    // This was the only one left on the default 10s, and settling now takes
+    // ~9.9s (UI-101), so it had no margin left on a loaded CI runner.
+    await waitForStableAssistant(page, "Long answer paragraph 42", 15_000);
+    await expectNoPurpleThemeColors(memoryAwareReply, "memory-used message indicator");
 
     await openMemoryFromCommandPalette(page);
     await expect(page.locator(".memory-panel")).toBeVisible();

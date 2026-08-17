@@ -67,19 +67,31 @@ test.describe("Jasmine chat runtime", () => {
 
     const liveAssistant = page.locator(".assistant-block.live-message").last();
     await expect(liveAssistant).toBeVisible();
-    await expect(liveAssistant.locator(".thinking-markdown")).toContainText("Need to inspect");
+    await expect(liveAssistant.locator(".run-header.live")).toBeVisible();
+    await expect(liveAssistant.locator(".thinking-item")).toContainText("Need to inspect");
+    await expect(liveAssistant.locator(".timeline-row-thought")).toHaveCount(0);
+    // A running row carries its state as a class and a sweep, never a status
+    // word, so the row itself only ever names what the tool is acting on.
     const writeTool = liveAssistant.locator(".tool-run-item", { hasText: "src/example.ts" });
-    await expect(writeTool).toContainText("writing");
-    await expect(writeTool).not.toContainText("wrote -");
+    await expect(writeTool).toHaveClass(/running/);
+    await expect(writeTool).not.toContainText("wrote");
     await expect(liveAssistant.locator(".timeline-output")).toContainText("Slow", { timeout: 2000 });
+    await expect(liveAssistant.locator(".run-header.live")).toBeVisible();
     await expect(page.locator(".message-actions:visible")).toHaveCount(0);
 
     const settledAssistant = await waitForStableAssistant(page, "Slow response complete.");
     await expect(settledAssistant.getByLabel("Assistant output")).toContainText("Slow response complete.");
-    await expect(settledAssistant.getByRole("button", { name: "Show work details" })).toHaveAttribute("aria-expanded", "false");
-    await expect(settledAssistant.locator(".run-recap-details")).toBeHidden();
-    await settledAssistant.getByRole("button", { name: "Show work details" }).click();
-    await expect(settledAssistant).toContainText("wrote - 4 lines, 44 bytes");
+    await expect(page.locator(".run-header.live")).toHaveCount(0);
+    const settledHeader = settledAssistant.locator(".run-header-toggle");
+    await expect(settledHeader).toContainText("Worked for");
+    // A successful run folds its activity away; the answer stays.
+    await expect(settledHeader).toHaveAttribute("aria-expanded", "false");
+    await expect(settledAssistant.locator(".tool-run-item")).toBeHidden();
+    await settledHeader.click();
+    const settledWrite = settledAssistant.locator(".tool-run-item", { hasText: "src/example.ts" });
+    await expect(settledWrite).toBeVisible();
+    await expect(settledWrite).toHaveClass(/done/);
+    await expect(settledWrite.locator(".timeline-row-suffix")).toHaveText("+4");
   });
 
   test("a second run shows Thinking before its first live chunk without repainting settled history", async () => {
@@ -127,8 +139,7 @@ test.describe("Jasmine chat runtime", () => {
         __JASMINE_SECOND_RUN_MONITOR__?: {
           settlementSeen: boolean;
           sampledFrames: number;
-          postSettlementThinkingObserved: boolean;
-          postSettlementThinkingInsertions: number;
+          postSettlementActivityInsertions: number;
         };
         __JASMINE_SECOND_RUN_CLEANUP__?: () => void;
       };
@@ -140,21 +151,19 @@ test.describe("Jasmine chat runtime", () => {
       const monitor = {
         settlementSeen: false,
         sampledFrames: 0,
-        postSettlementThinkingObserved: false,
-        postSettlementThinkingInsertions: 0
+        postSettlementActivityInsertions: 0
       };
       scope.__JASMINE_SECOND_RUN_MONITOR__ = monitor;
-      const placeholderSelector = ".message-stack > .assistant-block.thinking";
-      const containsThinkingPlaceholder = (node: Node) => node instanceof Element && (
-        node.matches(placeholderSelector) || Boolean(node.querySelector(placeholderSelector))
+      const activitySelector = ".run-header.live";
+      const containsTurnActivity = (node: Node) => node instanceof Element && (
+        node.matches(activitySelector) || Boolean(node.querySelector(activitySelector))
       );
       const observer = new MutationObserver((records) => {
         if (!monitor.settlementSeen) return;
         for (const record of records) {
           for (const node of record.addedNodes) {
-            if (!containsThinkingPlaceholder(node)) continue;
-            monitor.postSettlementThinkingInsertions += 1;
-            monitor.postSettlementThinkingObserved = true;
+            if (!containsTurnActivity(node)) continue;
+            monitor.postSettlementActivityInsertions += 1;
           }
         }
       });
@@ -164,7 +173,6 @@ test.describe("Jasmine chat runtime", () => {
         monitor.settlementSeen = true;
         const sample = () => {
           monitor.sampledFrames += 1;
-          if (document.querySelector(placeholderSelector)) monitor.postSettlementThinkingObserved = true;
           if (monitor.sampledFrames < 8) requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
@@ -204,12 +212,14 @@ test.describe("Jasmine chat runtime", () => {
     await page.getByRole("button", { name: "Send" }).evaluate((button: HTMLButtonElement) => button.click());
 
     // The mock provider waits 750ms before publishing its first live chunk. The
-    // prior settled answer still has a stream renderId, but only the active tail
-    // may suppress this placeholder.
-    const thinkingPlaceholder = page.locator(".message-stack > .assistant-block.thinking");
-    await expect(thinkingPlaceholder).toBeVisible({ timeout: 500 });
-    await expect(thinkingPlaceholder).toContainText("Thinking");
-    await expect(thinkingPlaceholder.locator(".loading-dots > i")).toHaveCount(3);
+    // prior settled answer still has a stream renderId. The new turn's stable
+    // activity line must appear before its first assistant snapshot.
+    const turnActivity = page.locator(".run-header.live");
+    await expect(turnActivity).toBeVisible({ timeout: 500 });
+    await expect(turnActivity).toContainText("Working");
+    // The stand-in header is not an assistant message: no assistant block
+    // exists until the run's first frame arrives.
+    await expect(page.locator(".run-placeholder .run-header.live")).toHaveCount(1);
     await expect(page.locator(".assistant-block.live-message")).toHaveCount(0);
     // Mutation observers run after React's layout effects and before the next
     // paint, so this captures the first busy commit rather than racing the
@@ -220,7 +230,7 @@ test.describe("Jasmine chat runtime", () => {
     expect(busyMenuState).toEqual({ count: 3, allDisabled: true });
 
     await expect(page.locator(".assistant-block.live-message").last()).toBeVisible({ timeout: 2_000 });
-    await expect(thinkingPlaceholder).toHaveCount(0);
+    await expect(turnActivity).toBeVisible();
     await expect(page.locator(".message-menu")).toBeHidden();
     const userActionRows = page.locator(".user-message-actions");
     const assistantActionRows = page.locator(".message-actions");
@@ -255,8 +265,7 @@ test.describe("Jasmine chat runtime", () => {
         __JASMINE_SECOND_RUN_MONITOR__?: {
           settlementSeen: boolean;
           sampledFrames: number;
-          postSettlementThinkingObserved: boolean;
-          postSettlementThinkingInsertions: number;
+          postSettlementActivityInsertions: number;
         };
         __JASMINE_SECOND_RUN_CLEANUP__?: () => void;
       };
@@ -269,11 +278,10 @@ test.describe("Jasmine chat runtime", () => {
     }, firstSettlement!.assistantId);
 
     expect(result.settlementSeen).toBe(true);
-    expect(result.postSettlementThinkingObserved).toBe(false);
-    expect(result.postSettlementThinkingInsertions).toBe(0);
+    expect(result.postSettlementActivityInsertions).toBe(0);
     expect(result.sameFirstAssistantNode).toBe(true);
     expect(result.firstAssistantRenders).toBe(0);
-    await expect(thinkingPlaceholder).toHaveCount(0);
+    await expect(turnActivity).toHaveCount(0);
   });
 
   test("a first send from an unmaterialized chat keeps its optimistic row through thread selection", async () => {
@@ -1111,6 +1119,12 @@ test.describe("Jasmine chat runtime", () => {
     // Zero-latency steer: the steered user turn renders at the delivery instant in a live
     // streaming state, before the steered reply emits any token (not after the run finishes).
     await expect(page.locator(".assistant-block.live-message").last()).toBeVisible();
+    // The cumulative steer snapshot includes completed assistant prefixes with
+    // stream ids, but only the trailing assistant owns the current Working
+    // header and live styling.
+    await expect(page.locator(".assistant-block.live-message")).toHaveCount(1);
+    await expect(page.locator(".run-header.live")).toHaveCount(1);
+    await expect(page.locator(".assistant-block").last().locator(".run-header.live")).toHaveCount(1);
     await expect(page.locator(".message-stack")).not.toContainText("Steered response complete: steer correction request slow timeline");
     await expect(page.locator(".assistant-block.live-message", { hasText: "Steered response" }).last()).toBeVisible({ timeout: 5000 });
     await expect(page.locator(".queue-item")).toHaveCount(1);
@@ -1311,7 +1325,6 @@ test.describe("Jasmine chat runtime", () => {
       monitor.observer.disconnect();
       cancelAnimationFrame(monitor.frameId);
 
-      let maxSmoothFrameAdvance = 0;
       let prependFrameScrollAdvance = 0;
       let prependFrameTailDrift = 0;
       let prependTransitions = 0;
@@ -1326,8 +1339,6 @@ test.describe("Jasmine chat runtime", () => {
             prependFrameTailDrift,
             Math.abs(current.anchorViewportTop - previous.anchorViewportTop)
           );
-        } else {
-          maxSmoothFrameAdvance = Math.max(maxSmoothFrameAdvance, scrollAdvance);
         }
       }
       return {
@@ -1345,7 +1356,6 @@ test.describe("Jasmine chat runtime", () => {
         ),
         maxTailBottomOffset: Math.max(0, ...monitor.frames.map((sample) => sample.tailBottomOffset)),
         allTailFramesVisible: monitor.frames.every((sample) => sample.tailVisible),
-        maxSmoothFrameAdvance,
         disconnected: monitor.disconnected,
         replaced: monitor.replaced
       };
@@ -1363,8 +1373,7 @@ test.describe("Jasmine chat runtime", () => {
     expect(continuity.mutationTailDrift).toBeLessThanOrEqual(17);
     expect(continuity.mutationNaturalTailDrift).toBeLessThanOrEqual(17);
     expect(continuity.prependFrameTailDrift).toBeLessThanOrEqual(17);
-    expect(continuity.maxTailBottomOffset).toBeLessThanOrEqual(96);
-    expect(continuity.maxSmoothFrameAdvance).toBeLessThanOrEqual(17);
+    expect(continuity.maxTailBottomOffset).toBeLessThanOrEqual(17);
     expect(continuity.disconnected).toBe(false);
     expect(continuity.replaced).toBe(false);
   });
@@ -1429,16 +1438,22 @@ test.describe("Jasmine chat runtime", () => {
     // Stop only after the first stream chunk visibly rendered thinking + tool
     // work; a fixed sleep raced the first paint and could stop an empty run.
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(activeAssistant.locator(".tool-run-item")).toContainText("find / -name node");
+    const activeBashTool = activeAssistant.locator(".tool-run-item[data-tool-name='bash']");
+    await expect(activeBashTool).toBeVisible();
+    await expect(activeBashTool).toContainText("find / -name node");
+    await expect(activeBashTool).toHaveClass(/running/);
     await page.getByRole("button", { name: "Stop response" }).click();
-    await expect(activeAssistant.getByRole("button", { name: "Hide work details" })).toHaveAttribute("aria-expanded", "true");
-    await expect(activeAssistant.locator(".run-recap-label")).toContainText("Stopped after");
+    await expect(activeAssistant.locator(".run-header-toggle")).toContainText("Stopped after");
+    // An interrupted run is never folded away: the reader has to see where it
+    // got to, so the header is a label rather than a disclosure.
+    await expect(activeAssistant.locator(".run-header-toggle")).not.toHaveAttribute("aria-expanded", "false");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Stopped");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("The response was stopped by the user.");
     await expect(activeAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(activeAssistant.locator(".tool-run-item")).toContainText("find / -name node");
-    await expect(activeAssistant.locator(".tool-run-status")).toContainText("stopped");
-    await expect(activeAssistant.locator(".tool-run-status")).not.toContainText("running");
+    await expect(activeBashTool).toContainText("find / -name node");
+    await expect(activeBashTool).toHaveClass(/stopped/);
+    await expect(activeBashTool).not.toHaveClass(/running/);
+    await expect(activeBashTool.locator(".timeline-row-state-text")).toHaveText("Stopped");
     await expect(page.locator(".error-strip")).toBeHidden();
     await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
 
@@ -1449,12 +1464,13 @@ test.describe("Jasmine chat runtime", () => {
     await expect(stoppedThreadRow).toBeVisible();
     await stoppedThreadRow.click();
     const reopenedAssistant = reopenedPage.locator(".assistant-block").last();
-    await expect(reopenedAssistant.getByRole("button", { name: "Hide work details" })).toHaveAttribute("aria-expanded", "true");
+    await expect(reopenedAssistant.locator(".run-header-toggle")).toContainText("Stopped after");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Thinking");
-    await expect(reopenedAssistant.locator(".tool-run-item")).toContainText("find / -name node");
+    const reopenedBashTool = reopenedAssistant.locator(".tool-run-item[data-tool-name='bash']");
+    await expect(reopenedBashTool).toContainText("find / -name node");
     await expect(reopenedAssistant.locator(".message-timeline")).toContainText("Stopped");
-    await expect(reopenedAssistant.locator(".tool-run-status")).toContainText("stopped");
-    await expect(reopenedAssistant.locator(".tool-run-status")).not.toContainText("running");
+    await expect(reopenedBashTool).toHaveClass(/stopped/);
+    await expect(reopenedBashTool).not.toHaveClass(/running/);
 
     await reopenedPage.locator(".rich-composer-editor").fill("continue after stopped tool run");
     await reopenedPage.getByRole("button", { name: "Send" }).click();

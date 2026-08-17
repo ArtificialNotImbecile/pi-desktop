@@ -1,10 +1,10 @@
-import { memo, useCallback, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { ChatTimelineItem } from "../../../shared/ipc";
-import { BrainIcon, ChevronDownIcon, SearchIcon, TerminalIcon, WrenchIcon } from "../icons/Icons";
+import { BrainIcon, ChevronDownIcon, EditIcon, FileIcon, SearchIcon, TerminalIcon, WrenchIcon } from "../icons/Icons";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { useI18n } from "../../i18n";
 import { languageFromPath, looksLikeDiff, looksLikeJson, ShikiCodeBlock, type CodeBlockKind } from "../code";
-import { RunRecap, type RunRecapStatus } from "./RunRecap";
+import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 
 declare global {
   interface Window {
@@ -13,11 +13,12 @@ declare global {
   }
 }
 
-// A directly loaded settled recap stays lazy while collapsed. Rows that were
-// already painted during a live run remain mounted (and are merely hidden) at
-// settlement, so folding the recap never throws away already-rendered Markdown.
-// A later thread reload can still remount a detail row, so mirror expansion
-// toggles into this bounded cache rather than snapping it shut when rebuilt.
+// Thought and tool rows own their expansion independently. Mirror toggles into
+// this bounded cache so pagination or thread navigation does not unexpectedly
+// reopen a row the reader deliberately collapsed (or vice versa).
+// A separator that cannot occur in a thread id, message id or item id, so two
+// different (scope, item) pairs can never collide on one cache key.
+const EXPANSION_KEY_SEPARATOR = "\u0000";
 const expansionStateCache = new Map<string, boolean>();
 const EXPANSION_CACHE_LIMIT = 500;
 
@@ -31,22 +32,20 @@ function rememberExpansion(itemId: string, expanded: boolean) {
 type SettledTimelinePresentation = {
   finalItemIds: string[];
   fallbackFinalItem?: Extract<ChatTimelineItem, { kind: "assistant_text" }>;
-  recap?: {
-    status: RunRecapStatus;
-    elapsedMs?: number;
-    defaultExpanded: boolean;
-    header?: ReactNode;
-    footer?: ReactNode;
-  };
 };
 
 export function MessageTimeline(props: {
   cacheScope: string;
+  cacheAliasScopes?: string[];
   items: ChatTimelineItem[];
   onCopyCode(code: string): void;
   live?: boolean;
   modelId?: string | null;
   settled?: SettledTimelinePresentation;
+  // Codex-style turn collapse: activity rows fold behind the run header while
+  // the final answer stays. Rows stay mounted so reopening is instant and the
+  // reader's per-row disclosures survive.
+  collapsed?: boolean;
 }) {
   const retainedLiveDetailsRef = useRef(Boolean(props.live));
   if (props.live) retainedLiveDetailsRef.current = true;
@@ -67,98 +66,86 @@ export function MessageTimeline(props: {
     [timelineItems, retainPaintedPresentation, props.modelId]
   );
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-  const liveExpansionSnapshotRef = useRef<Record<string, boolean>>({});
-  if (props.live) {
+  // A live row is keyed by its renderer identity, while its database-backed
+  // replacement is keyed by the persisted message id. During the settlement
+  // render both identities are available; copy the live disclosure choices to
+  // the persisted scope before a later thread navigation drops renderId.
+  useLayoutEffect(() => {
+    if (!props.cacheAliasScopes?.length) return;
     for (const item of displayItems) {
-      liveExpansionSnapshotRef.current[item.id] = expandedItems[item.id]
-        ?? expansionStateCache.get(expansionKey(props.cacheScope, item.id))
-        ?? item.defaultExpanded;
+      const stableKey = expansionKey(props.cacheScope, item.id);
+      if (expansionStateCache.has(stableKey)) continue;
+      const expansion = expandedItems[item.id]
+        ?? firstAliasedExpansion(props.cacheAliasScopes, item.id);
+      if (expansion !== undefined) rememberExpansion(stableKey, expansion);
     }
-  }
-  const [recapExpandedOverride, setRecapExpandedOverride] = useState<boolean | null>(null);
-  const recapExpanded = recapExpandedOverride ?? Boolean(props.settled?.recap?.defaultExpanded);
-  const recapControlsBase = useId().replace(/:/g, "");
-  const rowDomIds = useMemo(
-    () => new Map(displayItems.map((item, index) => [item.id, `${recapControlsBase}-row-${index}`])),
-    [displayItems, recapControlsBase]
-  );
+  }, [displayItems, expandedItems, props.cacheAliasScopes, props.cacheScope]);
   const isExpanded = (item: TimelineDisplayItem) => expandedItems[item.id]
     ?? expansionStateCache.get(expansionKey(props.cacheScope, item.id))
-    // Preserve an explicitly expanded live row for a reader-locked settlement,
-    // but collapse ordinary successful recaps exactly as before.
-    ?? (Boolean(props.settled) && recapExpanded && retainedLiveDetailsRef.current
-      ? liveExpansionSnapshotRef.current[item.id] ?? item.defaultExpanded
-      : Boolean(props.live) ? item.defaultExpanded : false);
+    ?? firstAliasedExpansion(props.cacheAliasScopes, item.id)
+    ?? item.defaultExpanded;
   const toggleItem = useCallback((itemId: string, expanded: boolean) => {
     rememberExpansion(expansionKey(props.cacheScope, itemId), !expanded);
     setExpandedItems((current) => ({ ...current, [itemId]: !expanded }));
   }, [props.cacheScope]);
 
-  const renderRows = (
-    items: TimelineDisplayItem[],
-    finalAnswer: boolean,
-    hidden = false,
-    domIds?: Map<string, string>
-  ) => items.map((item) => (
-    <TimelineDisplayRow
-      key={item.id}
-      domId={domIds?.get(item.id)}
-      item={item}
-      expanded={isExpanded(item)}
-      live={retainPaintedPresentation}
-      finalAnswer={finalAnswer}
-      hidden={hidden}
-      onCopyCode={props.onCopyCode}
-      onToggle={toggleItem}
-    />
-  ));
+  const finalIds = new Set(props.settled?.finalItemIds ?? []);
+  if (props.settled?.fallbackFinalItem) finalIds.add(props.settled.fallbackFinalItem.id);
+  const activeLiveItemId = props.live ? displayItems.at(-1)?.id : undefined;
+  // Assistant text keeps its streaming parser identity for the whole run so a
+  // later tool append cannot rerender already-painted Markdown. Only the
+  // segment currently producing tokens carries the running sweep.
+  const rowIsLive = (item: TimelineDisplayItem) => Boolean(props.live)
+    && (item.kind === "assistant_text" || (item.kind === "thinking" && item.id === activeLiveItemId));
 
-  const children: ReactNode[] = [];
-  if (!props.settled) {
-    children.push(...renderRows(displayItems, false, false, rowDomIds));
-  } else {
-    const finalIds = new Set(props.settled.finalItemIds);
-    if (props.settled.fallbackFinalItem) finalIds.add(props.settled.fallbackFinalItem.id);
-    const details = displayItems.filter((item) => !finalIds.has(item.id));
-    const finalItems = displayItems.filter((item) => finalIds.has(item.id));
-    const recap = props.settled.recap;
-    if (recap) {
-      const headerId = `${recapControlsBase}-header`;
-      const footerId = `${recapControlsBase}-footer`;
-      const controlledIds = [headerId, ...details.map((item) => rowDomIds.get(item.id) ?? ""), footerId].filter(Boolean);
-      children.push(
-        <RunRecap
-          key="run-recap"
-          status={recap.status}
-          elapsedMs={recap.elapsedMs}
-          defaultExpanded={recap.defaultExpanded}
-          expanded={recapExpanded}
-          onExpandedChange={setRecapExpandedOverride}
-          controlledIds={controlledIds}
+  // Every thought/tool row stays in chronological flow and owns its own compact
+  // disclosure. Collapsing the turn hides the activity rows without unmounting
+  // them; the final answer is never hidden.
+  return (
+    <div className="message-timeline">
+      {displayItems.map((item) => (
+        <TimelineDisplayRow
+          key={item.id}
+          item={item}
+          expanded={isExpanded(item)}
+          live={rowIsLive(item)}
+          finalAnswer={finalIds.has(item.id)}
+          hidden={Boolean(props.collapsed) && !finalIds.has(item.id)}
+          onCopyCode={props.onCopyCode}
+          onToggle={toggleItem}
         />
-      );
-      children.push(
-        <div id={headerId} key="run-recap-header" hidden={!recapExpanded} className="run-recap-detail-row run-recap-meta">{recap.header}</div>
-      );
-      if (recapExpanded || retainedLiveDetailsRef.current) {
-        children.push(...renderRows(details, false, !recapExpanded, rowDomIds));
-      }
-      children.push(
-        <div id={footerId} key="run-recap-footer" hidden={!recapExpanded} className="run-recap-detail-row run-recap-provenance">{recap.footer}</div>
-      );
-    }
-    // Keep rows in the same flat keyed child list across live -> settled. A
-    // nested array creates a new reconciliation scope and remounts the final
-    // Markdown subtree even though its item id is unchanged.
-    children.push(...renderRows(finalItems, true, false, rowDomIds));
-    if (!recap) children.push(...renderRows(details, false, false, rowDomIds));
-  }
-
-  return <div className="message-timeline">{children}</div>;
+      ))}
+    </div>
+  );
 }
 
 function expansionKey(scope: string, itemId: string): string {
-  return `${scope}\u0000${itemId}`;
+  return `${scope}${EXPANSION_KEY_SEPARATOR}${itemId}`;
+}
+
+/**
+ * Whether the reader has opened any row belonging to these cache scopes.
+ *
+ * A turn that settles while the reader is reading one of its rows must not fold
+ * that row away underneath them, so opening a row opts the turn out of the
+ * automatic collapse. Scroll position alone is not consulted: it lives outside
+ * this component, and an opened row is the signal that survives settlement.
+ */
+export function hasOpenedRowInScopes(scopes: Array<string | undefined>): boolean {
+  const prefixes = scopes.filter((scope): scope is string => Boolean(scope)).map((scope) => `${scope}${EXPANSION_KEY_SEPARATOR}`);
+  if (prefixes.length === 0) return false;
+  for (const [key, expanded] of expansionStateCache) {
+    if (expanded && prefixes.some((prefix) => key.startsWith(prefix))) return true;
+  }
+  return false;
+}
+
+function firstAliasedExpansion(aliasScopes: string[] | undefined, itemId: string): boolean | undefined {
+  for (const scope of aliasScopes ?? []) {
+    const value = expansionStateCache.get(expansionKey(scope, itemId));
+    if (value !== undefined) return value;
+  }
+  return undefined;
 }
 
 type TimelineDisplayItem =
@@ -166,20 +153,28 @@ type TimelineDisplayItem =
   | { id: string; kind: "tool_preamble"; text: string; defaultExpanded: boolean }
   | { id: string; kind: "tool"; toolName: string; call?: Extract<ChatTimelineItem, { kind: "tool_call" }>; result?: Extract<ChatTimelineItem, { kind: "tool_result" }>; summary: ToolSummary; defaultExpanded: boolean }
   | { id: string; kind: "assistant_text"; text: string; defaultExpanded: boolean }
-  | { id: string; kind: "system"; title: string; text: string; defaultExpanded: boolean };
+  | { id: string; kind: "system"; title: string; text: string; collapsible: boolean; defaultExpanded: boolean };
+
+type RowState = "done" | "running" | "stopped" | "error";
 
 type ToolSummary = {
-  state: "running" | "stopped" | "done" | "error";
-  action: string;
+  state: RowState;
+  // The tool's own name, shown verbatim: it identifies the command, not a
+  // narrated action, so it is deliberately not localized.
+  title: string;
+  // What the tool acted on. Credential-bearing text collapses to empty rather
+  // than reaching the row.
   target: string;
-  status: string;
+  // A mutation magnitude the reader should see without opening the row. Kept
+  // out of the target's ellipsis. Result counts and byte totals do not qualify;
+  // they belong to the OUT section.
+  suffix: string;
   details: ToolDetail[];
 };
 
-type ToolDetail = { label: string; content: string; tone?: "error" | "code" };
+type ToolDetail = { label: "IN" | "OUT"; content: string; tone?: "error" | "code" };
 
 type TimelineDisplayRowProps = {
-  domId?: string;
   item: TimelineDisplayItem;
   expanded: boolean;
   live: boolean;
@@ -194,44 +189,98 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
   const { item } = props;
   recordTimelineRowRender(item.id);
   const toggle = () => props.onToggle(item.id, props.expanded);
+  const detailsMountedRef = useRef(props.expanded);
+  if (props.expanded) detailsMountedRef.current = true;
 
   if (item.kind === "thinking") {
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className={`timeline-item thinking-item ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.thinking")}>
-        <TimelineToggle label={t("message.thinking")} expanded={props.expanded} onToggle={toggle} icon={<BrainIcon />} />
-        <div className="thinking-markdown" hidden={!props.expanded}>
-          <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
-        </div>
-      </section>
+      <TimelineRow
+        itemId={item.id}
+        className="thinking-item"
+        icon={<BrainIcon />}
+        title={t("message.thinking")}
+        summary={thoughtSummary(item.text, props.live)}
+        state={props.live ? "running" : "done"}
+        expanded={props.expanded}
+        hidden={props.hidden}
+        onToggle={toggle}
+      >
+        {detailsMountedRef.current && (
+          <div className="timeline-row-thought">
+            <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
+          </div>
+        )}
+      </TimelineRow>
     );
   }
   if (item.kind === "tool_preamble") {
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className={`timeline-item thinking-item tool-preamble-item ${props.expanded ? "" : "collapsed"}`} aria-label={t("message.toolPreamble")}>
-        <TimelineToggle label={t("message.toolPreamble")} expanded={props.expanded} onToggle={toggle} icon={<WrenchIcon />} />
-        <div className="thinking-markdown" hidden={!props.expanded}>
-          <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
-        </div>
-      </section>
+      <TimelineRow
+        itemId={item.id}
+        className="thinking-item tool-preamble-item"
+        icon={<WrenchIcon />}
+        title={t("message.toolPreamble")}
+        summary={thoughtSummary(item.text, false)}
+        state="done"
+        expanded={props.expanded}
+        hidden={props.hidden}
+        onToggle={toggle}
+      >
+        {detailsMountedRef.current && (
+          <div className="timeline-row-thought">
+            <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
+          </div>
+        )}
+      </TimelineRow>
     );
   }
   if (item.kind === "tool") {
-    return <ToolRunRow id={props.domId} item={item} expanded={props.expanded} hidden={props.hidden} onToggle={toggle} />;
+    return <ToolRunRow item={item} expanded={props.expanded} hidden={props.hidden} onToggle={toggle} />;
   }
   if (item.kind === "system") {
+    const title = localizedSystemTitle(item.title, t);
+    if (item.collapsible) {
+      return (
+        <TimelineRow
+          itemId={item.id}
+          className="thinking-item system-summary-item"
+          icon={<TerminalIcon />}
+          title={title}
+          summary=""
+          state="done"
+          expanded={props.expanded}
+          hidden={props.hidden}
+          onToggle={toggle}
+        >
+          {detailsMountedRef.current && (
+            <div className="timeline-row-thought">
+              <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} />
+            </div>
+          )}
+        </TimelineRow>
+      );
+    }
     return (
-      <section id={props.domId} hidden={props.hidden} data-timeline-item-id={item.id} className="timeline-item system-item" aria-label={item.title}>
-        <div className="timeline-label"><TerminalIcon /><span>{item.title}</span></div>
-        <p>{item.text}</p>
-      </section>
+      <TimelineRow
+        itemId={item.id}
+        className="system-item"
+        icon={<TerminalIcon />}
+        title={title}
+        // Even product-owned inline status text gets the collapsed-preview
+        // credential guard. An extension can reuse a familiar title, so the
+        // title alone is never authority to expose arbitrary text.
+        summary={credentialSafeText(item.text)}
+        state="done"
+        expanded={false}
+        hidden={props.hidden}
+      />
     );
   }
   return (
     <section
-      id={props.domId}
       data-timeline-item-id={item.id}
-      hidden={props.hidden}
       className={`timeline-output ${props.finalAnswer ? "final-answer" : ""}`}
+      hidden={props.hidden || undefined}
       aria-label={t("message.assistantOutput")}
     >
       <MarkdownMessage content={item.text} onCopyCode={props.onCopyCode} streaming={props.live} />
@@ -239,12 +288,98 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
   );
 }, sameTimelineDisplayRowProps);
 
+/**
+ * The single 24px row grammar every activity row uses:
+ *
+ *   [16px leading][6px][title 14/24][8px][2px dot][8px][summary fill, ellipsis][suffix]
+ *
+ * The leading slot carries the icon at rest and the chevron on hover or while
+ * open, so no disclosure control sits at the row's end and every row shares one
+ * left axis with the answer body. Run state is colour and motion only, so an
+ * off-nominal row also emits a visually hidden label.
+ */
+function TimelineRow(props: {
+  itemId: string;
+  className: string;
+  icon: ReactElement;
+  title: string;
+  summary: string;
+  summaryTone?: "error";
+  suffix?: string;
+  state: RowState;
+  expanded: boolean;
+  hidden: boolean;
+  toolName?: string;
+  onToggle?(): void;
+  children?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const summaryId = useId();
+  const expandable = Boolean(props.onToggle);
+  const stateLabel = runStateLabel(props.state, t);
+  // The name stays the row's kind, not its content: a streaming thought rewrites
+  // its summary on every chunk, and a changing accessible name makes assistive
+  // tech re-announce the control. The summary rides along as the description.
+  const describedBy = !props.expanded && props.summary ? summaryId : undefined;
+  const rowContent = (
+    <>
+      <span className="timeline-row-lead">
+        <span className="timeline-row-icon">
+          {props.state === "error" || props.state === "stopped"
+            ? <span className={`timeline-row-state-dot ${props.state}`} aria-hidden="true" />
+            : props.icon}
+        </span>
+        {expandable && <span className="timeline-row-chevron"><ChevronDownIcon /></span>}
+      </span>
+      <span className="timeline-row-title">{props.title}</span>
+      {props.summary && (
+        <>
+          <span className="timeline-row-dot" aria-hidden="true" />
+          <span id={summaryId} className={`timeline-row-summary ${props.summaryTone === "error" ? "error" : ""}`}>{props.summary}</span>
+        </>
+      )}
+      {props.suffix && <span className="timeline-row-suffix">{props.suffix}</span>}
+    </>
+  );
+  return (
+    <section
+      data-timeline-item-id={props.itemId}
+      data-tool-name={props.toolName}
+      className={`timeline-item ${props.className} ${props.state} ${props.expanded ? "" : "collapsed"}`}
+      hidden={props.hidden || undefined}
+    >
+      {stateLabel && <span className="timeline-row-state-text">{stateLabel}</span>}
+      {expandable ? (
+        <button
+          type="button"
+          className="timeline-row timeline-toggle"
+          aria-label={props.title}
+          aria-describedby={describedBy}
+          aria-expanded={props.expanded}
+          onClick={props.onToggle}
+        >
+          {rowContent}
+        </button>
+      ) : (
+        <div className="timeline-row">{rowContent}</div>
+      )}
+      {props.children && <div className="timeline-row-body" hidden={!props.expanded}>{props.children}</div>}
+    </section>
+  );
+}
+
+function runStateLabel(state: RowState, t: ReturnType<typeof useI18n>["t"]): string {
+  if (state === "running") return t("message.runState.running");
+  if (state === "error") return t("message.runState.failed");
+  if (state === "stopped") return t("message.runState.stopped");
+  return "";
+}
+
 function sameTimelineDisplayRowProps(
   previous: TimelineDisplayRowProps,
   next: TimelineDisplayRowProps
 ): boolean {
   return previous.expanded === next.expanded
-    && previous.domId === next.domId
     && previous.live === next.live
     && previous.finalAnswer === next.finalAnswer
     && previous.hidden === next.hidden
@@ -268,9 +403,9 @@ function sameTimelineDisplayItem(previous: TimelineDisplayItem, next: TimelineDi
     && previous.call?.toolCallId === next.call?.toolCallId
     && previous.result?.toolCallId === next.result?.toolCallId
     && previousSummary.state === nextSummary.state
-    && previousSummary.action === nextSummary.action
+    && previousSummary.title === nextSummary.title
     && previousSummary.target === nextSummary.target
-    && previousSummary.status === nextSummary.status
+    && previousSummary.suffix === nextSummary.suffix
     && previousSummary.details.length === nextSummary.details.length
     && previousSummary.details.every((detail, index) => {
       const candidate = nextSummary.details[index];
@@ -294,7 +429,7 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (item.kind === "thinking") {
-      result.push({ id: item.id, kind: "thinking", text: item.text, defaultExpanded: live });
+      result.push({ id: item.id, kind: "thinking", text: item.text, defaultExpanded: false });
       continue;
     }
     if (item.kind === "tool_call") {
@@ -344,15 +479,28 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
       // While a run is live, a text item cannot know whether a later tool call
       // will turn it into a DeepSeek tool preamble. Reclassifying a row after it
       // has painted remounts its Markdown and visibly jumps. Keep live text in
-      // its first structure; the settled recap can classify with full context.
+      // its first structure; a directly loaded settled turn can classify with
+      // full context without changing an already-painted row.
       if (!live && isDeepSeekToolPreamble(items, index, modelId)) {
-        result.push({ id: item.id, kind: "tool_preamble", text: item.text, defaultExpanded: live });
+        result.push({ id: item.id, kind: "tool_preamble", text: item.text, defaultExpanded: false });
       } else {
         result.push({ id: item.id, kind: "assistant_text", text: item.text, defaultExpanded: true });
       }
       continue;
     }
-    result.push({ id: item.id, kind: "system", title: item.title, text: item.text, defaultExpanded: true });
+    // Compaction, branch summaries, displayed custom messages, and any future
+    // provider-owned system entry can contain arbitrary session text. Give all
+    // of them their own deliberate disclosure; only Jasmine's nominal Stopped
+    // status remains inline, with its summary sanitized again at render time.
+    const collapsible = !isInlineSystemStatus(item.title);
+    result.push({
+      id: item.id,
+      kind: "system",
+      title: item.title,
+      text: item.text,
+      collapsible,
+      defaultExpanded: !collapsible
+    });
   }
   for (const pending of pendingTools.values()) {
     for (const pair of pending) {
@@ -399,21 +547,18 @@ function toToolDisplayItem(
     call,
     result: toolResult,
     summary,
-    defaultExpanded: summary.state === "error"
+    defaultExpanded: false
   };
 }
 
-function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { kind: "tool" }>; expanded: boolean; hidden?: boolean; onToggle(): void }) {
-  const { t } = useI18n();
+function ToolRunRow(props: {
+  item: Extract<TimelineDisplayItem, { kind: "tool" }>;
+  expanded: boolean;
+  hidden: boolean;
+  onToggle(): void;
+}) {
   const { item } = props;
   const summary = item.summary;
-  const controlAction = localizedToolAction(item.toolName, t);
-  const controlStatus = localizedToolStatus(summary.status, t);
-  const controlName = t("message.toolToggle", {
-    action: controlAction,
-    target: summary.target,
-    status: controlStatus
-  }).replace(/\s+/g, " ").trim();
   // Large tool outputs can be expensive even while hidden: mounting a
   // ShikiCodeBlock immediately starts language loading and highlighting. Keep
   // a never-opened row genuinely lazy, then retain the same detail subtree once
@@ -421,40 +566,43 @@ function ToolRunRow(props: { id?: string; item: Extract<TimelineDisplayItem, { k
   // away the reader's DOM and highlighting work.
   const detailsMountedRef = useRef(props.expanded);
   if (props.expanded) detailsMountedRef.current = true;
+  // A failed call's first error line replaces the target: it is the one thing
+  // worth reading before deciding to open the row.
+  const failureLine = summary.state === "error" ? toolFailureLine(item.result) : "";
   return (
-    <section
-      id={props.id}
-      data-timeline-item-id={item.id}
+    <TimelineRow
+      itemId={item.id}
+      className="tool-run-item"
+      toolName={item.toolName}
+      icon={toolIcon(item.toolName)}
+      title={summary.title}
+      summary={failureLine || summary.target}
+      summaryTone={failureLine ? "error" : undefined}
+      suffix={failureLine ? "" : summary.suffix}
+      state={summary.state}
+      expanded={props.expanded}
       hidden={props.hidden}
-      className={`timeline-item tool-run-item ${summary.state} ${props.expanded ? "" : "collapsed"}`}
-      aria-label={t("message.toolSummary", { action: summary.action, target: summary.target }).trim()}
+      onToggle={summary.details.length > 0 ? props.onToggle : undefined}
     >
-      <button type="button" className="timeline-label timeline-toggle tool-run-toggle" aria-label={controlName} aria-expanded={props.expanded} onClick={props.onToggle}>
-        {toolIcon(item.toolName)}
-        <span className="tool-run-main">
-          <b>{controlAction}</b>
-          {summary.target && <span className="tool-run-target">{summary.target}</span>}
-        </span>
-        <small className={`tool-run-status ${summary.state}`}>{controlStatus}</small>
-        <ChevronDownIcon />
-      </button>
-      {detailsMountedRef.current ? (
-        <div className="tool-run-details" hidden={!props.expanded}>
-          {summary.details.map((detail) => (
-            <div key={detail.label} className={detail.tone === "error" ? "error" : ""}>
-              <small>{detail.label}</small>
-              <ShikiCodeBlock
-                code={detail.content}
-                language={toolDetailLanguage(item.toolName, detail, summary.target)}
-                kind={toolDetailKind(item.toolName, detail)}
-                title={detail.label.toLowerCase()}
-                showCopy={false}
-              />
+      {detailsMountedRef.current && summary.details.length > 0 ? (
+        <div className="tool-run-card">
+          {summary.details.map((detail, index) => (
+            <div key={detail.label} className="tool-run-section">
+              {index > 0 && <span className="tool-run-divider" aria-hidden="true" />}
+              <div className={`tool-run-slot ${detail.tone === "error" ? "error" : ""}`}>
+                <small className="tool-run-slot-label">{detail.label}</small>
+                <ShikiCodeBlock
+                  code={detail.content}
+                  language={toolDetailLanguage(item.toolName, detail, summary.target)}
+                  kind={toolDetailKind(item.toolName, detail)}
+                  showCopy={false}
+                />
+              </div>
             </div>
           ))}
         </div>
       ) : null}
-    </section>
+    </TimelineRow>
   );
 }
 
@@ -465,25 +613,30 @@ function summarizeToolRun(
   stopped = false
 ): ToolSummary {
   const args = parseArguments(call?.argumentsJson);
-  const state: ToolSummary["state"] = !toolResult ? (stopped ? "stopped" : "running") : toolResult.isError ? "error" : "done";
-  const target = toolTarget(toolName, args, call, toolResult);
-  const action = toolAction(toolName);
-  const details = toolDetails(toolName, args, call, toolResult);
-  const stats = toolStats(toolName, args, toolResult);
+  const state: RowState = !toolResult
+    ? (stopped ? "stopped" : "running")
+    : toolResult.isError ? "error" : "done";
   return {
     state,
-    action,
-    target,
-    status: toolStatus(toolName, state, stats, toolResult),
-    details
+    title: toolTitle(toolName),
+    target: toolTarget(toolName, args, call, toolResult),
+    suffix: toolSuffix(toolName, args, toolResult),
+    details: toolDetails(toolName, args, call, toolResult)
   };
 }
 
-function toolAction(toolName: string): string {
-  if (toolName === "web_search") return "search";
-  if (toolName === "fetch_content") return "fetch";
-  if (toolName === "get_search_content") return "read search";
-  if (toolName === "code_search") return "code search";
+// The tool's wire name, cased for display. Not localized: these name commands
+// and capabilities, and a translated "Bash" would no longer identify the tool
+// the reader can find in the transcript or the logs.
+function toolTitle(toolName: string): string {
+  if (toolName === "web_search") return "Search";
+  if (toolName === "code_search") return "Code search";
+  if (toolName === "fetch_content") return "Fetch";
+  if (toolName === "get_search_content") return "Read search";
+  if (toolName === "read") return "Read";
+  if (toolName === "write") return "Write";
+  if (toolName === "edit") return "Edit";
+  if (toolName === "bash") return "Bash";
   return toolName;
 }
 
@@ -493,11 +646,21 @@ function toolTarget(
   call: Extract<ChatTimelineItem, { kind: "tool_call" }> | undefined,
   toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined
 ): string {
-  if (toolName === "bash") return truncateMiddle(stringValue(args.command) || call?.title || toolResult?.title || "", 92);
-  if (toolName === "web_search" || toolName === "code_search") return truncateMiddle(stringValue(args.query), 72);
-  if (toolName === "fetch_content") return truncateMiddle(stringValue(args.url), 76);
-  if (toolName === "get_search_content") return truncateMiddle(stringValue(args.id) || stringValue(args.url), 76);
-  return truncateMiddle(
+  // Commands and queries can carry credentials, so they reach the row only
+  // through credentialSafeText, which drops the whole value on any marker
+  // rather than attempting to redact within it. URL tools keep a useful
+  // origin/path while losing credentials, query, and hash.
+  if (toolName === "bash") return safeCollapsedTextTarget(firstLine(stringValue(args.command) || call?.title || ""), 76);
+  if (toolName === "web_search" || toolName === "code_search") {
+    return safeCollapsedTextTarget(stringValue(args.query) || stringValue(args.q) || call?.title || "", 76);
+  }
+  if (toolName === "fetch_content") return sanitizedUrlTarget(stringValue(args.url), 76);
+  if (toolName === "get_search_content") {
+    const id = stringValue(args.id);
+    return (/^https?:\/\//i.test(id) ? sanitizedUrlTarget(id, 76) : safeCollapsedTextTarget(id, 76))
+      || sanitizedUrlTarget(stringValue(args.url), 76);
+  }
+  return safeCollapsedTextTarget(
     stringValue(args.path) ||
       stringValue(args.filePath) ||
       stringValue(args.filename) ||
@@ -510,112 +673,56 @@ function toolTarget(
   );
 }
 
-function toolStatus(
+// Only a mutation magnitude earns a slot beside the target: it tells the reader
+// how much changed without opening the row. Byte totals and result counts are
+// inspection detail and stay in the OUT section.
+function toolSuffix(
   toolName: string,
-  state: ToolSummary["state"],
-  stats: string,
+  args: Record<string, unknown>,
   toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined
 ): string {
-  if (state === "running") {
-    if (toolName === "read" || toolName === "get_search_content") return "reading";
-    if (toolName === "write") return "writing";
-    if (toolName === "edit") return "editing";
-    if (toolName === "bash") return "running";
-    if (toolName.includes("search")) return "searching";
-    if (toolName === "fetch_content") return "fetching";
-    return "running";
+  if (!toolResult || toolResult.isError) return "";
+  if (toolName === "edit") return diffStats(args, toolResult.content ?? "");
+  if (toolName === "write") {
+    const lineCount = lineCountOf(stringValue(args.content));
+    return lineCount ? `+${lineCount}` : "";
   }
-  if (state === "stopped") return "stopped";
-  if (state === "error") {
-    const exit = parseExitCode(toolResult?.content ?? "");
-    return exit === null ? "failed" : `exit ${exit}`;
-  }
-  if (toolName === "read" || toolName === "get_search_content") return stats ? `read - ${stats}` : "read";
-  if (toolName === "write") return stats ? `wrote - ${stats}` : "wrote";
-  if (toolName === "edit") return stats ? `edited - ${stats}` : "edited";
-  if (toolName === "bash") return stats ? `done - ${stats}` : "done";
-  if (toolName.includes("search")) return stats ? `searched - ${stats}` : "searched";
-  if (toolName === "fetch_content") return stats ? `fetched - ${stats}` : "fetched";
-  return stats ? `done - ${stats}` : "done";
+  return "";
 }
 
-function localizedToolAction(toolName: string, t: ReturnType<typeof useI18n>["t"]): string {
-  if (toolName === "web_search") return t("message.toolAction.search");
-  if (toolName === "fetch_content") return t("message.toolAction.fetch");
-  if (toolName === "get_search_content") return t("message.toolAction.readSearch");
-  if (toolName === "code_search") return t("message.toolAction.codeSearch");
-  if (toolName === "read" || toolName === "write" || toolName === "edit" || toolName === "bash") {
-    return t(`message.toolAction.${toolName}`);
-  }
-  return toolName;
+function toolFailureLine(toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined): string {
+  if (!toolResult) return "";
+  const content = cleanedToolOutput(toolResult.content);
+  const line = content.split("\n").map((entry) => entry.trim()).find(Boolean) ?? "";
+  return truncateMiddle(credentialSafeText(line), 92);
 }
 
-function localizedToolStatus(status: string, t: ReturnType<typeof useI18n>["t"]): string {
-  const exit = /^exit (\d+)$/.exec(status);
-  if (exit) return t("message.toolStatus.exit", { code: exit[1] });
-  const separator = status.indexOf(" - ");
-  const base = separator < 0 ? status : status.slice(0, separator);
-  const stats = separator < 0 ? "" : status.slice(separator + 3);
-  const localized = localizedToolStatusBase(base, t);
-  return stats ? t("message.toolStatus.withStats", { status: localized, stats: localizedToolStats(stats, t) }) : localized;
+function sanitizedUrlTarget(value: string, limit: number): string {
+  return truncateMiddle(sanitizedHttpUrl(value), limit);
 }
 
-function localizedToolStatusBase(status: string, t: ReturnType<typeof useI18n>["t"]): string {
-  if (status === "reading") return t("message.toolStatus.reading");
-  if (status === "writing") return t("message.toolStatus.writing");
-  if (status === "editing") return t("message.toolStatus.editing");
-  if (status === "running") return t("message.toolStatus.running");
-  if (status === "searching") return t("message.toolStatus.searching");
-  if (status === "fetching") return t("message.toolStatus.fetching");
-  if (status === "stopped") return t("message.toolStatus.stopped");
-  if (status === "failed") return t("message.toolStatus.failed");
-  if (status === "read") return t("message.toolStatus.read");
-  if (status === "wrote") return t("message.toolStatus.wrote");
-  if (status === "edited") return t("message.toolStatus.edited");
-  if (status === "done") return t("message.toolStatus.done");
-  if (status === "searched") return t("message.toolStatus.searched");
-  if (status === "fetched") return t("message.toolStatus.fetched");
-  return status;
+function safeCollapsedTextTarget(value: string, limit: number): string {
+  return truncateMiddle(credentialSafeText(value), limit);
 }
 
-function localizedToolStats(stats: string, t: ReturnType<typeof useI18n>["t"]): string {
-  const linesBytes = /^(\d+) lines, (\d+) bytes$/.exec(stats);
-  if (linesBytes) return t("message.toolStats.linesBytes", { lines: linesBytes[1], bytes: linesBytes[2] });
-  const lines = /^(\d+) lines?$/.exec(stats);
-  if (lines) return t("message.toolStats.lines", { count: lines[1] });
-  const bytes = /^(\d+) bytes$/.exec(stats);
-  if (bytes) return t("message.toolStats.bytes", { count: bytes[1] });
-  const results = /^(\d+) results$/.exec(stats);
-  if (results) return t("message.toolStats.results", { count: results[1] });
-  return stats;
+function firstLine(value: string): string {
+  return value.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+function isInlineSystemStatus(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  return normalized === "stopped";
+}
+
+function localizedSystemTitle(title: string, t: ReturnType<typeof useI18n>["t"]): string {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === "compaction") return t("message.compaction");
+  if (normalized === "branch summary") return t("message.branchSummary");
+  return title;
 }
 
 function hasStoppedSystemAfter(items: ChatTimelineItem[], index: number): boolean {
   return items.slice(index + 1).some((item) => item.kind === "system" && item.title.toLowerCase() === "stopped");
-}
-
-function toolStats(toolName: string, args: Record<string, unknown>, toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined): string {
-  if (toolName === "write") {
-    const lineCount = lineCountOf(stringValue(args.content));
-    const bytes = parseByteCount(toolResult?.content ?? "");
-    if (lineCount && bytes) return `${lineCount} lines, ${bytes} bytes`;
-    if (lineCount) return `${lineCount} lines`;
-    if (bytes) return `${bytes} bytes`;
-  }
-  if (toolName === "edit") {
-    return diffStats(args, toolResult?.content ?? "");
-  }
-  if (toolName === "read" || toolName === "bash") {
-    const content = cleanedToolOutput(toolResult?.content ?? "");
-    const lines = lineCountOf(content);
-    return lines ? `${lines} ${lines === 1 ? "line" : "lines"}` : "";
-  }
-  if (toolName === "web_search" || toolName === "code_search") {
-    const content = cleanedToolOutput(toolResult?.content ?? "");
-    const matches = content.match(/https?:\/\//g);
-    return matches?.length ? `${matches.length} results` : "";
-  }
-  return "";
 }
 
 function toolDetails(
@@ -623,29 +730,28 @@ function toolDetails(
   args: Record<string, unknown>,
   call: Extract<ChatTimelineItem, { kind: "tool_call" }> | undefined,
   toolResult: Extract<ChatTimelineItem, { kind: "tool_result" }> | undefined
-): ToolSummary["details"] {
-  const details: ToolSummary["details"] = [];
+): ToolDetail[] {
+  const details: ToolDetail[] = [];
   if (toolName === "bash") {
     const command = stringValue(args.command) || call?.title || "";
-    if (command) details.push({ label: "COMMAND", content: command, tone: "code" });
+    if (command) details.push({ label: "IN", content: command, tone: "code" });
   } else if (call?.argumentsJson) {
-    details.push({ label: "INPUT", content: compactArgumentsJson(args), tone: "code" });
+    details.push({ label: "IN", content: compactArgumentsJson(args), tone: "code" });
   }
   if (toolResult) {
     const content = cleanedToolOutput(toolResult.content);
     if (content.trim()) {
-      details.push({ label: toolResult.isError ? "ERROR" : "OUTPUT", content, tone: toolResult.isError ? "error" : "code" });
+      details.push({ label: "OUT", content, tone: toolResult.isError ? "error" : "code" });
     } else if (toolName === "bash") {
-      details.push({ label: "OUTPUT", content: "(no output)", tone: "code" });
+      details.push({ label: "OUT", content: "(no output)", tone: "code" });
     }
   }
   return details;
 }
 
 function toolDetailLanguage(toolName: string, detail: ToolDetail, target: string): string {
-  if (detail.label === "INPUT") return "json";
-  if (detail.label === "COMMAND") return commandLanguage(detail.content);
-  if (detail.label === "ERROR") return looksLikeJson(detail.content) ? "json" : "ansi";
+  if (detail.label === "IN") return toolName === "bash" ? commandLanguage(detail.content) : "json";
+  if (detail.tone === "error") return looksLikeJson(detail.content) ? "json" : "ansi";
   if (toolName === "bash") return "ansi";
   if (toolName === "edit" || looksLikeDiff(detail.content)) return "diff";
   if (toolName === "read" || toolName === "write") return languageFromPath(target);
@@ -654,9 +760,9 @@ function toolDetailLanguage(toolName: string, detail: ToolDetail, target: string
 }
 
 function toolDetailKind(toolName: string, detail: ToolDetail): CodeBlockKind {
-  if (detail.label === "INPUT") return "json";
-  if (detail.label === "ERROR") return "ansi";
-  if (toolName === "bash" || detail.label === "COMMAND") return "ansi";
+  if (detail.label === "IN") return toolName === "bash" ? "ansi" : "json";
+  if (detail.tone === "error") return "ansi";
+  if (toolName === "bash") return "ansi";
   if (toolName === "edit" || looksLikeDiff(detail.content)) return "diff";
   if (looksLikeJson(detail.content)) return "json";
   return "code";
@@ -681,7 +787,7 @@ function compactArgumentsJson(args: Record<string, unknown>): string {
 
 function cleanedToolOutput(content: string): string {
   if (!content) return "";
-  const replacementCount = (content.match(/\uFFFD/g) ?? []).length;
+  const replacementCount = (content.match(/�/g) ?? []).length;
   const visibleCount = content.replace(/\s/g, "").length;
   if (replacementCount >= 4 && replacementCount / Math.max(visibleCount, 1) > 0.18) {
     const exit = content.match(/Command exited with code \d+/)?.[0];
@@ -698,10 +804,10 @@ function diffStats(args: Record<string, unknown>, content: string): string {
     if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
     if (line.startsWith("-") && !line.startsWith("---")) removals += 1;
   }
-  if (additions || removals) return `+${additions} -${removals}`;
+  if (additions || removals) return `+${additions} −${removals}`;
   const oldText = stringValue(args.oldText);
   const newText = stringValue(args.newText);
-  if (oldText || newText) return `+${lineCountOf(newText)} -${lineCountOf(oldText)}`;
+  if (oldText || newText) return `+${lineCountOf(newText)} −${lineCountOf(oldText)}`;
   return "";
 }
 
@@ -713,16 +819,6 @@ function parseArguments(json: string | undefined): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function parseByteCount(content: string): number | null {
-  const match = content.match(/wrote\s+(\d+)\s+bytes/i) ?? content.match(/(\d+)\s+bytes/i);
-  return match ? Number(match[1]) : null;
-}
-
-function parseExitCode(content: string): number | null {
-  const match = content.match(/(?:exit code|code)\s+(\d+)/i);
-  return match ? Number(match[1]) : null;
 }
 
 function lineCountOf(text: string): number {
@@ -740,17 +836,15 @@ function truncateMiddle(value: string, maxLength: number): string {
   return `${value.slice(0, keep)}...${value.slice(-keep)}`;
 }
 
-function TimelineToggle(props: { label: string; expanded: boolean; icon: ReactElement; onToggle(): void }) {
-  return (
-    <button type="button" className="timeline-label timeline-toggle" aria-expanded={props.expanded} onClick={props.onToggle}>
-      {props.icon}
-      <span>{props.label}</span>
-      <ChevronDownIcon />
-    </button>
-  );
+function thoughtSummary(text: string, live: boolean): string {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return credentialSafeText((live ? lines.at(-1) : lines[0]) ?? "");
 }
 
 function toolIcon(toolName: string): ReactElement {
+  if (toolName === "bash") return <TerminalIcon />;
+  if (toolName === "edit") return <EditIcon />;
+  if (toolName === "read" || toolName === "write") return <FileIcon />;
   if (toolName === "web_search" || toolName === "code_search" || toolName === "fetch_content" || toolName === "get_search_content") return <SearchIcon />;
   return <WrenchIcon />;
 }

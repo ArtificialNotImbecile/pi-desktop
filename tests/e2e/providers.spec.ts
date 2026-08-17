@@ -179,11 +179,12 @@ test.describe("Jasmine providers and models", () => {
     await page.getByRole("button", { name: "Send" }).click();
     const liveAssistant = page.locator(".assistant-block.live-message").last();
     await expect(liveAssistant).toBeVisible();
-    await expect(liveAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".run-header.live")).toContainText("deepseek-v4-flash");
     await expect(liveAssistant.locator(".message-actions")).toBeHidden();
     await expect(liveAssistant.locator(".message-actions")).toHaveCSS("pointer-events", "none");
-    await expect(liveAssistant.locator(".thinking-markdown")).toContainText("Need to inspect");
-    await expect(liveAssistant.locator(".tool-run-item").first()).toContainText("reading");
+    await expect(liveAssistant.locator(".thinking-item")).toContainText("Need to inspect");
+    await expect(liveAssistant.locator(".timeline-row-thought")).toHaveCount(0);
+    await expect(liveAssistant.locator(".tool-run-item").first()).toHaveClass(/running/);
 
     // Switch the composer model while the slow response is still streaming.
     // Asserting on the live row after waiting for the final chunk raced run
@@ -191,15 +192,15 @@ test.describe("Jasmine providers and models", () => {
     await page.locator(".model-pill").click();
     await page.locator(".model-provider-group", { hasText: "Moonshot Kimi" }).getByRole("button", { name: /kimi-k2\.6/ }).click();
     await expect(page.locator(".model-pill")).toContainText("kimi-k2.6");
-    await expect(liveAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".run-header.live")).toContainText("deepseek-v4-flash");
 
     await expect(page.locator(".assistant-block").last()).toContainText("Slow response complete.", { timeout: 10_000 });
-    await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".assistant-block").last().locator(".run-header-meta")).toContainText("deepseek-v4-flash");
 
     await page.locator(".rich-composer-editor").fill("provider switch history label");
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.locator(".assistant-block").last()).toContainText("Mock reply from Jasmine.");
-    await expect(page.locator(".assistant-block").first().locator(".message-run-line")).toContainText("deepseek-v4-flash");
-    await expect(page.locator(".assistant-block").last().locator(".message-run-line")).toContainText("kimi-k2.6");
+    await expect(page.locator(".assistant-block").first().locator(".run-header-meta")).toContainText("deepseek-v4-flash");
+    await expect(page.locator(".assistant-block").last().locator(".run-header-meta")).toContainText("kimi-k2.6");
   });
 });

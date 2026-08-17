@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -64,33 +64,33 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
-    const thinkingItem = latestAssistant.locator(".thinking-item").first();
-    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(latestAssistant.locator(".run-recap-details")).toBeHidden();
-    await expect(thinkingItem).toBeHidden();
-    await expect(thinkingItem).toContainText("Need to inspect");
+    // The answer survives the fold; the activity behind it does not show until
+    // the reader asks for it.
     await expect(latestAssistant.getByLabel("Assistant output")).toContainText("Mock reply from Jasmine.");
-    await recapToggle.click();
-    await expect(latestAssistant.locator(".run-recap-details")).toBeVisible();
+    const runHeader = latestAssistant.locator(".run-header-toggle");
+    await expect(runHeader).toContainText("Worked for");
+    await expect(runHeader).toContainText("deepseek-v4-flash");
+    await expect(latestAssistant.locator(".thinking-item")).toBeHidden();
+    await runHeader.click();
+
+    const thinkingItem = latestAssistant.locator(".thinking-item").first();
     await expect(thinkingItem).toBeVisible();
-    await expect(latestAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
+    await expect(thinkingItem).toContainText("Need to inspect");
     await expect(latestAssistant.locator(".message-timeline")).not.toContainText("Thinking level");
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "AGENTS.md" });
-    const readDetails = readTool.locator(".tool-run-details");
-    await expect(readTool).toContainText("read");
-    await expect(readTool).toContainText("read - 1 line");
+    const readDetails = readTool.locator(".tool-run-card");
+    await expect(readTool).toContainText("Read");
+    // Success says nothing: no status word, no line count on the row.
+    await expect(readTool).not.toContainText("read -");
+    await expect(readTool).not.toContainText("1 line");
 
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
-    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(thinkingItem.locator(".thinking-markdown")).toBeVisible();
-    await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(thinkingItem.locator(".thinking-markdown")).toBeHidden();
+    await expect(thinkingItem.locator(".timeline-row-thought")).toHaveCount(0);
     await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
     await expect(latestAssistant.locator(".thinking-item")).toContainText("Need to inspect");
-    await expect(latestAssistant.locator(".thinking-markdown .markdown-message")).toContainText("Need to inspect");
+    await expect(latestAssistant.locator(".timeline-row-thought .markdown-message")).toContainText("Need to inspect");
 
     const toolToggle = readTool.getByRole("button");
     await expect(toolToggle).toHaveAttribute("aria-expanded", "false");
@@ -98,8 +98,8 @@ test.describe("Jasmine message rendering", () => {
     await toolToggle.click();
     await expect(toolToggle).toHaveAttribute("aria-expanded", "true");
     await expect(readDetails).toBeVisible();
-    await expect(readTool).toContainText("INPUT");
-    await expect(readTool).toContainText("OUTPUT");
+    await expect(readTool).toContainText("IN");
+    await expect(readTool).toContainText("OUT");
     await expect(readTool).toContainText("Project instructions loaded.");
 
     const timeline = await page.evaluate(async () => {
@@ -126,11 +126,11 @@ test.describe("Jasmine message rendering", () => {
     const repairedAssistant = harness.page.locator(".assistant-block").last();
     await expect(repairedAssistant.getByLabel("Assistant output")).toContainText("Visible final answer.");
     await expect(repairedAssistant.getByLabel("Assistant output")).not.toContainText("Mock reply from Jasmine.");
-    await expect(repairedAssistant.locator(".run-recap-label")).toHaveText("Worked for 3m 49s");
-    await expect(repairedAssistant.getByRole("button", { name: "Show work details" })).toHaveAttribute("aria-expanded", "false");
-    await repairedAssistant.getByRole("button", { name: "Show work details" }).click();
-    await expect(repairedAssistant.locator(".message-run-line")).toContainText("deepseek-v4-flash");
-    await expect(repairedAssistant.locator(".message-run-line")).toContainText("high");
+    const repairedHeader = repairedAssistant.locator(".run-header-toggle");
+    await expect(repairedHeader).toContainText("Worked for 3m 49s");
+    await expect(repairedHeader).toContainText("deepseek-v4-flash");
+    await expect(repairedHeader).toContainText("high");
+    await repairedHeader.click();
     const preambleToggle = repairedAssistant.getByRole("button", { name: "Tool preamble", exact: true });
     await expect(preambleToggle).toHaveAttribute("aria-expanded", "false");
     await expect(repairedAssistant.getByRole("button", { name: "Thinking", exact: true })).toHaveCount(0);
@@ -184,18 +184,56 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: threadTitle }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    const recapToggle = latestAssistant.getByRole("button", { name: "Show work details" });
-    await expect(recapToggle).toHaveAttribute("aria-expanded", "false");
-    await recapToggle.click();
+    await latestAssistant.locator(".run-header-toggle").click();
     const readTool = latestAssistant.locator(".tool-run-item", { hasText: "document-analysis" }).first();
-    const bashTool = latestAssistant.locator(".tool-run-item", { hasText: "ls -R" }).first();
-    await expect(readTool).toContainText("read - 202 lines");
-    await expect(bashTool).toContainText("done - 15 lines");
-    await expect(readTool.locator(".tool-run-status")).not.toContainText("reading");
-    await expect(bashTool.locator(".tool-run-status")).not.toContainText("running");
-    await expect(latestAssistant.locator(".tool-run-status.running")).toHaveCount(0);
+    const bashTool = latestAssistant.locator(".tool-run-item[data-tool-name='bash']").first();
+    // Line counts and status words belong to the expanded output, not the row.
+    await expect(readTool).not.toContainText("202 lines");
+    await expect(bashTool).not.toContainText("15 lines");
+    // The command is what the row is about, and it carries no credential
+    // marker, so it reads in the summary rather than being withheld.
+    await expect(bashTool).toContainText("ls -R");
+    await expect(latestAssistant.locator(".tool-run-item.running")).toHaveCount(0);
+    await expect(latestAssistant.locator(".timeline-row-state-text")).toHaveCount(0);
+
+    // Real-layout regression: at the supported narrow window width with the
+    // right panel open, an overlong target ellipsizes inside the row instead of
+    // widening it. jsdom has no layout engine, so this can only live here.
+    await harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(840, 720));
+    await page.getByRole("button", { name: "Open Artifacts" }).click();
+    await expect(page.getByRole("complementary", { name: "Artifacts" })).toBeVisible();
+    const longTarget = `C:\\workspace\\${"deeply-nested-segment\\".repeat(12)}document-analysis\\SKILL.md`;
+    await readTool.locator(".timeline-row-summary").evaluate((node, text) => {
+      node.textContent = text;
+    }, longTarget);
+    const narrowGeometry = await readTool.locator(".timeline-row").evaluate((row) => {
+      const summary = row.querySelector<HTMLElement>(".timeline-row-summary");
+      const title = row.querySelector<HTMLElement>(".timeline-row-title");
+      const bounds = row.getBoundingClientRect();
+      if (!summary || !title) throw new Error("Narrow tool row geometry missing.");
+      return {
+        clientWidth: row.clientWidth,
+        scrollWidth: row.scrollWidth,
+        rowHeight: bounds.height,
+        right: bounds.right,
+        summaryRight: summary.getBoundingClientRect().right,
+        titleWidth: title.getBoundingClientRect().width,
+        summaryClientWidth: summary.clientWidth,
+        summaryScrollWidth: summary.scrollWidth
+      };
+    });
+    expect(narrowGeometry.summaryScrollWidth).toBeGreaterThan(narrowGeometry.summaryClientWidth);
+    expect(narrowGeometry.scrollWidth).toBeLessThanOrEqual(narrowGeometry.clientWidth + 1);
+    expect(narrowGeometry.summaryRight).toBeLessThanOrEqual(narrowGeometry.right + 1);
+    // The title never gives up space to the summary, and a collapsed row is
+    // exactly one line however long its target is.
+    expect(narrowGeometry.titleWidth).toBeGreaterThan(0);
+    expect(narrowGeometry.rowHeight).toBe(24);
+    await page.getByRole("button", { name: "Collapse panel" }).click();
+    await harness.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1200, 800));
+
     const toolToggle = readTool.getByRole("button");
-    const details = readTool.locator(".tool-run-details");
+    const details = readTool.locator(".timeline-row-body");
     const codeBlocks = readTool.locator(".shiki-code-block");
     const toolOutput = Array.from({ length: 202 }, (_entry, index) => `skill line ${index + 1}`).join("\n");
     await expect(toolToggle).toHaveAttribute("aria-expanded", "false");
@@ -229,9 +267,14 @@ test.describe("Jasmine message rendering", () => {
         __JASMINE_LAZY_TOOL_DETAILS_NODE__?: Element;
         __JASMINE_LAZY_TOOL_CODE_NODE__?: Element;
       };
-      return scope.__JASMINE_LAZY_TOOL_DETAILS_NODE__ === row?.querySelector(".tool-run-details")
+      return scope.__JASMINE_LAZY_TOOL_DETAILS_NODE__ === row?.querySelector(".timeline-row-body")
         && scope.__JASMINE_LAZY_TOOL_CODE_NODE__ === row?.querySelector(".shiki-code-block[data-language='markdown']");
     })).toBe(true);
+
+    const bashToggle = bashTool.getByRole("button");
+    await expect(bashTool.locator(".tool-run-card")).toHaveCount(0);
+    await bashToggle.click();
+    await expect(bashTool.locator(".tool-run-card")).toContainText("ls -R");
   });
 
   test("expanded thinking markdown stays in one left-aligned column", async () => {
@@ -242,10 +285,12 @@ test.describe("Jasmine message rendering", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const latestAssistant = await waitForStableAssistant(page, "Mock reply from Jasmine.");
-    await expandWorkDetails(latestAssistant);
+    await latestAssistant.locator(".run-header-toggle").click();
     const thinkingToggle = latestAssistant.getByRole("button", { name: "Thinking", exact: true });
+    await expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+    await thinkingToggle.click();
     await expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
-    const thinkingMarkdown = latestAssistant.locator(".thinking-markdown .markdown-message");
+    const thinkingMarkdown = latestAssistant.locator(".timeline-row-thought .markdown-message");
     await expect(thinkingMarkdown).toBeVisible();
     await expect(thinkingMarkdown).toContainText("fenced yaml blocks");
     await expect(thinkingMarkdown.locator("code", { hasText: "yaml" })).toBeVisible();
@@ -281,64 +326,108 @@ test.describe("Jasmine message rendering", () => {
     await page.locator(".rich-composer-editor").fill("show write timeline");
     await page.getByRole("button", { name: "Send" }).click();
     const writeMessage = page.locator(".assistant-block").last();
-    const writeTool = writeMessage.locator(".tool-run-item", { hasText: "src/example.ts" });
-    const writeDetails = writeTool.locator(".tool-run-details");
-    await expect(writeTool).toContainText("write");
-    await expect(writeTool).toContainText("wrote - 4 lines, 44 bytes");
-    await expect(writeDetails).toHaveCount(0);
-    await expect(writeTool.locator(".tool-run-main code")).toHaveCount(0);
     // Wait for streaming to finish before reading computed styles: the live
     // message re-renders on stream completion and can detach the measured row,
     // which makes getComputedStyle return empty values.
     await expect(page.locator(".assistant-block.live-message")).toHaveCount(0, { timeout: 10_000 });
-    await expandWorkDetails(writeMessage);
-    const compactTypography = await writeTool.locator(".tool-run-toggle").evaluate((row) => {
-      const target = row.querySelector(".tool-run-target");
-      const label = row.querySelector(".tool-run-main b");
-      const status = row.querySelector(".tool-run-status");
-      if (!(target instanceof HTMLElement) || !(label instanceof HTMLElement) || !(status instanceof HTMLElement)) throw new Error("Tool compact typography nodes missing.");
+    await writeMessage.locator(".run-header-toggle").click();
+    const writeTool = writeMessage.locator(".tool-run-item", { hasText: "src/example.ts" });
+    const writeDetails = writeTool.locator(".timeline-row-body");
+    await expect(writeTool).toContainText("Write");
+    // The row names the file it wrote and how much it wrote. The byte total is
+    // inspection detail and stays in the expanded output.
+    await expect(writeTool.locator(".timeline-row-suffix")).toHaveText("+4");
+    await expect(writeTool).not.toContainText("44 bytes");
+    await expect(writeTool).not.toContainText("wrote");
+    await expect(writeDetails).toHaveCount(0);
+
+    const rowTypography = await writeTool.locator(".timeline-row").evaluate((row) => {
+      const title = row.querySelector(".timeline-row-title");
+      const summary = row.querySelector(".timeline-row-summary");
+      if (!(title instanceof HTMLElement) || !(summary instanceof HTMLElement)) {
+        throw new Error("Tool row typography nodes missing.");
+      }
       return {
         rowFont: getComputedStyle(row).fontFamily,
-        targetFont: getComputedStyle(target).fontFamily,
-        targetBackground: getComputedStyle(target).backgroundColor,
-        targetHeight: target.getBoundingClientRect().height,
-        labelWeight: Number(getComputedStyle(label).fontWeight),
-        statusFontSize: getComputedStyle(status).fontSize
+        rowHeight: row.getBoundingClientRect().height,
+        titleSize: getComputedStyle(title).fontSize,
+        titleWeight: Number(getComputedStyle(title).fontWeight),
+        summarySize: getComputedStyle(summary).fontSize,
+        summaryBackground: getComputedStyle(summary).backgroundColor
       };
     });
-    expect(compactTypography.rowFont.toLowerCase()).toContain("inter");
-    expect(compactTypography.targetFont.toLowerCase()).toContain("inter");
-    expect(compactTypography.targetHeight).toBeLessThan(24);
-    expect(compactTypography.labelWeight).toBeGreaterThanOrEqual(600);
-    expect(compactTypography.statusFontSize).toBe("12px");
+    expect(rowTypography.rowFont.toLowerCase()).toContain("inter");
+    expect(rowTypography.rowHeight).toBe(24);
+    // One type size across the row: title and summary differ by colour, not by
+    // size or weight, and the target carries no pill background.
+    expect(rowTypography.titleSize).toBe("14px");
+    expect(rowTypography.summarySize).toBe("14px");
+    expect(rowTypography.titleWeight).toBeLessThan(600);
+    expect(rowTypography.summaryBackground).toBe("rgba(0, 0, 0, 0)");
+
+    // The single content axis: the run header, every activity row's leading
+    // icon, the answer, and the action icons all start at one left edge, and
+    // an expanded body indents from it by exactly the 22px title offset.
+    const axis = await writeMessage.evaluate((block) => {
+      const left = (selector: string) => {
+        const node = block.querySelector(selector);
+        if (!node) throw new Error(`Content axis node missing: ${selector}`);
+        return node.getBoundingClientRect().left;
+      };
+      return {
+        header: left(".run-header-toggle"),
+        rowLead: left(".tool-run-item .timeline-row-lead"),
+        thinkingLead: left(".thinking-item .timeline-row-lead"),
+        answer: left(".timeline-output p"),
+        actionIcon: left(".message-actions .icon"),
+        rowTitle: left(".tool-run-item .timeline-row-title")
+      };
+    });
+    for (const edge of [axis.header, axis.rowLead, axis.thinkingLead, axis.actionIcon]) {
+      expect(Math.abs(edge - axis.answer)).toBeLessThanOrEqual(2);
+    }
+    expect(Math.round(axis.rowTitle - axis.rowLead)).toBe(22);
+
     await writeTool.getByRole("button").click();
     await expect(writeDetails).toBeVisible();
     await expect(writeDetails).toContainText("Successfully wrote");
     await expect(writeDetails).toContainText("export function hello");
-    await expect(writeTool).toContainText("INPUT");
-    await expect(writeTool).toContainText("OUTPUT");
-    const toolDetailsLayout = await writeTool.locator(".tool-run-details").evaluate((element) => {
-      const rows = Array.from(element.querySelectorAll(":scope > div"));
-      return rows.map((row) => {
-        const label = row.querySelector("small");
-        const pre = row.querySelector("pre");
-        const labelRect = label?.getBoundingClientRect();
-        const preRect = pre?.getBoundingClientRect();
-        return {
-          labelLeft: Math.round(labelRect?.left ?? 0),
-          preLeft: Math.round(preRect?.left ?? 0),
-          preWidth: Math.round(preRect?.width ?? 0),
-          labelAlign: label ? getComputedStyle(label).textAlign : "",
-          preAlign: pre ? getComputedStyle(pre).textAlign : ""
-        };
-      });
+    // One card, two gutter-labelled slots. The gutter label is the only heading;
+    // the code block's own caption bar must not repeat it.
+    await expect(writeDetails.locator(".tool-run-card")).toHaveCount(1);
+    await expect(writeDetails.locator("small", { hasText: "IN" }).first()).toBeVisible();
+    await expect(writeDetails.locator("small", { hasText: "OUT" }).first()).toBeVisible();
+    await expect(writeDetails.locator(".code-block figcaption:visible")).toHaveCount(0);
+    const cardLayout = await writeTool.locator(".tool-run-card").evaluate((card) => {
+      const row = card.closest(".tool-run-item");
+      const titleLeft = row?.querySelector(".timeline-row-title")?.getBoundingClientRect().left ?? 0;
+      const slots = Array.from(card.querySelectorAll(".tool-run-slot"));
+      return {
+        cardLeft: card.getBoundingClientRect().left,
+        titleLeft,
+        dividers: card.querySelectorAll(".tool-run-divider").length,
+        slots: slots.map((slot) => {
+          const label = slot.querySelector("small");
+          const pre = slot.querySelector("pre");
+          return {
+            labelLeft: Math.round(label?.getBoundingClientRect().left ?? 0),
+            preLeft: Math.round(pre?.getBoundingClientRect().left ?? 0),
+            height: Math.round(slot.getBoundingClientRect().height)
+          };
+        })
+      };
     });
-    expect(toolDetailsLayout.length).toBeGreaterThanOrEqual(2);
-    for (const item of toolDetailsLayout) {
-      expect(Math.abs(item.preLeft - item.labelLeft)).toBeLessThanOrEqual(2);
-      expect(item.preWidth).toBeGreaterThan(520);
-      expect(item.labelAlign).toBe("left");
-      expect(item.preAlign).toBe("start");
+    expect(cardLayout.slots.length).toBe(2);
+    expect(cardLayout.dividers).toBe(1);
+    // The card's left edge lands under the first character of its own row's
+    // title — the 22px body indent, not some other inset.
+    expect(Math.abs(cardLayout.cardLeft - cardLayout.titleLeft)).toBeLessThanOrEqual(1);
+    for (const slot of cardLayout.slots) {
+      // Gutter layout: the payload sits in a second column beside its label,
+      // never under it, and each slot is capped so a long input cannot bury a
+      // short output.
+      expect(slot.preLeft).toBeGreaterThan(slot.labelLeft);
+      expect(slot.height).toBeLessThanOrEqual(150);
     }
   });
 
@@ -537,9 +626,12 @@ test.describe("Jasmine message rendering", () => {
       requestAnimationFrame(sample);
     });
     const textLengthBeforeBlockedFrame = await liveAssistant.evaluate((node) => node.textContent?.length ?? 0);
+    await page.evaluate(() => {
+      (window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ = [];
+    });
     // Model a long Markdown/Shiki frame while main-process stream updates keep
-    // arriving. The first painted frame afterwards must not catch up in one
-    // large jump merely because several animation frames were missed.
+    // arriving. Publication should converge to the newest cumulative snapshot
+    // on the next paint instead of replaying every missed prefix.
     await page.evaluate(() => {
       const blockedUntil = performance.now() + 180;
       let spin = 0;
@@ -551,11 +643,18 @@ test.describe("Jasmine message rendering", () => {
       const scroll = document.querySelector<HTMLElement>(".message-scroll");
       if (!scroll) return Number.POSITIVE_INFINITY;
       return Math.max(0, node.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom);
-    })).toBeLessThanOrEqual(96);
+    })).toBeLessThanOrEqual(17);
+    const blockedFrameTailEnvelope = await page.evaluate(() => Math.max(
+      0,
+      ...((window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ ?? [])
+    ));
+    // The first painted frame after the blocked interval must already pair the
+    // coalesced newest text with a matching tail position. Replaying 16px catch-
+    // up steps would expose a much larger offset in this rAF sample.
+    expect(blockedFrameTailEnvelope).toBeLessThanOrEqual(17);
     // A renderer-blocked interval has no painted frames, so the amount of text
     // queued by the independent main-process stream is scheduler/platform
-    // dependent. Keep the scroll samples (which cover the recovery frames), but
-    // begin the steady-state tail envelope after the follower has recovered.
+    // dependent. Begin the steady-state tail envelope after recovery.
     await page.evaluate(() => {
       (window as Window & { __JASMINE_STREAM_TAIL_OFFSETS__?: number[] }).__JASMINE_STREAM_TAIL_OFFSETS__ = [];
     });
@@ -617,8 +716,8 @@ test.describe("Jasmine message rendering", () => {
     expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight + 100);
     expect(streamingContinuity.sameMessageNode).toBe(true);
     expect(streamingContinuity.sameUserNode).toBe(true);
-    expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(96);
-    expect(streamingContinuity.maxPaintedFrameAdvance).toBeLessThanOrEqual(17);
+    expect(streamingContinuity.maxTailOffset).toBeLessThanOrEqual(17);
+    expect(streamingContinuity.maxPaintedFrameAdvance).toBeGreaterThan(0);
     expect(streamingContinuity.finalAnswerVisible).toBe(true);
     expect(streamingContinuity.settledRenders).toEqual({});
     expect(settledIds).toHaveLength(158);
@@ -628,9 +727,3 @@ test.describe("Jasmine message rendering", () => {
   });
 
 });
-
-async function expandWorkDetails(assistant: Locator): Promise<void> {
-  const toggle = assistant.getByRole("button", { name: "Show work details" });
-  if (await toggle.isVisible()) await toggle.click();
-  await expect(assistant.locator(".run-recap-details")).toBeVisible();
-}

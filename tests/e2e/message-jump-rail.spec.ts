@@ -153,12 +153,12 @@ test.describe("Jasmine message jump rail", () => {
     ))).toBe(0);
   });
 
-  test("remeasures cached positions once when an earlier settled recap moves later users", async () => {
+  test("remeasures cached positions once when an earlier thought disclosure moves later users", async () => {
     const { page } = harness;
     await installJumpRailMetrics(page);
 
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Jump rail historical layout" }));
-    seedLargeThreadMessages(harness.userDataDir, thread.id, 8);
+    seedLargeThreadMessages(harness.userDataDir, thread.id, 8, true);
     await page.reload();
     await page.waitForSelector(".app-shell");
     await page.getByRole("button", { name: "Jump rail historical layout" }).first().click();
@@ -167,17 +167,25 @@ test.describe("Jasmine message jump rail", () => {
 
     const firstAssistant = page.locator("[data-message-id='large-0001']");
     const laterUser = page.locator("[data-message-id='large-0006']");
-    const recapToggle = firstAssistant.locator(".run-recap-toggle");
-    await expect(recapToggle).toBeVisible();
-    await expect(recapToggle).toHaveAccessibleName("Show work details");
+    // Seeded history settles with each successful run folded behind its header,
+    // so open them first: this case measures how the rail remeasures when an
+    // earlier thought disclosure moves later messages, which needs those rows
+    // reachable.
+    const runHeaders = page.locator(".run-header-toggle[aria-expanded='false']");
+    await expect(runHeaders.first()).toBeVisible();
+    for (let remaining = await runHeaders.count(); remaining > 0; remaining -= 1) {
+      await runHeaders.first().click();
+    }
+    const thoughtToggle = firstAssistant.getByRole("button", { name: "Thinking" });
+    await expect(thoughtToggle).toBeVisible();
+    await expect(thoughtToggle).toHaveAttribute("aria-expanded", "false");
     await expect.poll(() => readMessageTargetRectReads(page)).toBeGreaterThanOrEqual(4);
     await page.waitForTimeout(100);
 
     const collapsedTop = await laterUser.evaluate((node) => (node as HTMLElement).offsetTop);
     await resetMessageTargetRectReads(page);
-    await recapToggle.click();
-    await expect(recapToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(recapToggle).toHaveAccessibleName("Hide work details");
+    await thoughtToggle.click();
+    await expect(thoughtToggle).toHaveAttribute("aria-expanded", "true");
     await expect.poll(() => laterUser.evaluate((node) => (node as HTMLElement).offsetTop)).toBeGreaterThan(collapsedTop + 10);
     await expect.poll(() => readMessageTargetRectReads(page)).toBe(4);
     await page.waitForTimeout(100);
@@ -187,9 +195,14 @@ test.describe("Jasmine message jump rail", () => {
     expect(expandedAlignment.monotonic).toBe(true);
     expect(expandedAlignment.maxDelta).toBeLessThanOrEqual(1);
 
-    await laterUser.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    // The rail marks whichever user message sits nearest the viewport centre.
+    // Centre a message that has content below it: scrolling to the last one
+    // clamps at the bottom, which leaves its neighbour nearest the centre and
+    // makes the assertion depend on the fixture's exact height rather than on
+    // the rail.
+    await page.locator("[data-message-id='large-0004']").evaluate((node) => node.scrollIntoView({ block: "center" }));
     await page.waitForTimeout(50);
-    await expect(page.locator("[data-message-jump-id='large-0006']")).toHaveClass(/current/);
+    await expect(page.locator("[data-message-jump-id='large-0004']")).toHaveClass(/current/);
 
     await page.locator(".message-jump-trigger").click();
     await page.locator(".message-jump-menu button[title^='large import message 5']").click();
@@ -204,7 +217,8 @@ test.describe("Jasmine message jump rail", () => {
 
     const expandedTop = await laterUser.evaluate((node) => (node as HTMLElement).offsetTop);
     await resetMessageTargetRectReads(page);
-    await firstAssistant.getByRole("button", { name: "Hide work details" }).click();
+    await thoughtToggle.click();
+    await expect(thoughtToggle).toHaveAttribute("aria-expanded", "false");
     await expect.poll(() => laterUser.evaluate((node) => (node as HTMLElement).offsetTop)).toBeLessThan(expandedTop - 10);
     await expect.poll(() => readMessageTargetRectReads(page)).toBe(4);
     await page.waitForTimeout(100);

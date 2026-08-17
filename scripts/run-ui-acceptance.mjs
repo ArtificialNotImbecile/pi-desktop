@@ -32,7 +32,7 @@ try {
   await page.waitForSelector(".app-shell");
   await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
-    win?.setSize(1180, 760);
+    win?.setSize(1280, 720);
     win?.focus();
   });
 
@@ -44,9 +44,11 @@ try {
 
   await acceptanceStep("ACCEPT-002", "Send first text chat", async () => {
     await startEmptyThread();
-    await fillComposer("Acceptance text chat");
+    await fillComposer("show timeline tool call");
     await page.getByRole("button", { name: "Send" }).click();
     await waitForText(".assistant-block", "Mock reply from Jasmine.");
+    await assertVisible(".thinking-item");
+    await assertVisible(".tool-run-item");
     await capture("02-text-chat");
   });
 
@@ -62,11 +64,7 @@ try {
     await waitForText(".assistant-block", "Mock reply from Jasmine.");
     await capture("04-kimi-chat");
     const latestAssistant = page.locator(".assistant-block").last();
-    const recapToggle = latestAssistant.locator(".run-recap-toggle");
-    if (await recapToggle.getAttribute("aria-expanded") === "false") {
-      await recapToggle.click();
-    }
-    await latestAssistant.locator(".message-run-line").filter({ hasText: "kimi-k2.6" }).waitFor({ state: "visible" });
+    await latestAssistant.locator(".run-header-meta").filter({ hasText: "kimi-k2.6" }).waitFor({ state: "visible" });
   });
 
   await acceptanceStep("ACCEPT-004", "Attach image and open lightbox", async () => {

@@ -124,6 +124,10 @@ export function TerminalIcon() {
   return <Svg><path d="m8 9 3 3-3 3M13 15h3" /><rect x="3" y="4" width="18" height="16" rx="2" /></Svg>;
 }
 
+export function FileIcon() {
+  return <Svg><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /></Svg>;
+}
+
 export function PlugIcon() {
   return <Svg><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M7 8h10v4a5 5 0 0 1-10 0Z" /></Svg>;
 }

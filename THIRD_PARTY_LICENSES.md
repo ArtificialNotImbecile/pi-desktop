@@ -17,3 +17,11 @@ Pinned provenance:
 
 The font has not been subset, renamed internally, converted, or otherwise
 modified. Jasmine's `Jasmine Inter` name is only a private CSS family alias.
+
+## DeepSeek Harness
+
+Jasmine's animation-frame stream publication and per-node thought/tool
+disclosure behavior are adapted from the open-source DeepSeek Harness chat UI.
+DeepSeek Harness is copyright DeepSeek and is distributed under the MIT
+License. The complete license text is preserved at
+`third_party/deepseek-harness/LICENSE.txt`.

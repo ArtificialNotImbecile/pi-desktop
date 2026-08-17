@@ -370,7 +370,7 @@ test.describe("Jasmine threads and projects", () => {
     const beforeClickScrollHeight = await scroll.evaluate((node) => node.scrollHeight);
     const beforeClickTextLength = await liveTextLength();
     // Dispatch on the scroll surface itself. A fixed viewport coordinate can
-    // land on a historical recap toggle as the live tail moves; that control is
+    // land on a historical timeline toggle as the live tail moves; that control is
     // intentionally a reading interaction and would correctly pause following.
     await pointer("pointerdown", { pointerId: 70, pointerType: "mouse", clientX: bodyX, clientY: bodyY, buttons: 1 });
     await pointer("pointerup", { pointerId: 70, pointerType: "mouse", clientX: bodyX, clientY: bodyY, buttons: 0 });

@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatMessage, ChatQueueMode, ChatQueueState, ChatStreamDelta, ChatStreamEvent, ChatStreamMessage, ChatStreamSettlement, ChatThread, ChatTimelineItem, MessageListRequest, PickedPath, PluginReference, ReasoningEffort, SkillReference } from "../../shared/ipc";
-import { applyStreamDelta, computeStreamDelta } from "../../shared/streamDelta";
+import type { ChatMessage, ChatQueueMode, ChatQueueState, ChatStreamEvent, ChatStreamMessage, ChatStreamSettlement, ChatThread, ChatTimelineItem, MessageListRequest, PickedPath, PluginReference, ReasoningEffort, SkillReference } from "../../shared/ipc";
+import { applyStreamDelta } from "../../shared/streamDelta";
 import { applyChatStreamSettlement, chatStreamPrefixRenderId, chatStreamRenderId } from "../../shared/streamSettlement";
 import type { RunState } from "../types";
 import { getBridge } from "../desktopApi";
 import { errorMessage } from "../utils/errors";
 
 const MESSAGE_PAGE_SIZE = 160;
+const COALESCED_TAIL_MAX_OFFSET_PX = 16;
 
 declare global {
   interface Window {
@@ -27,16 +28,10 @@ type MessageContentAnchor = {
 
 type VisibleStreamCommitPayload =
   | {
-      kind: "stream-reset";
+      kind: "stream-frame";
       requestId: string;
       threadId: string;
       liveMessages: ChatStreamMessage[];
-    }
-  | {
-      kind: "stream-delta";
-      requestId: string;
-      threadId: string;
-      delta: ChatStreamDelta;
     }
   | {
       kind: "settlement";
@@ -52,22 +47,6 @@ type VisibleStreamCommitPayload =
     };
 
 type VisibleStreamCommit = VisibleStreamCommitPayload & { generation: number };
-
-type StreamTransition =
-  | { kind: "stream-reset"; liveMessages: ChatStreamMessage[] }
-  | { kind: "stream-delta"; delta: ChatStreamDelta };
-
-export function compactVisibleStreamTransition(
-  previous: ChatStreamMessage[] | undefined,
-  current: ChatStreamMessage[]
-): StreamTransition | null {
-  if (!previous) return { kind: "stream-reset", liveMessages: current };
-  const delta = computeStreamDelta(previous, current);
-  if (delta === null) return { kind: "stream-reset", liveMessages: current };
-  return delta.messages.length > 0 || delta.messageCount !== previous.length
-    ? { kind: "stream-delta", delta }
-    : null;
-}
 
 export function useChatMessages(options: {
   activeThread: ChatThread | null;
@@ -113,15 +92,15 @@ export function useChatMessages(options: {
   const messageLoadEpochRef = useRef(0);
   const pendingInitialLoadsRef = useRef<Map<string, { epoch: number; promotedRequestId?: string; associatedRequestId?: string }>>(new Map());
   // Provider events remain authoritative immediately in liveStreamSnapshotsRef.
-  // Visible React commits are paced separately so a low-FPS renderer cannot
-  // batch several line-growth events into one large layout jump.
+  // Visible React publication follows the browser's paint clock. If provider
+  // events outrun requestAnimationFrame, only their newest cumulative snapshot
+  // is useful: replaying every intermediate prefix makes the UI visibly lag the
+  // model and is the source of the old start-stop reveal.
   const visibleStreamQueueRef = useRef<VisibleStreamCommit[]>([]);
   const visibleStreamFrameRef = useRef<number | null>(null);
   const visibleStreamCommitRef = useRef<VisibleStreamCommit | null>(null);
-  // One compact cursor describes the newest stream state represented by queued
-  // work; a second cursor is the state React has actually committed. Keeping
-  // deltas between them avoids retaining every cumulative full answer while a
-  // slow renderer catches up.
+  // The queued cursor is authoritative for hidden-window/load reconciliation;
+  // the visible cursor tracks the snapshot React has actually committed.
   const visibleStreamQueuedSnapshotsRef = useRef<Map<string, ChatStreamMessage[]>>(new Map());
   const visibleStreamSnapshotsRef = useRef<Map<string, ChatStreamMessage[]>>(new Map());
   const visibleStreamGenerationRef = useRef(0);
@@ -129,6 +108,9 @@ export function useChatMessages(options: {
   const activeThreadId = options.activeThread?.id ?? null;
   const runState = activeThreadId ? threadRunStates[activeThreadId] ?? "idle" : "idle";
   const runModelLabel = activeThreadId ? threadRunModels[activeThreadId] ?? null : null;
+  const runActivityKey = activeThreadId
+    ? `${activeThreadId}:${threadRequestIds[activeThreadId] ?? "idle"}`
+    : "no-thread";
   const error = activeThreadId ? threadErrors[activeThreadId] ?? null : null;
   // The shared EMPTY_QUEUE_STATE constant keeps this reference stable across
   // renders so memoized consumers (Composer) are not invalidated per stream tick.
@@ -219,6 +201,15 @@ export function useChatMessages(options: {
         restoreMessageAnchor(threadId, pendingMessageAnchor.anchor);
       }
     }
+    const committed = visibleStreamCommitRef.current;
+    // Coalescing deliberately skips stale cumulative prefixes. If an expensive
+    // Markdown/Shiki render lets the newest snapshot grow by several lines at
+    // once, the ordinary 16px follower cannot keep the tail visible. Correct a
+    // large gap in this pre-paint layout phase so the reader sees the newest
+    // content and its matching scroll position in the same painted frame.
+    if (threadId && scroll && committed?.kind === "stream-frame" && shouldAutoFollow(threadId)) {
+      snapCoalescedTailBeforePaint(scroll);
+    }
     // Anchor correction must precede both commit acknowledgement (which can
     // schedule the next visual batch) and the bounded tail follower.
     finishVisibleStreamCommit();
@@ -257,7 +248,7 @@ export function useChatMessages(options: {
         // canonical state now. Otherwise discard would resolve its waiter while
         // leaving the last live frame on screen when the window is restored.
         if (threadId && settled && settled.requestId === currentRequestId) {
-          applyTerminalSettlementNow(threadId, settled.requestId, settled.settlement);
+          applyTerminalSettlementNow(threadId, settled.settlement);
         }
         return;
       }
@@ -265,7 +256,7 @@ export function useChatMessages(options: {
       const requestId = threadId ? threadRequestIdsRef.current[threadId] : undefined;
       const liveMessages = requestId ? liveStreamSnapshotsRef.current.get(requestId) : undefined;
       if (threadId && requestId && liveMessages && !settledRequestIdsRef.current.has(requestId)) {
-        enqueueVisibleStreamCommit({ kind: "stream-reset", requestId, threadId, liveMessages });
+        enqueueVisibleStreamCommit({ kind: "stream-frame", requestId, threadId, liveMessages });
         visibleStreamQueuedSnapshotsRef.current.set(requestId, liveMessages);
       }
     };
@@ -965,28 +956,12 @@ export function useChatMessages(options: {
       visibleStreamQueuedSnapshotsRef.current.set(event.requestId, liveSource);
       return;
     }
-    const queuedBase = visibleStreamQueuedSnapshotsRef.current.get(event.requestId);
-    const transition = compactVisibleStreamTransition(queuedBase, liveSource);
-    if (transition?.kind === "stream-reset") {
-      enqueueVisibleStreamCommit({
-        kind: "stream-reset",
-        requestId: event.requestId,
-        threadId: event.threadId,
-        liveMessages: transition.liveMessages
-      });
-    } else if (transition?.kind === "stream-delta") {
-      // Periodic full snapshots are converted back into their compact
-      // transition from the last queued cursor. This keeps a low-FPS backlog
-      // proportional to new output, not every cumulative prefix.
-      enqueueVisibleStreamCommit({
-        kind: "stream-delta",
-        requestId: event.requestId,
-        threadId: event.threadId,
-        delta: transition.delta
-      });
-    }
-    // Even a no-op periodic snapshot advances the authoritative identity used
-    // to derive the next compact transition.
+    enqueueVisibleStreamCommit({
+      kind: "stream-frame",
+      requestId: event.requestId,
+      threadId: event.threadId,
+      liveMessages: liveSource
+    });
     visibleStreamQueuedSnapshotsRef.current.set(event.requestId, liveSource);
   }
 
@@ -1015,6 +990,14 @@ export function useChatMessages(options: {
       if (commit.kind === "settlement") resolveSettlementWaiter(commit.requestId);
       return;
     }
+    if (commit.kind === "stream-frame") {
+      // A running React commit cannot be replaced, but every not-yet-painted
+      // prefix for the same request can. Keep ordering for loads/settlement and
+      // publish the newest model state on the next available animation frame.
+      visibleStreamQueueRef.current = visibleStreamQueueRef.current.filter((queued) => (
+        queued.kind !== "stream-frame" || queued.requestId !== commit.requestId
+      ));
+    }
     visibleStreamQueueRef.current.push(commit);
     scheduleVisibleStreamCommit();
   }
@@ -1036,39 +1019,11 @@ export function useChatMessages(options: {
       scheduleVisibleStreamCommit();
       return;
     }
-    const scroll = messageScrollRef.current;
-    // Stream growth is back-pressured until the follower is close enough to
-    // absorb the next layout increment. Terminal and historical commits must
-    // never wait on a live-tail geometry that cannot improve on its own (for
-    // example a synthetic/direct settlement with no active scroll animation).
-    // At narrow widths a single compact delta can wrap into several new lines.
-    // Pause one frame sooner so that growth plus the next bounded 16px follower
-    // step stays inside the live-tail visibility envelope.
-    if ((next.kind === "stream-reset" || next.kind === "stream-delta")
-      && shouldAutoFollow(next.threadId)
-      && liveTailOffset(scroll) > 32) {
-      if (scroll) animateScrollToTail(scroll);
-      scheduleVisibleStreamCommit();
-      return;
-    }
-
     visibleStreamQueueRef.current.shift();
     visibleStreamCommitRef.current = next;
-    if (next.kind === "stream-reset") {
+    if (next.kind === "stream-frame") {
       visibleStreamSnapshotsRef.current.set(next.requestId, next.liveMessages);
       applyVisibleStreamMessages(next.requestId, next.threadId, next.liveMessages, next.generation);
-      return;
-    }
-    if (next.kind === "stream-delta") {
-      const base = visibleStreamSnapshotsRef.current.get(next.requestId);
-      if (!base) {
-        visibleStreamCommitRef.current = null;
-        scheduleVisibleStreamCommit();
-        return;
-      }
-      const liveMessages = applyStreamDelta(base, next.delta);
-      visibleStreamSnapshotsRef.current.set(next.requestId, liveMessages);
-      applyVisibleStreamMessages(next.requestId, next.threadId, liveMessages, next.generation);
       return;
     }
     if (next.kind === "loaded-messages") {
@@ -1095,10 +1050,9 @@ export function useChatMessages(options: {
         if (next.generation !== visibleStreamGenerationRef.current
           || activeThreadIdRef.current !== next.threadId) return current;
         // messagesForLoadedThread includes the newest authoritative live
-        // snapshot. It may be several compact visual deltas ahead of what has
-        // actually painted, so use the load only for its historical baseline
-        // and retain the live rows from the displayed cursor. Later queued
-        // deltas then continue exactly once from that cursor.
+        // snapshot. It may be ahead of what has actually painted, so use the
+        // load only for its historical baseline and retain the displayed live
+        // rows. The next animation-frame snapshot then converges to latest.
         const loadedBaseline = next.requestId
           ? next.messages.filter((message) => !isLiveMessageForRequest(message, next.requestId!))
           : next.messages;
@@ -1157,13 +1111,10 @@ export function useChatMessages(options: {
     const shouldStick = shouldAutoFollow(commit.threadId);
     const lockedScrollTop = shouldStick ? null : currentLockedScrollTop(commit.threadId);
     const readingAnchor = shouldStick ? null : captureVisibleTimelineAnchor();
-    const settlement = shouldStick
-      ? commit.settlement
-      : preserveSettlementRunDetails(commit.requestId, commit.settlement);
     if (readingAnchor) prepareTimelineAnchorRestore(commit.threadId, readingAnchor);
     setMessages((current) => commit.generation === visibleStreamGenerationRef.current
       && activeThreadIdRef.current === commit.threadId
-      ? applyChatStreamSettlement(current, settlement)
+      ? applyChatStreamSettlement(current, commit.settlement)
       : current);
     if (shouldStick) scrollSoon();
     else restoreScrollSoon(commit.threadId, lockedScrollTop, readingAnchor);
@@ -1237,13 +1188,6 @@ export function useChatMessages(options: {
     settlementWaitersRef.current.delete(requestId);
   }
 
-  function liveTailOffset(scroll: HTMLDivElement | null): number {
-    if (!scroll) return 0;
-    const liveAssistants = scroll.querySelectorAll<HTMLElement>(".assistant-block.live-message");
-    const tail = liveAssistants.item(liveAssistants.length - 1);
-    return tail ? Math.max(0, tail.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom) : 0;
-  }
-
   function jumpToTailSoon() {
     scheduleScrollAdjust(() => {
       const scroll = messageScrollRef.current;
@@ -1274,15 +1218,13 @@ export function useChatMessages(options: {
       // the request running forever; navigation will reconcile from the same
       // canonical settlement if this thread is offscreen.
       if (activeThreadIdRef.current === event.threadId) {
-        applyTerminalSettlementNow(event.threadId, event.requestId, event.settlement);
+        applyTerminalSettlementNow(event.threadId, event.settlement);
       }
       resolveSettlementWaiter(event.requestId);
       return;
     }
     latestSettlementsByThreadRef.current.set(event.threadId, {
       requestId: event.requestId,
-      // preserveRunDetails is a renderer-only, one-viewport accommodation. A
-      // later navigation/load should use the canonical collapsed settlement.
       settlement: event.settlement
     });
     enqueueVisibleStreamCommit({
@@ -1295,17 +1237,13 @@ export function useChatMessages(options: {
 
   function applyTerminalSettlementNow(
     threadId: string,
-    requestId: string,
     canonicalSettlement: ChatStreamSettlement
   ): void {
     const shouldStick = shouldAutoFollow(threadId);
     const lockedScrollTop = shouldStick ? null : currentLockedScrollTop(threadId);
     const readingAnchor = shouldStick ? null : captureVisibleTimelineAnchor();
-    const settlement = shouldStick
-      ? canonicalSettlement
-      : preserveSettlementRunDetails(requestId, canonicalSettlement);
     if (readingAnchor) prepareTimelineAnchorRestore(threadId, readingAnchor);
-    setMessages((current) => applyChatStreamSettlement(current, settlement));
+    setMessages((current) => applyChatStreamSettlement(current, canonicalSettlement));
     if (shouldStick) scrollSoon();
     else restoreScrollSoon(threadId, lockedScrollTop, readingAnchor);
   }
@@ -1482,6 +1420,25 @@ export function useChatMessages(options: {
     tailScrollAnimationRef.current = window.requestAnimationFrame(tick);
   }
 
+  function snapCoalescedTailBeforePaint(scroll: HTMLDivElement): void {
+    const liveAssistants = scroll.querySelectorAll<HTMLElement>(".assistant-block.live-message");
+    const activeTail = liveAssistants.item(liveAssistants.length - 1);
+    if (!activeTail) return;
+    const visualTailOffset = Math.max(
+      0,
+      activeTail.getBoundingClientRect().bottom - scroll.getBoundingClientRect().bottom
+    );
+    if (visualTailOffset <= COALESCED_TAIL_MAX_OFFSET_PX) return;
+    const target = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    // Keep one normal follower frame of motion visible. The remainder is a
+    // content-growth compensation applied before paint, so a cumulative frame
+    // can add several lines without making the watched tail jump down the page.
+    writeScrollTop(scroll, Math.min(
+      target,
+      scroll.scrollTop + visualTailOffset - COALESCED_TAIL_MAX_OFFSET_PX
+    ));
+  }
+
   function stopTailScrollAnimation() {
     if (tailScrollAnimationRef.current === null) return;
     window.cancelAnimationFrame(tailScrollAnimationRef.current);
@@ -1649,6 +1606,7 @@ export function useChatMessages(options: {
     loadOlderMessages,
     runState,
     runModelLabel,
+    runActivityKey,
     setRunState,
     error,
     setError,
@@ -1680,17 +1638,6 @@ function mergeMessages(olderMessages: ChatMessage[], currentMessages: ChatMessag
     merged.push(message);
   }
   return merged;
-}
-
-function preserveSettlementRunDetails(requestId: string, settlement: ChatStreamSettlement): ChatStreamSettlement {
-  const renderPrefix = `stream-${requestId}-`;
-  let changed = false;
-  const messages = settlement.messages.map((message) => {
-    if (message.role !== "assistant" || !message.renderId?.startsWith(renderPrefix)) return message;
-    changed = true;
-    return { ...message, preserveRunDetails: true };
-  });
-  return changed ? { ...settlement, messages } : settlement;
 }
 
 function messagesForRetry(current: ChatMessage[], messageId?: string): ChatMessage[] {
@@ -1827,10 +1774,8 @@ function reconcileRenderedMessages(currentMessages: ChatMessage[], persistedMess
       ?? (message.renderId ? currentByRenderId.get(message.renderId) : undefined);
     if (!current) return message;
     const next = current.renderId && !message.renderId
-      ? { ...message, renderId: current.renderId, preserveRunDetails: current.preserveRunDetails }
-      : current.preserveRunDetails && !message.preserveRunDetails
-        ? { ...message, preserveRunDetails: true }
-        : message;
+      ? { ...message, renderId: current.renderId }
+      : message;
     return sameRenderedMessage(current, next) ? current : next;
   });
 }
@@ -1890,7 +1835,6 @@ function sameRenderedMessage(previous: ChatMessage, next: ChatMessage): boolean 
     && previous.elapsedMs === next.elapsedMs
     && previous.modelId === next.modelId
     && previous.status === next.status
-    && previous.preserveRunDetails === next.preserveRunDetails
     && sameAttachments(previous.attachments ?? [], next.attachments ?? [])
     && sameTimeline(previous.timeline ?? [], next.timeline ?? []);
 }

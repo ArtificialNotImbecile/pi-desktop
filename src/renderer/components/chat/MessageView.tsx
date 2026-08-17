@@ -1,11 +1,13 @@
 import { createContext, memo, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatMessage, ChatTimelineItem } from "../../../shared/ipc";
-import { BrainIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
-import { MessageTimeline } from "./MessageTimeline";
+import { BrainIcon, ChevronDownIcon, CopyIcon, EditIcon, MoreIcon, PlugIcon, RefreshIcon, SearchIcon, SkillIcon } from "../icons/Icons";
+import { hasOpenedRowInScopes, MessageTimeline } from "./MessageTimeline";
+import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 import { useI18n } from "../../i18n";
-import { MenuItem, MenuSurface } from "../ui";
+import { Button, MenuItem, MenuSurface } from "../ui";
 import { ImageLightbox } from "./ImageLightbox";
-import type { RunRecapStatus } from "./RunRecap";
+import { LiveRunHeader, RunProvenanceLine, SettledRunHeader, useRunActivity } from "./RunHeader";
+import { TRIVIAL_RUN_MS, type RunStatus } from "./runPresentation";
 
 declare global {
   interface Window {
@@ -16,6 +18,7 @@ declare global {
 }
 type MessageViewProps = {
   message: ChatMessage;
+  activeRunOwner?: boolean;
   onCopy: (message: ChatMessage) => void;
   onCopyCode: (code: string) => void;
   onRetry: (message: ChatMessage) => void;
@@ -41,12 +44,12 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
   recordHarnessRender(props.message.id);
   const { t } = useI18n();
   const [previewImage, setPreviewImage] = useState<NonNullable<ChatMessage["attachments"]>[number] | null>(null);
-  const isLive = props.message.id.startsWith("stream-");
+  const isStreamMessage = props.message.id.startsWith("stream-");
 
   if (props.message.role === "user") {
     return (
       <>
-        <div className={`user-message-wrap ${isLive ? "live-message" : ""}`} data-message-id={props.message.id}>
+        <div className={`user-message-wrap ${isStreamMessage ? "live-message" : ""}`} data-message-id={props.message.id}>
           <div className="user-bubble">
             <AttachmentPreviewGrid attachments={props.message.attachments ?? []} onPreview={setPreviewImage} />
             {props.message.skillsUsed && props.message.skillsUsed.length > 0 && (
@@ -80,6 +83,13 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     );
   }
 
+  // A cumulative queue/steer snapshot contains completed assistant prefixes as
+  // well as the trailing active assistant. Stream ids identify reconciliation
+  // membership, not liveness; MessageList names the one turn that owns the run.
+  // Direct component tests retain the historical single-message default.
+  const isLive = isStreamMessage && (props.activeRunOwner ?? true);
+  const suppressRunHeader = isStreamMessage && !isLive;
+
   const modelLabel = props.message.modelId ?? null;
   const timeline = normalizeTimeline(props.message);
   const runMeta = runMetaFromTimeline(timeline, modelLabel);
@@ -87,15 +97,7 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
   const runStatus = runStatusFromMessage(props.message, visibleTimeline);
   const presentation = isLive ? null : partitionSettledTimeline(visibleTimeline);
   const finalText = presentation?.finalText || (isLive ? "" : fallbackFinalText(props.message, runStatus));
-  const detailsTimeline = presentation?.details.filter((item) => !isRunMetaSystemItem(item)) ?? [];
-  const hasProvenance = hasRunProvenance(props.message);
-  const hasRecap = !isLive && (detailsTimeline.length > 0
-    || Boolean(runMeta.model)
-    || Boolean(runMeta.reasoningEffort)
-    || hasProvenance
-    || props.message.elapsedMs !== undefined
-    || runStatus !== "success");
-  const displayedFinalText = finalText || (!hasRecap && !isLive ? props.message.content.trim() : "");
+  const displayedFinalText = finalText || (!isLive && visibleTimeline.length === 0 ? props.message.content.trim() : "");
   const fallbackFinalItem = !isLive && presentation?.finalItems.length === 0 && displayedFinalText
     ? {
         id: `${props.message.renderId ?? props.message.id}-fallback-output`,
@@ -107,33 +109,54 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
     ? { ...props.message, content: displayedFinalText }
     : props.message;
 
+  // Only the settled header reads this. A live block re-renders on every stream
+  // chunk, so counting activity rows there walks the timeline once per chunk to
+  // produce a number nothing displays.
+  let activityItemCount = 0;
+  if (!isLive) {
+    const finalItemIds = new Set(presentation?.finalItems.map((item) => item.id) ?? []);
+    if (fallbackFinalItem) finalItemIds.add(fallbackFinalItem.id);
+    activityItemCount = visibleTimeline.filter((item) => !finalItemIds.has(item.id)).length;
+  }
+
   return (
     <article
       className={`assistant-block ${isLive ? "live-message" : ""} ${props.message.status === "error" ? "error-message" : ""}`}
       data-message-id={props.message.id}
       data-run-id={props.message.runId}
     >
-      {isLive && <RunMetaLine key="live-run-meta" runMeta={runMeta} responseModelLabel={t("message.responseModel")} />}
-      <MessageTimeline
-        key="timeline"
-        cacheScope={`${props.message.threadId}:${props.message.renderId ?? props.message.id}`}
-        items={visibleTimeline}
-        onCopyCode={props.onCopyCode}
+      <AssistantRunHeader
         live={isLive}
-        modelId={runMeta.model}
-        settled={isLive ? undefined : {
-          finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
-          fallbackFinalItem,
-          recap: hasRecap ? {
-            status: runStatus,
-            elapsedMs: props.message.elapsedMs,
-            defaultExpanded: Boolean(props.message.preserveRunDetails) || runStatus !== "success" || !displayedFinalText,
-            header: <RunMetaLine runMeta={runMeta} responseModelLabel={t("message.responseModel")} />,
-            footer: hasProvenance ? <RunProvenance message={props.message} /> : undefined
-          } : undefined
-        }}
-      />
-      {isLive && <RunProvenance key="live-provenance" message={props.message} />}
+        suppressed={suppressRunHeader}
+        status={runStatus}
+        elapsedMs={props.message.elapsedMs}
+        runMeta={runMeta}
+        activityItemCount={activityItemCount}
+        collapseScope={`${props.message.threadId}:${props.message.id}`}
+        collapseAliasScope={props.message.renderId && props.message.renderId !== props.message.id
+          ? `${props.message.threadId}:${props.message.renderId}`
+          : undefined}
+      >
+        {(collapsed) => (
+          <MessageTimeline
+            key="timeline"
+            cacheScope={`${props.message.threadId}:${props.message.id}`}
+            cacheAliasScopes={props.message.renderId && props.message.renderId !== props.message.id
+              ? [`${props.message.threadId}:${props.message.renderId}`]
+              : undefined}
+            items={visibleTimeline}
+            onCopyCode={props.onCopyCode}
+            live={isLive}
+            modelId={runMeta.model}
+            collapsed={collapsed}
+            settled={isLive ? undefined : {
+              finalItemIds: presentation?.finalItems.map((item) => item.id) ?? [],
+              fallbackFinalItem
+            }}
+          />
+        )}
+      </AssistantRunHeader>
+      <RunProvenance key="provenance" message={props.message} />
       <AssistantMessageActions
         message={props.message}
         actionMessage={actionMessage}
@@ -241,6 +264,7 @@ function AssistantMessageActions(props: {
 
 function areMessageViewPropsEqual(previous: MessageViewProps, next: MessageViewProps): boolean {
   return previous.message === next.message
+    && previous.activeRunOwner === next.activeRunOwner
     && previous.onCopy === next.onCopy
     && previous.onCopyCode === next.onCopyCode
     && previous.onRetry === next.onRetry
@@ -291,28 +315,129 @@ function isHiddenExtensionStateItem(item: ChatTimelineItem): boolean {
   return item.kind === "system" && Boolean(item.customType);
 }
 
-function RunMetaLine(props: {
+// A reader who opens a settled run expects it open again after paging or
+// navigating away, the same way individual rows remember their disclosure.
+const runExpansionCache = new Map<string, boolean>();
+const RUN_EXPANSION_CACHE_LIMIT = 500;
+
+function rememberRunExpansion(scope: string, expanded: boolean) {
+  if (runExpansionCache.size >= RUN_EXPANSION_CACHE_LIMIT && !runExpansionCache.has(scope)) {
+    runExpansionCache.clear();
+  }
+  runExpansionCache.set(scope, expanded);
+}
+
+/**
+ * Renders the turn's run header above its timeline and tells the timeline
+ * whether to fold. A successful run collapses by default once it has produced
+ * activity; a stopped or failed run stays open, because the reason it ended is
+ * the thing worth reading. A turn with no activity that finished immediately
+ * gets no header at all.
+ */
+function AssistantRunHeader(props: {
+  live: boolean;
+  suppressed: boolean;
+  status: RunStatus;
+  elapsedMs?: number;
   runMeta: { model: string | null; reasoningEffort: string | null };
-  responseModelLabel: string;
+  activityItemCount: number;
+  collapseScope: string;
+  collapseAliasScope?: string;
+  children(collapsed: boolean): ReactNode;
 }) {
-  if (!props.runMeta.model) return null;
+  const runActivity = useRunActivity();
+  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
+
+  // Everything below this point describes a settled run. Nothing here may be
+  // computed above the return: a live block re-renders on every stream chunk,
+  // and hasOpenedRowInScopes walks the whole expansion cache, so hoisting it
+  // charges each chunk for a scan the live header never reads.
+  if (props.live) {
+    return (
+      <>
+        {runActivity && (
+          <LiveRunHeader
+            runKey={runActivity.runKey}
+            stopping={runActivity.stopping}
+            model={runActivity.model}
+          />
+        )}
+        {props.children(false)}
+      </>
+    );
+  }
+
+  // Completed assistants carried in a cumulative live snapshot belong to the
+  // same still-running request, but not to its active tail. Their answer should
+  // read normally without acquiring either a duplicate live header or a fake
+  // settled header before the request itself has settled.
+  if (props.suppressed) return <>{props.children(false)}</>;
+
+  const collapsible = props.status === "success" && props.activityItemCount > 0;
+  const remembered = runExpansionCache.get(props.collapseScope)
+    ?? (props.collapseAliasScope ? runExpansionCache.get(props.collapseAliasScope) : undefined);
+  // A run that settles while the reader has one of its rows open must not fold
+  // that row away underneath them. The turn stays open and the header remains
+  // the control for closing it deliberately.
+  const readerEngaged = hasOpenedRowInScopes([props.collapseScope, props.collapseAliasScope]);
+  const expanded = expandedOverride ?? remembered ?? (readerEngaged || !collapsible);
+  const toggle = () => {
+    rememberRunExpansion(props.collapseScope, !expanded);
+    setExpandedOverride(!expanded);
+  };
+
+  const trivialRun = props.status === "success"
+    && props.activityItemCount === 0
+    && (props.elapsedMs ?? 0) < TRIVIAL_RUN_MS;
+  if (trivialRun) {
+    return (
+      <>
+        <RunProvenanceLine model={props.runMeta.model} reasoningEffort={props.runMeta.reasoningEffort} />
+        {props.children(false)}
+      </>
+    );
+  }
+
   return (
-    <div className="message-run-line" aria-label={props.responseModelLabel}>
-      <span>{props.runMeta.model}</span>
-      {props.runMeta.reasoningEffort && <small>{props.runMeta.reasoningEffort}</small>}
-    </div>
+    <>
+      <SettledRunHeader
+        status={props.status}
+        elapsedMs={props.elapsedMs}
+        model={props.runMeta.model}
+        reasoningEffort={props.runMeta.reasoningEffort}
+        expandable={collapsible}
+        expanded={expanded}
+        onToggle={toggle}
+      />
+      {props.children(collapsible && !expanded)}
+    </>
   );
 }
 
 function RunProvenance(props: { message: ChatMessage }) {
   const { t } = useI18n();
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
   return (
     <>
       {props.message.memoryUsed && props.message.memoryUsed.length > 0 && (
-        <div className="memory-used-line" aria-label={t("message.memoryUsed")}>
-          <BrainIcon />
-          <span>{t("message.usedMemory")}</span>
-          <small>{props.message.memoryUsed.map((memory) => memory.content).join(" · ")}</small>
+        <div className={`memory-used-provenance ${memoryExpanded ? "expanded" : ""}`}>
+          <Button
+            className="memory-used-line"
+            size="sm"
+            variant="quiet"
+            leftIcon={<BrainIcon />}
+            rightIcon={<ChevronDownIcon />}
+            aria-label={t("message.memoryUsed")}
+            aria-expanded={memoryExpanded}
+            onClick={() => setMemoryExpanded((expanded) => !expanded)}
+          >
+            {t("message.usedMemory")}
+          </Button>
+          {memoryExpanded && (
+            <div className="memory-used-detail">
+              {props.message.memoryUsed.map((memory) => <p key={memory.id}>{memory.content}</p>)}
+            </div>
+          )}
         </div>
       )}
       {props.message.skillsUsed && props.message.skillsUsed.length > 0 && (
@@ -333,20 +458,23 @@ function RunProvenance(props: { message: ChatMessage }) {
         <div className="web-search-used-line" aria-label={t("message.webSearchUsed")}>
           <SearchIcon />
           <span>{t("message.usedWebSearch")}</span>
-          <small>{props.message.webSearchUsed.map((result) => `${result.title} - ${result.url}`).join(" / ")}</small>
+          <small>{props.message.webSearchUsed.map(safeProvenanceLabel).filter(Boolean).join(" / ")}</small>
         </div>
       )}
     </>
   );
 }
 
-function hasRunProvenance(message: ChatMessage): boolean {
-  return Boolean(
-    message.memoryUsed?.length
-    || message.skillsUsed?.length
-    || message.pluginsUsed?.length
-    || message.webSearchUsed?.length
-  );
+function safeProvenanceLabel(result: NonNullable<ChatMessage["webSearchUsed"]>[number]): string {
+  const url = sanitizedHttpUrl(result.url);
+  const rawTitle = result.title.trim();
+  const title = rawTitle === result.url.trim()
+    ? url
+    : /^https?:\/\//i.test(rawTitle)
+      ? sanitizedHttpUrl(rawTitle)
+      : credentialSafeText(rawTitle);
+  if (title && url && title !== url) return `${title} - ${url}`;
+  return title || url;
 }
 
 function partitionSettledTimeline(items: ChatTimelineItem[]): {
@@ -355,7 +483,11 @@ function partitionSettledTimeline(items: ChatTimelineItem[]): {
   finalText: string;
 } {
   let suffixEnd = items.length - 1;
-  while (suffixEnd >= 0 && isTerminalStatusItem(items[suffixEnd])) suffixEnd -= 1;
+  // Pi can append displayed custom messages, compaction records, branch
+  // summaries, or terminal status after the actual assistant answer. They are
+  // run detail, not a reason to stop recognizing the preceding assistant-text
+  // suffix as the final answer that must remain visible while details fold.
+  while (suffixEnd >= 0 && items[suffixEnd].kind === "system") suffixEnd -= 1;
 
   let suffixStart = suffixEnd;
   while (suffixStart >= 0) {
@@ -380,13 +512,13 @@ function isTerminalStatusItem(item: ChatTimelineItem): boolean {
   return item.kind === "system" && item.title.trim().toLowerCase() === "stopped";
 }
 
-function runStatusFromMessage(message: ChatMessage, timeline: ChatTimelineItem[]): RunRecapStatus {
+function runStatusFromMessage(message: ChatMessage, timeline: ChatTimelineItem[]): RunStatus {
   if (message.status === "error") return "error";
   if (timeline.some(isTerminalStatusItem)) return "stopped";
   return "success";
 }
 
-function fallbackFinalText(message: ChatMessage, status: RunRecapStatus): string {
+function fallbackFinalText(message: ChatMessage, status: RunStatus): string {
   if (status === "success") return "";
   return message.content.trim();
 }

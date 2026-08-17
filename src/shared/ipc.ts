@@ -63,10 +63,6 @@ export type ChatMessage = {
   // the same message is replaced by its database-backed representation. It is
   // intentionally not persisted; ordinary message lists fall back to `id`.
   renderId?: string;
-  // Renderer-only presentation hint. When a reader has explicitly paused tail
-  // following inside live work, settlement keeps that recap open so the text
-  // under their eyes does not disappear. Ordinary database reads omit it.
-  preserveRunDetails?: boolean;
   threadId: string;
   runId?: string;
   role: ChatRole;
@@ -117,7 +113,7 @@ export type ChatStreamMessage = {
 };
 
 // Incremental streaming update. Instead of re-sending the full growing conversation
-// on every ~45ms tick, the main process sends only what changed since the last event
+// on every ~16ms tick, the main process sends only what changed since the last event
 // for this request. The renderer reconstructs the full live-message array from its
 // last snapshot. A full snapshot (via `liveMessages`) is sent as the first event of
 // each request and periodically so any divergence self-heals; the run also ends with
