@@ -255,17 +255,37 @@ export function registerChatIpc(context: IpcContext): void {
         working
       });
 
-      const persisted = persistRuntimeGeneratedMessages(db, {
-        threadId: request.threadId,
-        runId: trace.id,
-        reply,
-        fallbackTimeline: reply.timeline,
-        memoryUsed: turn.memoryUsed,
-        skillsUsed: turn.skillsUsed,
-        pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: reply.webSearchUsed,
-        reasoningEffort: request.reasoningEffort
-      });
+      const persisted = shouldPersistRuntimeReply(reply)
+        ? persistRuntimeGeneratedMessages(db, {
+            threadId: request.threadId,
+            runId: trace.id,
+            reply,
+            fallbackTimeline: reply.timeline,
+            memoryUsed: turn.memoryUsed,
+            skillsUsed: turn.skillsUsed,
+            pluginsUsed: inlinePluginsUsed,
+            webSearchUsed: reply.webSearchUsed,
+            reasoningEffort: request.reasoningEffort
+          })
+        : null;
+      if (reply.providerError) {
+        finishTraceProviderFailure(db, {
+          threadId: request.threadId,
+          traceId: trace.id,
+          startedAt,
+          reply,
+          fileChangesPersisted: Boolean(persisted)
+        });
+        settleChatStream({
+          sender: _event.sender,
+          requestId,
+          threadId: request.threadId,
+          status: "done",
+          settlement: createChatStreamSettlement(requestId, settlementAnchorId, [userMessage], persisted?.messages ?? [], true)
+        });
+        throw new Error(reply.providerError);
+      }
+      if (!persisted) throw new Error("Provider completed without a persistable assistant response.");
       const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
       settleChatStream({
@@ -390,20 +410,42 @@ export function registerChatIpc(context: IpcContext): void {
 
       // Delete the superseded turn and persist its replacement atomically so an
       // interrupted retry cannot drop messages without writing the new ones.
-      const persisted = db.runInTransaction(() => {
-        db.deleteMessagesByIds(request.threadId, retryPlan.deleteMessageIds);
-        return persistRuntimeGeneratedMessages(db, {
+      const persisted = shouldPersistRuntimeReply(reply)
+        ? db.runInTransaction(() => {
+            db.deleteMessagesByIds(request.threadId, retryPlan.deleteMessageIds);
+            return persistRuntimeGeneratedMessages(db, {
+              threadId: request.threadId,
+              runId: trace.id,
+              reply,
+              fallbackTimeline: reply.timeline,
+              memoryUsed: turn.memoryUsed,
+              skillsUsed: turn.skillsUsed,
+              pluginsUsed: lastUserMessage.pluginsUsed ?? [],
+              webSearchUsed: reply.webSearchUsed,
+              reasoningEffort: request.reasoningEffort
+            });
+          })
+        : null;
+      if (reply.providerError) {
+        finishTraceProviderFailure(db, {
           threadId: request.threadId,
-          runId: trace.id,
+          traceId: trace.id,
+          startedAt,
           reply,
-          fallbackTimeline: reply.timeline,
-          memoryUsed: turn.memoryUsed,
-          skillsUsed: turn.skillsUsed,
-          pluginsUsed: lastUserMessage.pluginsUsed ?? [],
-          webSearchUsed: reply.webSearchUsed,
-          reasoningEffort: request.reasoningEffort
+          fileChangesPersisted: Boolean(persisted)
         });
-      });
+        if (persisted) {
+          settleChatStream({
+            sender: _event.sender,
+            requestId,
+            threadId: request.threadId,
+            status: "done",
+            settlement: createChatStreamSettlement(requestId, settlementAnchorId, [], persisted.messages, false, settlementReplaceFromId)
+          });
+        }
+        throw new Error(reply.providerError);
+      }
+      if (!persisted) throw new Error("Provider completed without a persistable assistant response.");
       const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
       settleChatStream({
@@ -559,17 +601,37 @@ export function registerChatIpc(context: IpcContext): void {
         working
       });
 
-      const persisted = persistRuntimeGeneratedMessages(db, {
-        threadId: request.threadId,
-        runId: trace.id,
-        reply,
-        fallbackTimeline: reply.timeline,
-        memoryUsed: turn.memoryUsed,
-        skillsUsed: turn.skillsUsed,
-        pluginsUsed: inlinePluginsUsed,
-        webSearchUsed: reply.webSearchUsed,
-        reasoningEffort: request.reasoningEffort
-      });
+      const persisted = shouldPersistRuntimeReply(reply)
+        ? persistRuntimeGeneratedMessages(db, {
+            threadId: request.threadId,
+            runId: trace.id,
+            reply,
+            fallbackTimeline: reply.timeline,
+            memoryUsed: turn.memoryUsed,
+            skillsUsed: turn.skillsUsed,
+            pluginsUsed: inlinePluginsUsed,
+            webSearchUsed: reply.webSearchUsed,
+            reasoningEffort: request.reasoningEffort
+          })
+        : null;
+      if (reply.providerError) {
+        finishTraceProviderFailure(db, {
+          threadId: request.threadId,
+          traceId: trace.id,
+          startedAt,
+          reply,
+          fileChangesPersisted: Boolean(persisted)
+        });
+        settleChatStream({
+          sender: _event.sender,
+          requestId,
+          threadId: request.threadId,
+          status: "done",
+          settlement: createChatStreamSettlement(requestId, settlementAnchorId, [userMessage], persisted?.messages ?? [], false, settlementReplaceFromId)
+        });
+        throw new Error(reply.providerError);
+      }
+      if (!persisted) throw new Error("Provider completed without a persistable assistant response.");
       const assistantMessage = persisted.assistantMessage;
       finishTraceSuccess(db, trace.id, assistantMessage, reply);
       settleChatStream({
@@ -836,6 +898,11 @@ type PersistedRuntimeMessages = {
   assistantMessage: ChatMessage;
   messages: ChatMessage[];
 };
+
+function shouldPersistRuntimeReply(reply: AssistantReply): boolean {
+  if (!reply.providerError) return true;
+  return Boolean(reply.generatedMessages?.some((message) => message.role === "assistant"));
+}
 
 function persistRuntimeGeneratedMessages(
   db: JasmineDatabase,
@@ -1203,6 +1270,31 @@ function finishTraceSuccess(db: JasmineDatabase, traceId: string, assistantMessa
     outputSummary: summarizeOutput(assistantMessage.content),
     elapsedMs: reply.elapsedMs
   });
+}
+
+function finishTraceProviderFailure(
+  db: JasmineDatabase,
+  input: {
+    threadId: string;
+    traceId: string;
+    startedAt: number;
+    reply: AssistantReply;
+    fileChangesPersisted: boolean;
+  }
+): void {
+  db.finishToolRun({
+    id: input.traceId,
+    status: "error",
+    error: nonSecretError(new Error(input.reply.providerError || "Provider request failed.")),
+    elapsedMs: Date.now() - input.startedAt
+  });
+  if (!input.fileChangesPersisted) {
+    persistFailedRunFileChanges(db, {
+      threadId: input.threadId,
+      runId: input.traceId,
+      captures: input.reply.fileChangeCaptures ?? []
+    });
+  }
 }
 
 // First user message in a thread: set an immediate fallback title, then

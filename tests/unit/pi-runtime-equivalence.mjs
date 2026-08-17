@@ -822,6 +822,17 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (latestUserRequestText.includes("queued provider later failure regression")) {
+    response.writeHead(401, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      type: "error",
+      error: {
+        type: "ProviderError",
+        message: "Queued follow-up authentication failure."
+      }
+    }));
+    return;
+  }
   if (requestText.includes("provider base url failure regression")) {
     response.writeHead(404, { "content-type": "text/html; charset=utf-8" });
     response.end("<!DOCTYPE html><html><head><title>Not Found</title></head><body>API route not found</body></html>");
@@ -2012,8 +2023,7 @@ try {
     maxOutputTokens: 1200,
     providerOptionsJson: "{}"
   };
-  await assert.rejects(
-    () => generateAssistantReply({
+  const authFailureReply = await generateAssistantReply({
       threadId: "provider-auth-failure-thread",
       messages: [{ role: "user", content: "provider auth failure regression" }],
       content: "provider auth failure regression",
@@ -2021,18 +2031,15 @@ try {
       piAgentDir: agentDir,
       toolsEnabled: true,
       reasoningEffort: "high"
-    }, providerFailureConfig),
-    (error) => {
-      assert.match(error.message, /third-party-openai-compatible authentication failed \(401\)/);
-      assert.match(error.message, /Invalid API key/);
-      assert.match(error.message, /Check or replace the API key/);
-      assert.doesNotMatch(error.message, new RegExp(fakeProviderSecret));
-      assert.doesNotMatch(error.message, /completed without final assistant text/);
-      return true;
-    }
-  );
-  await assert.rejects(
-    () => generateAssistantReply({
+    }, providerFailureConfig);
+  assert.match(authFailureReply.providerError, /third-party-openai-compatible authentication failed \(401\)/);
+  assert.match(authFailureReply.providerError, /Invalid API key/);
+  assert.match(authFailureReply.providerError, /Check or replace the API key/);
+  assert.doesNotMatch(authFailureReply.providerError, new RegExp(fakeProviderSecret));
+  assert.doesNotMatch(authFailureReply.providerError, /completed without final assistant text/);
+  assert.equal(authFailureReply.generatedMessages.length, 0);
+
+  const baseUrlFailureReply = await generateAssistantReply({
       threadId: "provider-base-url-failure-thread",
       messages: [{ role: "user", content: "provider base url failure regression" }],
       content: "provider base url failure regression",
@@ -2040,20 +2047,16 @@ try {
       piAgentDir: agentDir,
       toolsEnabled: true,
       reasoningEffort: "high"
-    }, providerFailureConfig),
-    (error) => {
-      assert.match(error.message, /request failed \(404 Not Found\)/);
-      assert.match(error.message, /Base URL/);
-      assert.match(error.message, /\/v1/);
-      assert.doesNotMatch(error.message, /<!DOCTYPE|<html>/i);
-      assert.doesNotMatch(error.message, /completed without final assistant text/);
-      return true;
-    }
-  );
+    }, providerFailureConfig);
+  assert.match(baseUrlFailureReply.providerError, /request failed \(404 Not Found\)/);
+  assert.match(baseUrlFailureReply.providerError, /Base URL/);
+  assert.match(baseUrlFailureReply.providerError, /\/v1/);
+  assert.doesNotMatch(baseUrlFailureReply.providerError, /<!DOCTYPE|<html>/i);
+  assert.doesNotMatch(baseUrlFailureReply.providerError, /completed without final assistant text/);
+
   const queuedProviderFailureCaptureStart = captures.length;
   const queuedProviderFailureSession = SessionManager.inMemory(tempDir);
-  await assert.rejects(
-    () => generateAssistantReply({
+  const queuedProviderFailureReply = await generateAssistantReply({
       threadId: "queued-provider-failure-thread",
       messages: [{ role: "user", content: "queued provider error then success regression" }],
       content: "queued provider error then success regression",
@@ -2070,25 +2073,51 @@ try {
           attachments: []
         });
       }
-    }),
-    (error) => {
-      assert.match(error.message, /authentication failed \(401\)/);
-      assert.match(error.message, /Initial queued run authentication failure/);
-      return true;
-    }
-  );
+    });
+  assert.match(queuedProviderFailureReply.providerError, /authentication failed \(401\)/);
+  assert.match(queuedProviderFailureReply.providerError, /Initial queued run authentication failure/);
   assert.deepEqual(
     queuedProviderFailureSession.getEntries()
       .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
       .map((entry) => entry.message.stopReason),
-    ["error", "stop"]
+    ["error"]
   );
   const queuedProviderFailurePayloads = captures.slice(queuedProviderFailureCaptureStart);
-  assert.equal(queuedProviderFailurePayloads.length, 2);
-  assert.equal(
-    JSON.stringify(queuedProviderFailurePayloads[1].messages).includes("queued provider recovery success"),
-    true
+  assert.equal(queuedProviderFailurePayloads.length, 1);
+  assert.equal(JSON.stringify(queuedProviderFailureSession.getEntries()).includes("queued provider recovery success"), false);
+
+  const laterQueuedFailureCaptureStart = captures.length;
+  const laterQueuedFailureSession = SessionManager.inMemory(tempDir);
+  const laterQueuedFailureReply = await generateAssistantReply({
+    threadId: "later-queued-provider-failure-thread",
+    messages: [{ role: "user", content: "queued provider initial success" }],
+    content: "queued provider initial success",
+    attachments: [],
+    piAgentDir: agentDir,
+    sessionManager: laterQueuedFailureSession,
+    toolsEnabled: true,
+    reasoningEffort: "high"
+  }, providerFailureConfig, {
+    onQueueReady(controls) {
+      void controls.queueMessage({
+        mode: "followUp",
+        content: "queued provider later failure regression",
+        attachments: []
+      });
+    }
+  });
+  assert.match(laterQueuedFailureReply.providerError, /authentication failed \(401\)/);
+  assert.match(laterQueuedFailureReply.providerError, /Queued follow-up authentication failure/);
+  assert.deepEqual(laterQueuedFailureReply.generatedMessages.map((message) => message.role), ["assistant", "user"]);
+  assert.equal(laterQueuedFailureReply.generatedMessages[0].content, "ok");
+  assert.equal(laterQueuedFailureReply.generatedMessages[1].content, "queued provider later failure regression");
+  assert.deepEqual(
+    laterQueuedFailureSession.getEntries()
+      .filter((entry) => entry.type === "message" && entry.message?.role === "assistant")
+      .map((entry) => entry.message.stopReason),
+    ["stop", "error"]
   );
+  assert.equal(captures.slice(laterQueuedFailureCaptureStart).length, 2);
   assert.equal(fallbackTitle("来玩成语接龙"), "来玩成语接龙");
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
   const generatedTitle = await generateTitleWithProvider({

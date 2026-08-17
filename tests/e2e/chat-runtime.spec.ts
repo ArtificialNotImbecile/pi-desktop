@@ -670,7 +670,7 @@ test.describe("Jasmine chat runtime", () => {
   });
 
   test("provider send failures preserve rendered history and cannot write an old thread page into a new selection", async () => {
-    const { page } = harness;
+    const { page, userDataDir } = harness;
     const alphaPrompt = "provider failure alpha history";
     const betaPrompt = "provider failure beta history";
     const stableFailurePrompt = "working failure stable provider reconcile";
@@ -767,6 +767,44 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".message-stack")).not.toContainText(alphaPrompt);
     await expect(page.locator(".message-stack")).not.toContainText(staleFailurePrompt);
     await expect(page.locator(".error-strip")).toBeHidden();
+
+    const queuedFailurePrompt = "slow response queued provider partial persistence";
+    const failedFollowUp = "mock queued provider failure";
+    await startEmptyThread(page);
+    await page.locator(".rich-composer-editor").fill(queuedFailurePrompt);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".user-bubble", { hasText: queuedFailurePrompt })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Stop response" })).toBeVisible();
+    await page.locator(".rich-composer-editor").fill(failedFollowUp);
+    await page.getByRole("button", { name: "Queue message" }).click();
+    await expect(page.locator(".queue-item", { hasText: failedFollowUp })).toBeVisible();
+
+    await expect(page.locator(".assistant-block:not(.live-message)", { hasText: "Slow response complete." })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".assistant-block.error-message")).toContainText("Mock queued provider failure.");
+    await expect(page.locator(".queue-item")).toHaveCount(0);
+
+    const queuedFailureState = await page.evaluate(async (title) => {
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
+      if (!thread) throw new Error("Queued provider-failure thread is missing.");
+      return {
+        threadId: thread.id,
+        messages: (await window.jasmine.listMessages(thread.id)).map((message) => ({
+          role: message.role,
+          content: message.content
+        }))
+      };
+    }, queuedFailurePrompt);
+    expect(queuedFailureState.messages).toEqual([
+      { role: "user", content: queuedFailurePrompt },
+      { role: "assistant", content: "Slow response complete." },
+      { role: "user", content: failedFollowUp }
+    ]);
+    const queuedFailurePiSession = await readThreadPiSession(userDataDir, queuedFailureState.threadId);
+    const queuedFailurePiText = JSON.stringify(queuedFailurePiSession.entries);
+    expect(queuedFailurePiText).toContain(queuedFailurePrompt);
+    expect(queuedFailurePiText).toContain("Slow response complete.");
+    expect(queuedFailurePiText).toContain(failedFollowUp);
+    expect(queuedFailurePiText).not.toContain("Queued follow-up complete");
   });
 
   test("provider failure reconciliation preserves an explicitly loaded historical prefix and reading position", async () => {

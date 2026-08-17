@@ -63,7 +63,10 @@ export type PiCodingAgentChatResult = {
   webSearchUsed: WebSearchResult[];
   generatedMessages?: RuntimeGeneratedMessage[];
   liveMessages?: RuntimeGeneratedMessage[];
+  providerError?: string;
 };
+
+class ProviderTurnError extends Error {}
 
 const JASMINE_FILE_CHANGES_PACKAGE_NAME = "@jasmine-ai/pi-file-changes";
 
@@ -312,6 +315,20 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     input.onSessionEntriesLinked?.([{ messageId: input.currentMessageId, sessionEntryId: entry.id }]);
     currentPromptLinked = true;
   };
+  const resultFromCurrentSession = (providerError?: string): PiCodingAgentChatResult => {
+    const newEntries = sessionManager.getEntries().slice(previousEntryCount);
+    linkCurrentPromptEntry(newEntries);
+    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
+    const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
+    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
+    return {
+      content,
+      timeline,
+      webSearchUsed: derivedWebSearchResults(newEntries),
+      generatedMessages,
+      ...(providerError ? { providerError } : {})
+    };
+  };
   // The assistant message that is currently streaming (thinking / text / tool
   // starts) but has not yet been committed to the session timeline. It is folded
   // into the trailing assistant turn so its tokens render incrementally with
@@ -379,10 +396,12 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
     inFlightFollowsDeliveredId = queued.id;
     activeTaskIndex += 1;
     activePromptAnchorText = promptAnchorText(queued.content, queued.attachments ?? []);
+    const promptEntryCount = sessionManager.getEntries().length;
     await session.prompt(queued.piText, {
       images: await imageContent(queuedImages),
       streamingBehavior: mode
     });
+    throwIfProviderTurnFailed(sessionManager.getEntries().slice(promptEntryCount), input.provider);
     // Pi may resolve a queued prompt normally when session.abort() stops it.
     // Preserve the runtime abort contract so the stopped queued turn is still
     // reconciled instead of falling through as a successful user-only result.
@@ -452,6 +471,7 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
   input.signal?.addEventListener("abort", abortSession, { once: true });
 
   try {
+    const initialPromptEntryCount = sessionManager.getEntries().length;
     const initialPrompt = session.prompt(currentPromptText, {
       images: await imageContent(imageAttachments)
     });
@@ -460,31 +480,23 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
       initialPrompt,
       abortPromise
     ]);
+    throwIfProviderTurnFailed(sessionManager.getEntries().slice(initialPromptEntryCount), input.provider);
     // A queued steer can be held by an input extension until the initial agent
     // run becomes idle, then start as a separate prompt. Clear the completed
     // turn's live timeline at that idle boundary so it cannot be folded after
     // the delivered user as a duplicate "new" assistant before the steer emits
     // its first token.
     if (session.isIdle || !inFlightFollowsDeliveredId) inFlightTimeline = null;
-    await Promise.allSettled(Array.from(steeringTasks));
+    const steeringResults = await Promise.allSettled(Array.from(steeringTasks));
+    const rejectedSteering = steeringResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejectedSteering) throw rejectedSteering.reason;
     if (input.signal?.aborted) throw abortError();
     while (trackedQueue.hasPendingFollowUps()) {
       const queued = trackedQueue.shiftNextFollowUp();
       if (!queued) break;
       await sendQueuedMessage(queued, "followUp");
     }
-    const newEntries = sessionManager.getEntries().slice(previousEntryCount);
-    linkCurrentPromptEntry(newEntries);
-    throwIfProviderTurnFailed(newEntries, input.provider);
-    const timeline = sessionEntriesToTimeline(newEntries, latestUpdate.content, timelineIdentities);
-    const content = (assistantTextFromTimeline(timeline) || latestUpdate.content).trim();
-    const generatedMessages = sessionEntriesToMessages(newEntries, latestUpdate.content, currentPromptText, trackedQueue.deliveredMessages(), timelineIdentities);
-    return {
-      content,
-      timeline,
-      webSearchUsed: derivedWebSearchResults(newEntries),
-      generatedMessages
-    };
+    return resultFromCurrentSession();
   } catch (error) {
     if (input.signal?.aborted) {
       const fallbackContent = (latestUpdate.content || assistantTextFromTimeline(latestUpdate.timeline) || "Response stopped.").trim();
@@ -531,6 +543,9 @@ export async function runPiCodingAgentChat(input: PiCodingAgentChatInput): Promi
         generatedMessages
       };
     }
+    if (error instanceof ProviderTurnError) {
+      return resultFromCurrentSession(error.message);
+    }
     throw error;
   } finally {
     input.signal?.removeEventListener("abort", abortSession);
@@ -544,7 +559,7 @@ function throwIfProviderTurnFailed(entries: SessionEntry[], provider: RuntimePro
   for (const entry of entries) {
     if (entry.type !== "message" || entry.message.role !== "assistant") continue;
     if (entry.message.stopReason !== "error") continue;
-    throw new Error(formatProviderFailure(entry.message.errorMessage, provider));
+    throw new ProviderTurnError(formatProviderFailure(entry.message.errorMessage, provider));
   }
 }
 
