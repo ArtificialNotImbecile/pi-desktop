@@ -91,7 +91,7 @@ function mountMessageList(
       <MessageList {...props} />
     </I18nProvider>
   );
-  return { ...view, callbacks };
+  return { ...view, callbacks, props };
 }
 
 function toolTimeline(
@@ -216,6 +216,30 @@ describe("message rendering", () => {
     expect(harness.container.querySelector('[data-message-id="stream-active-request-0"] .run-header')).toBeNull();
     expect(harness.container.querySelector('[data-message-id="stream-active-request-0"] .run-header.live')).toBeNull();
     expect(harness.container.querySelector('[data-message-id="stream-active-request-2"] .run-header.live')).not.toBeNull();
+  });
+
+  test("a queued streamed user restores the placeholder before its assistant tokens", () => {
+    const completedPrefix = assistantMessage("stream-active-request-0", [
+      { id: "prefix-output", kind: "assistant_text", text: "Completed prefix answer." }
+    ]);
+    const harness = mountMessageList([completedPrefix]);
+    expect(harness.container.querySelectorAll(".assistant-block .run-header.live")).toHaveLength(1);
+
+    const queuedUser: ChatMessage = {
+      id: "stream-active-request-1",
+      threadId: "renderer-message-thread",
+      role: "user",
+      content: "Queued prompt delivered before reply tokens",
+      createdAt
+    };
+    harness.rerender(
+      <I18nProvider language="en">
+        <MessageList {...harness.props} messages={[completedPrefix, queuedUser]} />
+      </I18nProvider>
+    );
+
+    expect(harness.container.querySelector(".assistant-block .run-header.live")).toBeNull();
+    expect(harness.container.querySelectorAll(".run-placeholder .run-header.live")).toHaveLength(1);
   });
 
   test("opening a settled run during later streaming records reading intent", () => {

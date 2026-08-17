@@ -69,6 +69,7 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
   // Only the trailing assistant owns the active run; using `some` here gives
   // every completed prefix assistant the same Working header.
   const tailMessage = props.messages.at(-1);
+  const liveStreamSnapshotPresent = props.messages.some((message) => message.id.startsWith("stream-"));
   const liveAssistantPresent = Boolean(
     tailMessage?.role === "assistant" && tailMessage.id.startsWith("stream-")
   );
@@ -175,20 +176,28 @@ export const MessageList = memo(function MessageList(props: MessageListProps) {
             </MessageActionsStateProvider>
           </>
         )}
-        {runActivity && !liveAssistantPresent && servedRunKeyRef.current !== props.runActivityKey && (
-          // Deliberately not an .assistant-block: this is the run's
-          // acknowledgment, not a message. Sharing that selector would make
-          // "the live assistant message" ambiguous for the moment before the
-          // first frame arrives.
-          <div className="run-placeholder">
-            <LiveRunHeader
-              key={runActivity.runKey}
-              runKey={runActivity.runKey}
-              stopping={runActivity.stopping}
-              model={runActivity.model}
-            />
-          </div>
-        )}
+        {runActivity
+          && !liveAssistantPresent
+          // A real queued/steered provider snapshot ends with the delivered
+          // streamed user before its first assistant token. Restore the
+          // placeholder for that live gap even though this request served an
+          // earlier assistant; retain the latch only for the settlement commit,
+          // whose persisted ids no longer identify a live stream snapshot.
+          && (liveStreamSnapshotPresent || servedRunKeyRef.current !== props.runActivityKey)
+          && (
+            // Deliberately not an .assistant-block: this is the run's
+            // acknowledgment, not a message. Sharing that selector would make
+            // "the live assistant message" ambiguous for the moment before the
+            // first frame arrives.
+            <div className="run-placeholder">
+              <LiveRunHeader
+                key={runActivity.runKey}
+                runKey={runActivity.runKey}
+                stopping={runActivity.stopping}
+                model={runActivity.model}
+              />
+            </div>
+          )}
         {props.error && (
           <div className="error-strip">
             <span>{props.error}</span>
