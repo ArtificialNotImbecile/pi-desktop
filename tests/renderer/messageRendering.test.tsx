@@ -385,6 +385,34 @@ describe("message rendering", () => {
     expect(metadata.hidden).toBe(true);
   });
 
+  test("arbitrary system metadata stays behind disclosure in a failed run", () => {
+    const secret = "Authorization: Bearer custom-metadata-must-not-reach-history";
+    const message = {
+      ...assistantMessage("failed-custom-metadata", [
+        { id: "failed-partial-answer", kind: "assistant_text" as const, text: "Visible partial answer." },
+        {
+          id: "failed-extension-message",
+          kind: "system" as const,
+          title: "Extension notice",
+          text: secret
+        }
+      ]),
+      status: "error" as const
+    };
+    const harness = mountMessages([message]);
+    const row = harness.container.querySelector('[data-timeline-item-id="failed-extension-message"]') as HTMLElement;
+    const toggle = within(row).getByRole("button", { name: "Extension notice" });
+
+    // Failed turns stay open at the run level, so the system row itself must
+    // own the deliberate disclosure that keeps arbitrary extension text out of
+    // routine history and screenshots.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(row.textContent).not.toContain(secret);
+    expect(row.querySelector(".timeline-row-thought")).toBeNull();
+    fireEvent.click(toggle);
+    expect(row.querySelector(".timeline-row-thought")?.textContent).toContain(secret);
+  });
+
   test("a run that ends badly stays open and a trivial run carries no header at all", () => {
     const stopped = assistantMessage("stopped-run", [
       { id: "stopped-thought", kind: "thinking", text: "Started work." },

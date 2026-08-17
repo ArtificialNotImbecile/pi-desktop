@@ -266,7 +266,10 @@ const TimelineDisplayRow = memo(function TimelineDisplayRow(props: TimelineDispl
         className="system-item"
         icon={<TerminalIcon />}
         title={title}
-        summary={item.text}
+        // Even product-owned inline status text gets the collapsed-preview
+        // credential guard. An extension can reuse a familiar title, so the
+        // title alone is never authority to expose arbitrary text.
+        summary={credentialSafeText(item.text)}
         state="done"
         expanded={false}
         hidden={props.hidden}
@@ -485,7 +488,11 @@ function compactTimelineItems(items: ChatTimelineItem[], live = false, modelId?:
       }
       continue;
     }
-    const collapsible = isInternalSessionSummary(item.title);
+    // Compaction, branch summaries, displayed custom messages, and any future
+    // provider-owned system entry can contain arbitrary session text. Give all
+    // of them their own deliberate disclosure; only Jasmine's nominal Stopped
+    // status remains inline, with its summary sanitized again at render time.
+    const collapsible = !isInlineSystemStatus(item.title);
     result.push({
       id: item.id,
       kind: "system",
@@ -702,9 +709,9 @@ function firstLine(value: string): string {
   return value.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
 }
 
-function isInternalSessionSummary(title: string): boolean {
+function isInlineSystemStatus(title: string): boolean {
   const normalized = title.trim().toLowerCase();
-  return normalized === "compaction" || normalized === "branch summary";
+  return normalized === "stopped";
 }
 
 function localizedSystemTitle(title: string, t: ReturnType<typeof useI18n>["t"]): string {

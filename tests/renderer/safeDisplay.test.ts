@@ -24,6 +24,8 @@ describe("collapsed chat display sanitization", () => {
   test("hides authenticated URLs embedded in otherwise ordinary text", () => {
     expect(credentialSafeText("Mirror: https://alice:hunter2@private.example.test/report")).toBe("");
     expect(credentialSafeText("Mirror: https://alice@private.example.test/report")).toBe("");
+    expect(credentialSafeText("Mirror: //alice:hunter2@private.example.test/report")).toBe("");
+    expect(credentialSafeText("Mirror: //alice@private.example.test/report")).toBe("");
   });
 
   test("keeps a safe URL path but removes credential-bearing paths, auth, query, and hash", () => {
