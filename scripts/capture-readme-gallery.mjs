@@ -79,6 +79,7 @@ try {
   await capture("artifacts");
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await page.locator(".terminal-output").waitFor();
+  await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ timeout: 20_000 });
   await capture("terminal");
   for (const label of ["Close Terminal tab", "Close Artifacts tab"]) {
     const close = page.getByRole("button", { name: label, exact: true });

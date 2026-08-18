@@ -5,7 +5,7 @@ export function readmeLaunchOptions({ rootDir, userDataDir, demoProjectDir, extr
   return {
     executablePath: installedExecutable || path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),
     args: installedExecutable ? ["--disable-gpu"] : [".", "--disable-gpu"],
-    cwd: rootDir,
+    cwd: installedExecutable ? demoProjectDir : rootDir,
     env: {
       ...process.env,
       JASMINE_E2E_HARNESS: "1",
