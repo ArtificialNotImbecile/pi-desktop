@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 export function readmeLaunchOptions({ rootDir, userDataDir, demoProjectDir, extraEnv = {} }) {
@@ -52,4 +53,40 @@ export async function configureRealDeepSeek(page) {
   }, defaultModel);
   if (result.status !== "connected") throw new Error(`DeepSeek provider test returned ${result.status}`);
   return result;
+}
+
+export async function sanitizeCapturePage(page, { rootDir, demoProjectDir }) {
+  await page.evaluate(({ customBaseUrl, demoRoot, homeRoot, repositoryRoot }) => {
+    const replacements = [
+      [demoRoot, "C:\\Workspace\\Jasmine Demo Workspace"],
+      [repositoryRoot, "C:\\Workspace\\Jasmine"],
+      [homeRoot, "C:\\Workspace"]
+    ].filter(([source]) => source);
+    const sanitize = (value) => {
+      let next = value;
+      for (const [source, replacement] of replacements) {
+        next = next.split(source).join(replacement).split(source.replaceAll("\\", "/")).join(replacement);
+      }
+      if (customBaseUrl) next = next.split(customBaseUrl).join("https://api.deepseek.com");
+      return next
+        .replace(/~[\\/][^\s\r\n]+/g, "C:\\Workspace\\Jasmine Demo Workspace")
+        .replace(/\.jasmine[\\/][^\s\r\n]+/g, "JasmineData")
+        .replace(/\bcodex\/[A-Za-z0-9._/-]+/g, "demo");
+    };
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent) node.textContent = sanitize(node.textContent);
+    }
+    for (const input of document.querySelectorAll("input, textarea")) {
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        input.value = sanitize(input.value);
+      }
+    }
+  }, {
+    customBaseUrl: process.env.JASMINE_README_DEEPSEEK_BASE_URL?.trim() || "",
+    demoRoot: demoProjectDir,
+    homeRoot: os.homedir(),
+    repositoryRoot: rootDir
+  });
 }

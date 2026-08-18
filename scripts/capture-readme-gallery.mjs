@@ -1,13 +1,14 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { _electron as electron } from "playwright";
-import { configureRealDeepSeek, readmeLaunchOptions, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
+import { configureRealDeepSeek, readmeLaunchOptions, sanitizeCapturePage, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
 
 const rootDir = process.cwd();
 const outputDir = path.join(rootDir, "docs", "assets", "screenshots");
 const stagingOutputDir = path.join(rootDir, "test-results", "readme-gallery", "screenshots");
 const userDataDir = path.join(rootDir, ".tmp", "readme-gallery");
-const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
+const demoProjectDir = path.join(os.tmpdir(), "jasmine-readme-gallery", "Jasmine Demo Workspace");
 const checklistPath = path.join(demoProjectDir, "src", "release-checklist.md");
 const expectedChecklist = `# Release checklist
 
@@ -20,6 +21,7 @@ if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required
 
 await rm(stagingOutputDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
+await rm(demoProjectDir, { recursive: true, force: true });
 await mkdir(stagingOutputDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nFollow exact file-edit requests and keep final summaries concise.\n", "utf8");
@@ -137,22 +139,10 @@ console.log(`Captured ${captured.length} README screenshots with Jasmine ${appVe
 
 async function capture(name) {
   await page.waitForTimeout(180);
-  await sanitizeVisiblePaths();
+  await sanitizeCapturePage(page, { rootDir, demoProjectDir });
   const filePath = path.join(stagingOutputDir, `${name}.png`);
   await page.screenshot({ path: filePath });
   captured.push(path.relative(rootDir, path.join(outputDir, `${name}.png`)));
-}
-
-async function sanitizeVisiblePaths() {
-  await page.evaluate(() => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent || !/[A-Za-z]:\\/.test(node.textContent)) continue;
-      node.textContent = node.textContent
-        .replace(/[A-Za-z]:\\Users\\Administrator\\[^\n]*/g, "C:\\Workspace\\Jasmine Demo Workspace")
-        .replace(/[A-Za-z]:\\[^\n]*/g, "C:\\Workspace\\Jasmine Demo Workspace");
-    }
-  });
 }
 
 async function sendMessage(text) {

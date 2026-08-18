@@ -1,14 +1,15 @@
 import { spawn } from "node:child_process";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { _electron as electron } from "playwright";
-import { configureRealDeepSeek, readmeLaunchOptions, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
+import { configureRealDeepSeek, readmeLaunchOptions, sanitizeCapturePage, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
 
 const rootDir = process.cwd();
 const workDir = path.join(rootDir, "test-results", "readme-taxonomy");
 const framesDir = path.join(workDir, "frames");
 const userDataDir = path.join(rootDir, ".tmp", "readme-taxonomy-real");
-const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
+const demoProjectDir = path.join(os.tmpdir(), "jasmine-readme-taxonomy", "Jasmine Demo Workspace");
 const outputPath = path.join(rootDir, "docs", "assets", "context-taxonomy.gif");
 const ffmpeg = process.env.FFMPEG_PATH || "ffmpeg";
 
@@ -16,6 +17,7 @@ if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required
 
 await rm(workDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
+await rm(demoProjectDir, { recursive: true, force: true });
 await mkdir(framesDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await mkdir(path.dirname(outputPath), { recursive: true });
@@ -58,13 +60,14 @@ try {
   await page.locator(".taxonomy-view").waitFor({ timeout: 20_000 });
   await page.getByRole("button", { name: "Close Context taxonomy tab" }).click();
 
-  recording = true;
-  capturePromise = captureFrames();
-  await page.waitForTimeout(1_600);
+  await sanitizeCapturePage(page, { rootDir, demoProjectDir });
   await page.getByRole("button", { name: "Open Context taxonomy" }).click();
   const taxonomyPanel = page.getByRole("complementary", { name: "Context taxonomy" });
   await taxonomyPanel.waitFor();
   await page.locator(".taxonomy-view").waitFor({ timeout: 20_000 });
+  await sanitizeCapturePage(page, { rootDir, demoProjectDir });
+  recording = true;
+  capturePromise = captureFrames();
   await page.evaluate(() => {
     const chat = document.querySelector(".chat-page");
     if (chat instanceof HTMLElement) {
@@ -156,6 +159,7 @@ async function ensureOpen(details) {
 async function smoothCenter(locator) {
   await locator.evaluate((element) => element.scrollIntoView({ behavior: "smooth", block: "center" }));
   await page.waitForTimeout(1_000);
+  await sanitizeCapturePage(page, { rootDir, demoProjectDir });
 }
 
 async function run(command, args) {
