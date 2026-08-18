@@ -6,6 +6,7 @@ import type { AppUpdateInstallMode, AppUpdateState } from "../../shared/ipc.js";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  hasUpdateFeedConfig,
   isUpdaterUsable,
   type AppUpdaterAdapter
 } from "./appUpdater.js";
@@ -57,6 +58,11 @@ async function resolveUpdater(): Promise<ResolvedUpdater> {
   }
   if (!app.isPackaged || !UPDATABLE_PLATFORMS.has(process.platform)) {
     return { updater: null, installMode: "automatic" };
+  }
+  // Nothing downstream can recover from a missing feed, so decide it before the
+  // electron-updater import and send those builds to the download page.
+  if (!hasUpdateFeedConfig(process.resourcesPath, process.env.JASMINE_E2E_UPDATE_FEED_URL)) {
+    return { updater: null, installMode: "manual" };
   }
 
   // Started before the import so the codesign probe overlaps it rather than

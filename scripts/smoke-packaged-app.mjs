@@ -121,11 +121,12 @@ try {
       }))
     };
     fontProbe.remove();
-    const [providers, plugins, skills, appSettings] = await Promise.all([
+    const [providers, plugins, skills, appSettings, updateState] = await Promise.all([
       window.jasmine.listProviders(),
       window.jasmine.listPlugins(),
       window.jasmine.listSkills(),
-      window.jasmine.getAppSettings()
+      window.jasmine.getAppSettings(),
+      window.jasmine.getAppUpdateState()
     ]);
     return {
       title: document.title,
@@ -135,9 +136,26 @@ try {
       pluginSources: plugins.map((item) => item.source),
       skillNames: skills.map((item) => item.name),
       language: appSettings.language,
+      updateState,
       font
     };
   });
+
+  // An installer build ships app-update.yml; the `dir` target does not. Either
+  // way the About page has to resolve to a coherent state before any check runs
+  // -- a build with a feed reports itself updatable, and a build without one
+  // reports the manual download route rather than failing every check with the
+  // raw ENOENT electron-updater raises for the missing file.
+  const hasUpdateFeed = Boolean(await stat(path.join(appResourcesRoot, "app-update.yml")).catch(() => null));
+  const { supported, installMode, phase } = result.updateState;
+  if (hasUpdateFeed) {
+    if (!supported) throw new Error(`Packaged build ships app-update.yml but reports updates as unsupported: ${phase}`);
+  } else if (supported || installMode !== "manual" || phase !== "unsupported") {
+    throw new Error(
+      `Packaged build ships no app-update.yml and must offer the manual download route, got ${JSON.stringify(result.updateState)}`
+    );
+  }
+  console.log(`Packaged update feed ${hasUpdateFeed ? "present" : "absent"}; About reports ${phase}/${installMode}.`);
   if (result.title !== "Jasmine — The desktop app for Pi" || result.bodyTextLength < 100) {
     throw new Error(`Packaged renderer is blank or mislabeled: ${JSON.stringify(result)}`);
   }

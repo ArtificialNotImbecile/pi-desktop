@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { AppUpdateInstallMode, AppUpdateState } from "../../shared/ipc.js";
 
 type UpdateInfo = {
@@ -241,6 +243,17 @@ export class AppUpdateService {
 export function isUpdaterUsable(updater: AppUpdaterAdapter | null): boolean {
   if (!updater) return false;
   return updater.isUpdaterActive?.() !== false;
+}
+
+// electron-builder writes app-update.yml only for installer targets, so a `dir`
+// build -- what `npm run dist:mac` produces, and what any tree copied out of one
+// keeps -- reaches electron-updater with no feed to check against. Every check
+// then rejects with a raw ENOENT naming an internal resources path, which tells
+// the user nothing and offers no way forward. An explicit feed override supplies
+// a feed on its own, so it counts as configured.
+export function hasUpdateFeedConfig(resourcesPath: string, feedOverrideUrl?: string): boolean {
+  if (feedOverrideUrl) return true;
+  return existsSync(path.join(resourcesPath, "app-update.yml"));
 }
 
 export function createInitialState(

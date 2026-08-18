@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  createInitialState,
+  hasUpdateFeedConfig,
   isUpdaterUsable,
   safeUpdateError
 } from "../../dist/main/main/services/appUpdater.js";
 
 await testUnsupportedDevelopmentBuild();
+testMissingUpdateFeedConfig();
 await testManualUpdateLifecycle();
 await testUpToDateAndRetryableError();
 await testInactiveInstallationCheck();
@@ -140,6 +146,28 @@ async function testInactiveInstallationCheck() {
   assert.equal(checked.phase, "error");
   assert.match(checked.error || "", /cannot install updates automatically/);
   assert.equal((await service.checkForUpdates()).phase, "error");
+}
+
+// A packaged `dir` build ships no app-update.yml, and letting it reach
+// electron-updater surfaced a raw "ENOENT ... app-update.yml" on every macOS
+// check. The missing file has to be read as "no feed" before the check runs, and
+// the resulting state has to keep the manual download route open.
+function testMissingUpdateFeedConfig() {
+  const resourcesPath = mkdtempSync(path.join(tmpdir(), "jasmine-updater-"));
+  assert.equal(hasUpdateFeedConfig(resourcesPath), false, "a dir build carries no feed");
+  assert.equal(
+    hasUpdateFeedConfig(resourcesPath, "http://127.0.0.1:8799/"),
+    true,
+    "an explicit feed override supplies a feed of its own"
+  );
+
+  writeFileSync(path.join(resourcesPath, "app-update.yml"), "provider: github\n");
+  assert.equal(hasUpdateFeedConfig(resourcesPath), true, "an installer build carries a feed");
+
+  const unconfigured = createInitialState("0.3.5", false, "manual");
+  assert.equal(unconfigured.phase, "unsupported");
+  assert.equal(unconfigured.supported, false);
+  assert.equal(unconfigured.installMode, "manual", "the About page keys the download route off this");
 }
 
 // Only an AppImage build started outside its AppImage disowns itself. A deb
