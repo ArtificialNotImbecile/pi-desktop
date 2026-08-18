@@ -233,7 +233,7 @@ function validateTitle(value: string, source: string): { title: string; reason: 
   const sourceTitle = fallbackTitle(source);
   if (normalized !== sourceTitle) {
     if (/[!?！？]$/u.test(normalized)) return { title: "", reason: "conversational punctuation" };
-    if (/^(?:你好|您好|嗨|好的|当然|抱歉|对不起|我(?:很好|知道|明白|理解|建议|认为|需要|可以|会|能|无法|不能|没法|暂时)|让我|hello\b|hi\b|sure\b|sorry\b|of course\b|i(?:'m| am| can| will| cannot| can't)\b)/iu.test(normalized)) {
+    if (/^(?:(?:你好|您好|嗨)[!！]|(?:好的|当然|抱歉|对不起)[，,!！。.]|我(?:很好|知道|明白|理解|建议|认为|需要|可以|会|能|无法|不能|没法|暂时)(?:[，,!！。.]|$)|让我(?:来|先|帮)|(?:hello|hi|sure|sorry|of course)[,!！。.]|i(?:'m| am| can| will| cannot| can't)\b[^:：-]{0,32}[.!?！。？]$)/iu.test(normalized)) {
       return { title: "", reason: "conversational reply" };
     }
   }

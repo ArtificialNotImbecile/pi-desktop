@@ -847,6 +847,22 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (requestText.includes("conversational word title regression")) {
+    const title = requestText.includes("hello variant")
+      ? "Hello World tutorial"
+      : requestText.includes("sorry variant")
+        ? "Sorry Not Sorry lyrics"
+        : "你好，李焕英影评";
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-conversational-word-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
   if (requestText.includes("retryable title request regression")) {
     retryableTitleRequestCount += 1;
     if (retryableTitleRequestCount === 1) {
@@ -2394,6 +2410,24 @@ try {
   }, "internal punctuation title regression", "internal punctuation title regression");
   assert.equal(internalPunctuationTitle.title, "Yahoo! Mail setup");
   assert.equal(internalPunctuationTitle.usedFallback, false);
+  for (const [variant, expectedTitle] of [
+    ["hello variant", "Hello World tutorial"],
+    ["sorry variant", "Sorry Not Sorry lyrics"],
+    ["nihao variant", "你好，李焕英影评"]
+  ]) {
+    const result = await generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, `conversational word title regression ${variant}`, `conversational word title regression ${variant}`);
+    assert.equal(result.title, expectedTitle);
+    assert.equal(result.usedFallback, false);
+  }
   retryableTitleRequestCount = 0;
   const recoveredTimedOutTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
