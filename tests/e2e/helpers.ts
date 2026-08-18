@@ -429,6 +429,62 @@ export async function expectToolbarHasNoOverlap(page: Page): Promise<void> {
   expect(result.itemsInsideComposer).toBe(true);
 }
 
+/**
+ * Guards the collapsed-sidebar toolbar against the defect that made its restore
+ * control unclickable on macOS: it sat under `.window-drag-region`, and Electron
+ * builds the native draggable region by walking the layout tree in order,
+ * unioning `drag` rects and subtracting `no-drag` ones. A drag rect emitted
+ * after an overlapping no-drag control covers that control back up, and the OS
+ * turns every click on it into a window drag.
+ *
+ * Playwright clicks are injected through CDP, below the native hit test, so they
+ * land on the button either way — asserting the click works cannot catch this.
+ * Assert the DOM invariant the native region math depends on instead.
+ */
+export async function expectCollapsedSidebarChrome(page: Page, railRowCenterY: number): Promise<void> {
+  // The toolbar slides in from the rail's edge, and a transform moves the rects
+  // below. Settle it before measuring rather than racing a 140ms animation.
+  await page.locator(".sidebar-restore-bar").evaluate(async (bar) => {
+    await Promise.all(bar.getAnimations().map((animation) => animation.finished));
+  });
+  const result = await page.evaluate(() => {
+    const bar = document.querySelector(".sidebar-restore-bar");
+    if (!(bar instanceof HTMLElement)) throw new Error("Collapsed sidebar toolbar is missing.");
+    const barBox = bar.getBoundingClientRect();
+    const dragRegions: string[] = [];
+    const coveredBy: string[] = [];
+    for (const node of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
+      if (getComputedStyle(node).getPropertyValue("-webkit-app-region").trim() !== "drag") continue;
+      const name = node.className || node.tagName;
+      dragRegions.push(name);
+      const box = node.getBoundingClientRect();
+      const overlaps = box.left < barBox.right && box.right > barBox.left &&
+        box.top < barBox.bottom && box.bottom > barBox.top;
+      if (!overlaps) continue;
+      if (bar.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) coveredBy.push(name);
+    }
+    const insetLeft = getComputedStyle(document.documentElement).getPropertyValue("--titlebar-inset-left");
+    return {
+      barVisible: barBox.width > 0 && barBox.height > 0,
+      centerY: barBox.top + barBox.height / 2,
+      left: barBox.left,
+      insetLeft: Number.parseFloat(insetLeft) || 0,
+      dragRegions,
+      coveredBy
+    };
+  });
+  expect(result.barVisible).toBe(true);
+  // A build where `-webkit-app-region` stops reaching computed style would make
+  // the drag-order assertion vacuous, so prove the walk saw the shell's strips.
+  expect(result.dragRegions.length).toBeGreaterThan(0);
+  expect(result.coveredBy).toEqual([]);
+  // Collapsing slides the rail's icon row left; it must not also lift it off
+  // the title-bar midline the macOS traffic lights sit on.
+  expect(Math.abs(result.centerY - railRowCenterY)).toBeLessThanOrEqual(2);
+  // And it must stay clear of whatever the platform reserves on the left.
+  expect(result.left).toBeGreaterThanOrEqual(result.insetLeft);
+}
+
 export async function stableChatLayoutSnapshot(page: Page): Promise<{ composerTop: number; messageScrollBottom: number; scrollTop: number }> {
   return page.evaluate(() => {
     const composer = document.querySelector(".composer");

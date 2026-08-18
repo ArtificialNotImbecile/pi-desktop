@@ -11,6 +11,7 @@ import {
   createProjectFolderFixture,
   createPromptTemplateFixture,
   createRedSquarePng,
+  expectCollapsedSidebarChrome,
   expectComposerDraft,
   expectComposerEditorText,
   expectEmptyChatClearOfRightPanel,
@@ -102,8 +103,18 @@ test.describe("Jasmine app shell", () => {
     await page.getByRole("button", { name: "Close settings" }).click();
     await expect(page.locator(".settings-panel")).toBeHidden();
 
+    const railRowCenterY = await page.locator(".side-top").getByRole("button", { name: "Hide sidebar" })
+      .evaluate((node) => node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2);
     await page.getByRole("button", { name: "Hide sidebar" }).click();
     await expect(page.locator(".app-shell")).toHaveClass(/sidebar-collapsed/);
+    // Collapsing keeps the rail's whole top-row trio reachable, not just the
+    // way back in.
+    const restoreBar = page.locator(".sidebar-restore-bar");
+    await expect(restoreBar.getByRole("button")).toHaveCount(3);
+    for (const label of ["Show sidebar", "Search", "New chat"]) {
+      await expect(restoreBar.getByRole("button", { name: label, exact: true })).toBeVisible();
+    }
+    await expectCollapsedSidebarChrome(page, railRowCenterY);
     await page.getByRole("button", { name: "Show sidebar" }).click();
     await expect(page.locator(".app-shell")).not.toHaveClass(/sidebar-collapsed/);
 
