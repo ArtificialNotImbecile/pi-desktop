@@ -534,6 +534,11 @@ if (process.platform === "win32") {
 }
 
 const captures = [];
+let retryableTitleRequestCount = 0;
+let interruptedTitleBodyRequestCount = 0;
+let nonStopTitleRequestCount = 0;
+let sharedDeadlineTitleRequestCount = 0;
+let sharedDeadlineNow = 0;
 let resolveQueuedAbortRequestStarted;
 const queuedAbortRequestStarted = new Promise((resolve) => {
   resolveQueuedAbortRequestStarted = resolve;
@@ -787,7 +792,7 @@ const server = createServer(async (request, response) => {
       object: "chat.completion",
       created: 0,
       model: "jasmine-test",
-      choices: [{ index: 0, message: { role: "assistant", content: "Quarterly planning" }, finish_reason: "stop" }]
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "Quarterly planning" }) }, finish_reason: "stop" }]
     }));
     return;
   }
@@ -798,8 +803,138 @@ const server = createServer(async (request, response) => {
       object: "chat.completion",
       created: 0,
       model: "jasmine-test",
-      choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }]
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "" }) }, finish_reason: "stop" }]
     }));
+    return;
+  }
+  if (requestText.includes("direct reply title regression")) {
+    const isRetry = requestText.includes("A previous attempt was empty or looked like a conversational reply");
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-direct-reply-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content: isRetry
+            ? JSON.stringify({ title: "钉钉近期消息查看" })
+            : "你好！我暂时无法直接登录或查看你的钉钉账户，因此看不到你最近的消息。不过，你可以把具体内容发给我"
+        },
+        finish_reason: "stop"
+      }]
+    }));
+    return;
+  }
+  if (requestText.includes("short conversational title regression")) {
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-short-conversational-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "我很好，谢谢你的关心！你呢？" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("internal punctuation title regression")) {
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-internal-punctuation-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "Yahoo! Mail setup" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("conversational word title regression")) {
+    const title = requestText.includes("hello variant")
+      ? "Hello World tutorial"
+      : requestText.includes("sorry variant")
+        ? "Sorry Not Sorry lyrics"
+        : "你好，李焕英影评";
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-conversational-word-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("structured reply grammar regression")) {
+    const title = requestText.includes("english reply") ? "Sure I can help." : "你好，我可以帮你。";
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-structured-reply-grammar",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("retryable title request regression")) {
+    retryableTitleRequestCount += 1;
+    if (retryableTitleRequestCount === 1) {
+      response.writeHead(408, { "content-type": "application/json; charset=utf-8" });
+      response.end(JSON.stringify({ error: { message: "request timeout" } }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-retried-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "超时后的标题重试" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("interrupted title body regression")) {
+    interruptedTitleBodyRequestCount += 1;
+    if (interruptedTitleBodyRequestCount === 1) {
+      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      response.write('{"choices":[');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      response.destroy();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-retried-interrupted-body-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "响应体中断后的标题" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("non stop title regression")) {
+    nonStopTitleRequestCount += 1;
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-non-stop-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: JSON.stringify({ title: nonStopTitleRequestCount === 1 ? "不完整标题" : "完整标题" }) },
+        finish_reason: nonStopTitleRequestCount === 1 ? "length" : "stop"
+      }]
+    }));
+    return;
+  }
+  if (requestText.includes("shared title deadline regression")) {
+    sharedDeadlineTitleRequestCount += 1;
+    sharedDeadlineNow += 60_000;
+    response.writeHead(408, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ error: { message: "request timeout" } }));
     return;
   }
   if (requestText.includes("provider auth failure regression")) {
@@ -2234,6 +2369,10 @@ try {
   assert.equal(captures.slice(failedSteerAttachmentCaptureStart).length, 2);
   assert.equal(fallbackTitle("来玩成语接龙"), "来玩成语接龙");
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
+  assert.equal(Array.from(fallbackTitle("很长的首条消息".repeat(20))).length, 48);
+  assert.doesNotMatch(fallbackTitle("😀".repeat(60)), /\uD83D$/u);
+  assert.equal(fallbackTitle(`${"a".repeat(47)}e\u0301tail`), `${"a".repeat(47)}e\u0301`);
+  assert.equal(fallbackTitle(`${"a".repeat(47)}👨‍👩‍👧‍👦tail`), `${"a".repeat(47)}👨‍👩‍👧‍👦`);
   const generatedTitle = await generateTitleWithProvider({
     providerName: "jasmine-mock",
     apiKey: "test-key",
@@ -2256,12 +2395,157 @@ try {
   assert.equal(titlePayload.stream, false);
   assert.equal(titlePayload.temperature, 0.1);
   assert.equal(titlePayload.reasoning_effort, "low");
-  assert.equal(titlePayload.max_tokens, 512);
+  assert.equal(titlePayload.max_tokens, 64);
   assert.equal(titlePayload.tools, undefined);
   assert.equal(titlePayload.messages.length, 2);
   assert.equal(titlePayload.messages[0].role, "system");
-  assert.match(titlePayload.messages[0].content, /Do not answer/);
-  assert.equal(titlePayload.messages[1].content, "quarterly planning title for the launch meeting");
+  assert.match(titlePayload.messages[0].content, /never answer it/);
+  assert.match(titlePayload.messages[1].content, /"quarterly planning title for the launch meeting"/);
+  assert.match(titlePayload.messages[0].content, /not a conversational assistant/);
+  assert.match(titlePayload.messages[0].content, /10 CJK characters/);
+  const directReplyCaptureStart = captures.length;
+  const recoveredDirectReplyTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: {
+      vision: false,
+      imageOutput: false,
+      toolCalling: true,
+      reasoning: false,
+      embedding: false
+    },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "你好，帮我看看我最近的钉钉消息是说明把 direct reply title regression", "你好，帮我看看我最近的钉钉消息是说明把");
+  assert.equal(recoveredDirectReplyTitle.title, "钉钉近期消息查看");
+  assert.equal(recoveredDirectReplyTitle.usedFallback, false);
+  assert.match(recoveredDirectReplyTitle.debugSummary, /primary validation=unstructured response/);
+  assert.equal(captures.slice(directReplyCaptureStart).length, 2);
+  const rejectedShortReplyTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "你好吗 short conversational title regression", "你好吗");
+  assert.equal(rejectedShortReplyTitle.title, "你好吗");
+  assert.equal(rejectedShortReplyTitle.usedFallback, true);
+  assert.equal(rejectedShortReplyTitle.fallbackReason, "conversational punctuation");
+  const internalPunctuationTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "internal punctuation title regression", "internal punctuation title regression");
+  assert.equal(internalPunctuationTitle.title, "Yahoo! Mail setup");
+  assert.equal(internalPunctuationTitle.usedFallback, false);
+  for (const [variant, expectedTitle] of [
+    ["hello variant", "Hello World tutorial"],
+    ["sorry variant", "Sorry Not Sorry lyrics"],
+    ["nihao variant", "你好，李焕英影评"]
+  ]) {
+    const result = await generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, `conversational word title regression ${variant}`, `conversational word title regression ${variant}`);
+    assert.equal(result.title, expectedTitle);
+    assert.equal(result.usedFallback, false);
+  }
+  for (const variant of ["english reply", "chinese reply"]) {
+    const fallback = `structured reply grammar regression ${variant}`;
+    const result = await generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, fallback, fallback);
+    assert.equal(result.title, fallback);
+    assert.equal(result.usedFallback, true);
+    assert.equal(result.fallbackReason, "conversational reply");
+  }
+  retryableTitleRequestCount = 0;
+  const recoveredTimedOutTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "retryable title request regression", "retryable title request regression");
+  assert.equal(recoveredTimedOutTitle.title, "超时后的标题重试");
+  assert.equal(recoveredTimedOutTitle.usedFallback, false);
+  assert.equal(retryableTitleRequestCount, 2);
+  assert.match(recoveredTimedOutTitle.debugSummary, /Tool title request failed: 408/);
+  interruptedTitleBodyRequestCount = 0;
+  const recoveredInterruptedBodyTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "interrupted title body regression", "interrupted title body regression");
+  assert.equal(recoveredInterruptedBodyTitle.title, "响应体中断后的标题");
+  assert.equal(recoveredInterruptedBodyTitle.usedFallback, false);
+  assert.equal(interruptedTitleBodyRequestCount, 2);
+  assert.match(recoveredInterruptedBodyTitle.debugSummary, /Tool title request failed/);
+  nonStopTitleRequestCount = 0;
+  const recoveredNonStopTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "non stop title regression", "non stop title regression");
+  assert.equal(recoveredNonStopTitle.title, "完整标题");
+  assert.equal(recoveredNonStopTitle.usedFallback, false);
+  assert.equal(nonStopTitleRequestCount, 2);
+  sharedDeadlineTitleRequestCount = 0;
+  sharedDeadlineNow = 1_000;
+  const realDateNow = Date.now;
+  Date.now = () => sharedDeadlineNow;
+  try {
+    await assert.rejects(generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, "shared title deadline regression", "shared title deadline regression"), /deadline exceeded/);
+  } finally {
+    Date.now = realDateNow;
+  }
+  assert.equal(sharedDeadlineTitleRequestCount, 1);
   const titleProvider = (providerName, modelId) => ({
     providerName,
     apiKey: "test-key",
@@ -2273,11 +2557,13 @@ try {
   await generateTitleWithProvider(titleProvider("deepseek", "deepseek-v4-flash"), "quarterly planning title deepseek", "fallback", "off");
   const deepSeekTitlePayload = captures.at(-1);
   assert.deepEqual(deepSeekTitlePayload.thinking, { type: "disabled" });
+  assert.equal(deepSeekTitlePayload.max_tokens, 64);
   assert.equal(deepSeekTitlePayload.temperature, undefined);
   assert.equal(deepSeekTitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.6"), "quarterly planning title kimi 2.6", "fallback", "off");
   const kimi26TitlePayload = captures.at(-1);
   assert.deepEqual(kimi26TitlePayload.thinking, { type: "disabled" });
+  assert.equal(kimi26TitlePayload.max_tokens, 64);
   assert.equal(kimi26TitlePayload.temperature, undefined);
   assert.equal(kimi26TitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.7-code"), "quarterly planning title kimi 2.7", "fallback", "off");
@@ -2285,11 +2571,13 @@ try {
   assert.equal(kimi27TitlePayload.thinking, undefined);
   assert.equal(kimi27TitlePayload.temperature, undefined);
   assert.equal(kimi27TitlePayload.reasoning_effort, undefined);
+  assert.equal(kimi27TitlePayload.max_tokens, 512);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k3"), "quarterly planning title kimi 3", "fallback", "off");
   const kimi3TitlePayload = captures.at(-1);
   assert.equal(kimi3TitlePayload.thinking, undefined);
   assert.equal(kimi3TitlePayload.temperature, undefined);
   assert.equal(kimi3TitlePayload.reasoning_effort, "low");
+  assert.equal(kimi3TitlePayload.max_tokens, 512);
   const emptyTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
     apiKey: "test-key",
