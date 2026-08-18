@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { _electron as electron } from "playwright";
+import { configureRealDeepSeek, readmeLaunchOptions, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
 
 const rootDir = process.cwd();
 const outputDir = path.join(rootDir, "docs", "assets", "screenshots");
@@ -11,31 +12,22 @@ await rm(outputDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
-await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nKeep answers concise and cite relevant project files.\n", "utf8");
+await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nFollow exact file-edit requests and keep final summaries concise.\n", "utf8");
 await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is an independent desktop GUI for the Pi coding agent.\n", "utf8");
+await writeFile(path.join(demoProjectDir, "src", "release-checklist.md"), "# Release checklist\n\n- Draft\n", "utf8");
 
-const app = await electron.launch({
-  executablePath: path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),
-  args: [".", "--disable-gpu"],
-  cwd: rootDir,
-  env: {
-    ...process.env,
-    JASMINE_E2E_HARNESS: "1",
-    JASMINE_E2E_OFFSCREEN: "1",
-    JASMINE_E2E_MOCK_AI: "1",
-    JASMINE_E2E_MANY_MODELS: "1",
-    JASMINE_E2E_USER_DATA_DIR: userDataDir,
-    JASMINE_DEFAULT_PROJECT_ROOT: demoProjectDir,
-    DEEPSEEK_API_KEY: "readme-gallery-placeholder",
-    KIMI_API_KEY: "readme-gallery-placeholder"
-  }
-});
+if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for the real-model README gallery.");
+
+const app = await electron.launch(readmeLaunchOptions({ rootDir, userDataDir, demoProjectDir }));
 
 let page;
+let appVersion;
+let providerCheck;
 const captured = [];
 try {
   page = await app.firstWindow();
   await page.locator(".app-shell").waitFor({ timeout: 20_000 });
+  appVersion = await verifyCapturedVersion(app);
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.setSize(1440, 900);
   });
@@ -44,14 +36,30 @@ try {
   await page.evaluate(async () => {
     await Promise.all([
       window.jasmine.createMemory({ content: "Prefer concise answers with concrete next steps." }),
-      window.jasmine.createManualActivityObservation({ note: "Prepared the Jasmine open-source walkthrough." })
+      window.jasmine.createManualActivityObservation({ note: "Prepared the Jasmine open-source walkthrough." }),
+      window.jasmine.updateAppSettings({ permissionMode: "full-access" })
     ]);
   });
+  providerCheck = await configureRealDeepSeek(page);
+  await page.reload();
+  await page.locator(".app-shell").waitFor({ timeout: 20_000 });
+  await page.addStyleTag({ content: "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important;caret-color:transparent!important}" });
 
   const projectRow = page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).first();
   await projectRow.locator(".project-item").click();
   await page.locator(".empty-state").waitFor();
-  await sendMessage("Give me a concise release-readiness checklist for this workspace.");
+  await sendMessage("Update src/release-checklist.md with a polished three-item checklist covering tests, documentation, and packaging. Use the file tools, then confirm the result in one sentence.");
+  await page.evaluate(async () => {
+    const threads = await window.jasmine.listThreads();
+    const target = threads
+      .filter((thread) => thread.messageCount >= 2)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    if (!target) throw new Error("Captured README thread is unavailable.");
+    await window.jasmine.renameThread({ id: target.id, title: "Release readiness checklist" });
+  });
+  await page.reload();
+  await page.locator(".assistant-block").waitFor({ timeout: 20_000 });
+  await page.addStyleTag({ content: "*,*::before,*::after{animation-duration:0s!important;transition-duration:0s!important;caret-color:transparent!important}" });
   await capture("main");
 
   await page.getByRole("button", { name: "Open Artifacts" }).click();
@@ -108,7 +116,7 @@ try {
   await app.close().catch(() => undefined);
 }
 
-console.log(`Captured ${captured.length} README screenshots:\n${captured.join("\n")}`);
+console.log(`Captured ${captured.length} README screenshots with Jasmine ${appVersion} and real ${providerCheck.model}:\n${captured.join("\n")}`);
 
 async function capture(name) {
   await page.waitForTimeout(180);
@@ -136,8 +144,8 @@ async function sendMessage(text) {
   const composer = page.locator(".rich-composer-editor");
   await composer.fill(text);
   await page.getByRole("button", { name: "Send" }).click();
-  await assistantBlocks.nth(previousCount).waitFor({ timeout: 20_000 });
-  await page.waitForFunction(() => !document.querySelector(".assistant-block.live-message"), undefined, { timeout: 20_000 });
+  await assistantBlocks.nth(previousCount).waitFor({ timeout: 180_000 });
+  await page.waitForFunction(() => !document.querySelector(".assistant-block.live-message"), undefined, { timeout: 180_000 });
 }
 
 async function openCommandPage(label, selector) {

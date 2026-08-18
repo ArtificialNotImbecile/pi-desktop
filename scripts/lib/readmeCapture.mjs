@@ -1,0 +1,55 @@
+import path from "node:path";
+
+export function readmeLaunchOptions({ rootDir, userDataDir, demoProjectDir, extraEnv = {} }) {
+  const installedExecutable = process.env.JASMINE_README_EXECUTABLE?.trim();
+  return {
+    executablePath: installedExecutable || path.join(rootDir, "node_modules", "electron", "dist", "electron.exe"),
+    args: installedExecutable ? ["--disable-gpu"] : [".", "--disable-gpu"],
+    cwd: rootDir,
+    env: {
+      ...process.env,
+      JASMINE_E2E_HARNESS: "1",
+      JASMINE_E2E_OFFSCREEN: "1",
+      JASMINE_E2E_USER_DATA_DIR: userDataDir,
+      JASMINE_DEFAULT_PROJECT_ROOT: demoProjectDir,
+      ...extraEnv,
+      JASMINE_E2E_MOCK_AI: "0"
+    }
+  };
+}
+
+export async function verifyCapturedVersion(app) {
+  const version = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
+  const expected = process.env.JASMINE_README_EXPECTED_VERSION?.trim();
+  if (expected && version !== expected) {
+    throw new Error(`README capture expected Jasmine ${expected}, but launched ${version}.`);
+  }
+  return version;
+}
+
+export async function configureRealDeepSeek(page) {
+  const baseUrl = process.env.JASMINE_README_DEEPSEEK_BASE_URL?.trim();
+  const defaultModel = process.env.JASMINE_README_DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash";
+  if (baseUrl) {
+    await page.evaluate(
+      ({ baseUrl: requestedBaseUrl, defaultModel: requestedModel }) =>
+        window.jasmine.updateProvider({ id: "deepseek", baseUrl: requestedBaseUrl, defaultModel: requestedModel }),
+      { baseUrl, defaultModel }
+    );
+  } else {
+    await page.evaluate(
+      (requestedModel) => window.jasmine.updateProvider({ id: "deepseek", defaultModel: requestedModel }),
+      defaultModel
+    );
+  }
+
+  const result = await page.evaluate(async () => {
+    const providers = await window.jasmine.listProviders();
+    const deepseek = providers.find((provider) => provider.id === "deepseek");
+    if (!deepseek) throw new Error("DeepSeek provider is missing");
+    const test = await window.jasmine.testProvider(deepseek.id);
+    return { model: deepseek.defaultModel, status: test.status };
+  });
+  if (result.status !== "connected") throw new Error(`DeepSeek provider test returned ${result.status}`);
+  return result;
+}

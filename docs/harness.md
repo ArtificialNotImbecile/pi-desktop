@@ -45,7 +45,7 @@ Jasmine combines unit tests, renderer tests, Electron E2E tests, a structured UI
   alone splits evenly, and `test:e2e:serial` runs the rest with `--no-deps`.
 - `npm run test:e2e:headed`: explicit foreground run for interactive debugging.
 - `npm run harness:release`: complete build, unit, audit, visual, docs, E2E, and headed acceptance gate.
-- `npm run readme:capture`: rebuilds the app, captures isolated page screenshots, and records the real-model Context Taxonomy GIF.
+- `npm run readme:capture`: rebuilds the local app by default, captures isolated page screenshots from one real model turn, and records the two-turn real-model Context Taxonomy GIF. Set `JASMINE_README_EXECUTABLE` and `JASMINE_README_EXPECTED_VERSION` to record a specific installed release instead.
 - `npm run dist:win`: builds the Windows x64 NSIS installer under the versioned output directory configured in `package.json`.
 - `npm run dist:linux`: builds Linux x64 AppImage and deb packages. Run it on Linux.
 - `npm run dist:mac:arm64`: builds the Apple Silicon macOS DMG. Run it on macOS.
