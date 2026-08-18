@@ -835,6 +835,17 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (requestText.includes("internal punctuation title regression")) {
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-internal-punctuation-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "Yahoo! Mail setup" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
   if (requestText.includes("retryable title request regression")) {
     retryableTitleRequestCount += 1;
     if (retryableTitleRequestCount === 1) {
@@ -2349,6 +2360,18 @@ try {
   assert.equal(rejectedShortReplyTitle.title, "你好吗");
   assert.equal(rejectedShortReplyTitle.usedFallback, true);
   assert.equal(rejectedShortReplyTitle.fallbackReason, "conversational punctuation");
+  const internalPunctuationTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "internal punctuation title regression", "internal punctuation title regression");
+  assert.equal(internalPunctuationTitle.title, "Yahoo! Mail setup");
+  assert.equal(internalPunctuationTitle.usedFallback, false);
   retryableTitleRequestCount = 0;
   const recoveredTimedOutTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
@@ -2375,11 +2398,13 @@ try {
   await generateTitleWithProvider(titleProvider("deepseek", "deepseek-v4-flash"), "quarterly planning title deepseek", "fallback", "off");
   const deepSeekTitlePayload = captures.at(-1);
   assert.deepEqual(deepSeekTitlePayload.thinking, { type: "disabled" });
+  assert.equal(deepSeekTitlePayload.max_tokens, 96);
   assert.equal(deepSeekTitlePayload.temperature, undefined);
   assert.equal(deepSeekTitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.6"), "quarterly planning title kimi 2.6", "fallback", "off");
   const kimi26TitlePayload = captures.at(-1);
   assert.deepEqual(kimi26TitlePayload.thinking, { type: "disabled" });
+  assert.equal(kimi26TitlePayload.max_tokens, 96);
   assert.equal(kimi26TitlePayload.temperature, undefined);
   assert.equal(kimi26TitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.7-code"), "quarterly planning title kimi 2.7", "fallback", "off");
@@ -2387,11 +2412,13 @@ try {
   assert.equal(kimi27TitlePayload.thinking, undefined);
   assert.equal(kimi27TitlePayload.temperature, undefined);
   assert.equal(kimi27TitlePayload.reasoning_effort, undefined);
+  assert.equal(kimi27TitlePayload.max_tokens, 512);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k3"), "quarterly planning title kimi 3", "fallback", "off");
   const kimi3TitlePayload = captures.at(-1);
   assert.equal(kimi3TitlePayload.thinking, undefined);
   assert.equal(kimi3TitlePayload.temperature, undefined);
   assert.equal(kimi3TitlePayload.reasoning_effort, "low");
+  assert.equal(kimi3TitlePayload.max_tokens, 512);
   const emptyTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
     apiKey: "test-key",

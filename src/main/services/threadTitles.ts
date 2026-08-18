@@ -91,7 +91,7 @@ async function requestTitle(
     model: provider.modelId,
     messages: titleMessages(content, variant),
     stream: false,
-    max_tokens: 96
+    max_tokens: titleMaxTokens(provider, reasoningEffort)
   };
   applyTitleReasoningOptions(body, provider, reasoningEffort);
 
@@ -230,7 +230,7 @@ function validateTitle(value: string, source: string): { title: string; reason: 
 
   const sourceTitle = fallbackTitle(source);
   if (normalized !== sourceTitle) {
-    if (/[!?！？]/u.test(normalized)) return { title: "", reason: "conversational punctuation" };
+    if (/[!?！？]$/u.test(normalized)) return { title: "", reason: "conversational punctuation" };
     if (/^(?:你好|您好|嗨|好的|当然|抱歉|对不起|我(?:很好|知道|明白|理解|建议|认为|需要|可以|会|能|无法|不能|没法|暂时)|让我|hello\b|hi\b|sure\b|sorry\b|of course\b|i(?:'m| am| can| will| cannot| can't)\b)/iu.test(normalized)) {
       return { title: "", reason: "conversational reply" };
     }
@@ -240,6 +240,19 @@ function validateTitle(value: string, source: string): { title: string; reason: 
     title: normalized.replace(/[。.!！?？]+$/u, "").trim(),
     reason: "valid"
   };
+}
+
+function titleMaxTokens(provider: RuntimeProviderConfig, reasoningEffort: ReasoningEffort): number {
+  if (!provider.capabilities?.reasoning) return 96;
+  const providerName = provider.providerName.toLowerCase();
+  const baseUrl = provider.baseUrl.toLowerCase();
+  const modelId = provider.modelId.toLowerCase();
+  const isDeepSeek = providerName === "deepseek" || baseUrl.includes("deepseek.com");
+  const isKimi = providerName === "moonshot" || providerName.startsWith("moonshotai") || baseUrl.includes("api.moonshot.");
+  const canDisableReasoning = reasoningEffort === "off" && (
+    isDeepSeek || (isKimi && (modelId.includes("kimi-k2.5") || modelId.includes("kimi-k2.6")))
+  );
+  return canDisableReasoning ? 96 : 512;
 }
 
 function parseTitleEnvelope(value: string): { title: string } | undefined {
