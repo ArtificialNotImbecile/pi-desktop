@@ -3,9 +3,9 @@ import type { CompositionEvent, FormEvent, KeyboardEvent, RefObject } from "reac
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
-import { $getRoot, COMMAND_PRIORITY_HIGH, KEY_DOWN_COMMAND, PASTE_COMMAND, type PasteCommandType } from "lexical";
+import { $getRoot, $getSelection, $isRangeSelection, COMMAND_PRIORITY_HIGH, KEY_DOWN_COMMAND, PASTE_COMMAND, type PasteCommandType } from "lexical";
 import type { ClipboardImagePasteRequest } from "../../../../shared/ipc";
-import { normalizeDomPlainText, normalizePlainText, writePlainText } from "./serialization";
+import { getDomSelectionPlainTextOffset, normalizeDomPlainText, normalizePlainText, writePlainText } from "./serialization";
 import { ComposerEditor } from "./ComposerEditor";
 import { EnterKeyPlugin } from "./plugins/EnterKeyPlugin";
 import { ComposerFocusPlugin } from "./plugins/ComposerFocusPlugin";
@@ -83,7 +83,7 @@ export const RichComposer = forwardRef<RichComposerHandle, {
   const syncFromDom = useCallback((node: HTMLElement, isComposing = composingRef.current) => {
     if (isComposing) return;
     const value = normalizeDomPlainText(node);
-    const cursor = getCursorOffset(node) ?? value.length;
+    const cursor = getDomSelectionPlainTextOffset(node) ?? value.length;
     onChange(value);
     onClearError();
     onCommandStateChange(value, cursor);
@@ -176,19 +176,14 @@ export const RichComposer = forwardRef<RichComposerHandle, {
       }
       return false;
     }
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return false;
     event.preventDefault();
-    const value = normalizeDomPlainText(root);
-    const selection = replaceAllOnNextPasteRef.current
-      ? { start: 0, end: value.length }
-      : getSelectionOffsets(root, value.length);
+    if (replaceAllOnNextPasteRef.current) writePlainText(pasted);
+    else selection.insertRawText(pasted);
     replaceAllOnNextPasteRef.current = false;
-    const next = `${value.slice(0, selection.start)}${pasted}${value.slice(selection.end)}`;
-    const cursor = selection.start + pasted.length;
-    onChange(next);
-    onClearError();
-    onCommandStateChange(next, cursor);
     return true;
-  }, [cancelClipboardFallback, onChange, onClearError, onCommandStateChange, requestPastedImageFile, requestPasteAttachment]);
+  }, [cancelClipboardFallback, requestPastedImageFile, requestPasteAttachment]);
 
   useEffect(() => cancelClipboardFallback, [cancelClipboardFallback]);
 
@@ -256,31 +251,4 @@ function getPastedImageFile(clipboardData: DataTransfer): File | null {
     if (file) return file;
   }
   return null;
-}
-
-function getCursorOffset(root: HTMLElement): number | null {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return null;
-  const range = selection.getRangeAt(0);
-  if (!range.collapsed || !root.contains(range.endContainer)) return null;
-  const beforeRange = range.cloneRange();
-  beforeRange.selectNodeContents(root);
-  beforeRange.setEnd(range.endContainer, range.endOffset);
-  return normalizePlainText(beforeRange.toString()).length;
-}
-
-function getSelectionOffsets(root: HTMLElement, fallback: number): { start: number; end: number } {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return { start: fallback, end: fallback };
-  const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return { start: fallback, end: fallback };
-  const beforeStart = range.cloneRange();
-  beforeStart.selectNodeContents(root);
-  beforeStart.setEnd(range.startContainer, range.startOffset);
-  const beforeEnd = range.cloneRange();
-  beforeEnd.selectNodeContents(root);
-  beforeEnd.setEnd(range.endContainer, range.endOffset);
-  const start = normalizePlainText(beforeStart.toString()).length;
-  const end = normalizePlainText(beforeEnd.toString()).length;
-  return start <= end ? { start, end } : { start: end, end: start };
 }

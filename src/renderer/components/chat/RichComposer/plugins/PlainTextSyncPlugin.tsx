@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { normalizePlainText, readPlainText, writePlainText } from "../serialization";
+import { getSelectionPlainTextOffset, normalizePlainText, readPlainText, writePlainText } from "../serialization";
 
 export function PlainTextSyncPlugin(props: {
   value: string;
@@ -25,22 +25,10 @@ export function PlainTextSyncPlugin(props: {
       const isComposing = editor.isComposing() || Boolean(isDomComposing?.());
       if (isComposing) return;
       const value = readPlainText();
-      const cursor = getCursorOffset(editor.getRootElement()) ?? value.length;
+      const cursor = getSelectionPlainTextOffset() ?? value.length;
       onChange(value, cursor, isComposing);
     });
   }), [editor, isDomComposing, onChange]);
 
   return null;
-}
-
-function getCursorOffset(root: HTMLElement | null): number | null {
-  if (!root) return null;
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return null;
-  const range = selection.getRangeAt(0);
-  if (!range.collapsed || !root.contains(range.endContainer)) return null;
-  const beforeRange = range.cloneRange();
-  beforeRange.selectNodeContents(root);
-  beforeRange.setEnd(range.endContainer, range.endOffset);
-  return normalizePlainText(beforeRange.toString()).length;
 }
