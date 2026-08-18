@@ -233,7 +233,7 @@ function validateTitle(value: string, source: string): { title: string; reason: 
   const sourceTitle = fallbackTitle(source);
   if (normalized !== sourceTitle) {
     if (/[!?！？]$/u.test(normalized)) return { title: "", reason: "conversational punctuation" };
-    if (/^(?:(?:你好|您好|嗨)[!！]|(?:好的|当然|抱歉|对不起)[，,!！。.]|我(?:很好|知道|明白|理解|建议|认为|需要|可以|会|能|无法|不能|没法|暂时)(?:[，,!！。.]|$)|让我(?:来|先|帮)|(?:hello|hi|sure|sorry|of course)[,!！。.]|i(?:'m| am| can| will| cannot| can't)\b[^:：-]{0,32}[.!?！。？]$)/iu.test(normalized)) {
+    if (isConversationalReply(normalized)) {
       return { title: "", reason: "conversational reply" };
     }
   }
@@ -242,6 +242,16 @@ function validateTitle(value: string, source: string): { title: string; reason: 
     title: normalized.replace(/[。.!！?？]+$/u, "").trim(),
     reason: "valid"
   };
+}
+
+function isConversationalReply(value: string): boolean {
+  if (/^(?:你好|您好|嗨)[!！]$/u.test(value)) return true;
+  if (/^(?:好的|当然|抱歉|对不起)(?:[，,!！。.]|$)/u.test(value)) return true;
+  if (/^(?:你好|您好|嗨)[，,]\s*(?:我(?:可以|能|会|来|先|将|无法|不能|没法)|你可以|请你)/u.test(value)) return true;
+  if (/^我(?:很好|知道|明白|理解|建议|认为|需要|可以|会|能|无法|不能|没法|暂时)(?:[，,!！。.]|$)/u.test(value)) return true;
+  if (/^让我(?:来|先|帮)/u.test(value)) return true;
+  if (/^(?:hello|hi|sure|sorry|of course)(?:[,!！。.]\s*|\s+)(?:i|we)\s+(?:am|can|will|cannot|can't|could|would)\b/iu.test(value)) return true;
+  return /^i(?:'m| am| can| will| cannot| can't)\b[^:：-]{0,32}[.!?！。？]$/iu.test(value);
 }
 
 function titleMaxTokens(provider: RuntimeProviderConfig, reasoningEffort: ReasoningEffort): number {

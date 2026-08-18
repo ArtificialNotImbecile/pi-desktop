@@ -863,6 +863,18 @@ const server = createServer(async (request, response) => {
     }));
     return;
   }
+  if (requestText.includes("structured reply grammar regression")) {
+    const title = requestText.includes("english reply") ? "Sure I can help." : "你好，我可以帮你。";
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-structured-reply-grammar",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
   if (requestText.includes("retryable title request regression")) {
     retryableTitleRequestCount += 1;
     if (retryableTitleRequestCount === 1) {
@@ -2427,6 +2439,22 @@ try {
     }, `conversational word title regression ${variant}`, `conversational word title regression ${variant}`);
     assert.equal(result.title, expectedTitle);
     assert.equal(result.usedFallback, false);
+  }
+  for (const variant of ["english reply", "chinese reply"]) {
+    const fallback = `structured reply grammar regression ${variant}`;
+    const result = await generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, fallback, fallback);
+    assert.equal(result.title, fallback);
+    assert.equal(result.usedFallback, true);
+    assert.equal(result.fallbackReason, "conversational reply");
   }
   retryableTitleRequestCount = 0;
   const recoveredTimedOutTitle = await generateTitleWithProviderResult({
