@@ -139,7 +139,7 @@ npm.cmd run test:e2e:smoke
 
 Run `npm.cmd run test:e2e` for the full Electron suite in background/off-screen mode. It keeps test windows transparent, non-focusable, and out of the taskbar; use `npm.cmd run test:e2e:headed` only for intentional foreground debugging. Run `npm.cmd run harness:release` for the complete local release gate; its final acceptance stage is intentionally headed. Generated screenshots, traces, audits, and acceptance results are written under ignored `test-results/` paths.
 
-Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for two live requests. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`. Linux and macOS packages are built and smoke-tested on their native GitHub Actions runners during a release.
+Regenerate the README screenshots and real-model taxonomy GIF with `npm.cmd run readme:capture`. This command uses `DEEPSEEK_API_KEY` for three recorded model turns. Set `JASMINE_README_EXECUTABLE` and `JASMINE_README_EXPECTED_VERSION` to capture a specific installed release instead of the local development build; custom OpenAI-compatible DeepSeek gateways can also set `JASMINE_README_DEEPSEEK_BASE_URL` and `JASMINE_README_DEEPSEEK_MODEL`. Build the Windows installer with `npm.cmd run dist:win` and validate the unpacked application with `npm.cmd run test:packaged`. Linux and macOS packages are built and smoke-tested on their native GitHub Actions runners during a release.
 
 See [docs/harness.md](docs/harness.md) for the test map and verification policy.
 
