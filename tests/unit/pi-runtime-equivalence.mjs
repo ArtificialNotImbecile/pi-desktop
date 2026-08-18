@@ -537,6 +537,8 @@ const captures = [];
 let retryableTitleRequestCount = 0;
 let interruptedTitleBodyRequestCount = 0;
 let nonStopTitleRequestCount = 0;
+let sharedDeadlineTitleRequestCount = 0;
+let sharedDeadlineNow = 0;
 let resolveQueuedAbortRequestStarted;
 const queuedAbortRequestStarted = new Promise((resolve) => {
   resolveQueuedAbortRequestStarted = resolve;
@@ -926,6 +928,13 @@ const server = createServer(async (request, response) => {
         finish_reason: nonStopTitleRequestCount === 1 ? "length" : "stop"
       }]
     }));
+    return;
+  }
+  if (requestText.includes("shared title deadline regression")) {
+    sharedDeadlineTitleRequestCount += 1;
+    sharedDeadlineNow += 60_000;
+    response.writeHead(408, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({ error: { message: "request timeout" } }));
     return;
   }
   if (requestText.includes("provider auth failure regression")) {
@@ -2518,6 +2527,25 @@ try {
   assert.equal(recoveredNonStopTitle.title, "完整标题");
   assert.equal(recoveredNonStopTitle.usedFallback, false);
   assert.equal(nonStopTitleRequestCount, 2);
+  sharedDeadlineTitleRequestCount = 0;
+  sharedDeadlineNow = 1_000;
+  const realDateNow = Date.now;
+  Date.now = () => sharedDeadlineNow;
+  try {
+    await assert.rejects(generateTitleWithProviderResult({
+      providerName: "jasmine-mock",
+      apiKey: "test-key",
+      baseUrl,
+      modelId: "jasmine-test",
+      capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+      contextWindow: 128000,
+      maxOutputTokens: 1200,
+      providerOptionsJson: "{}"
+    }, "shared title deadline regression", "shared title deadline regression"), /deadline exceeded/);
+  } finally {
+    Date.now = realDateNow;
+  }
+  assert.equal(sharedDeadlineTitleRequestCount, 1);
   const titleProvider = (providerName, modelId) => ({
     providerName,
     apiKey: "test-key",
