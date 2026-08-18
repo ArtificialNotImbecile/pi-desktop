@@ -536,6 +536,7 @@ if (process.platform === "win32") {
 const captures = [];
 let retryableTitleRequestCount = 0;
 let interruptedTitleBodyRequestCount = 0;
+let nonStopTitleRequestCount = 0;
 let resolveQueuedAbortRequestStarted;
 const queuedAbortRequestStarted = new Promise((resolve) => {
   resolveQueuedAbortRequestStarted = resolve;
@@ -908,6 +909,22 @@ const server = createServer(async (request, response) => {
       created: 0,
       model: "jasmine-test",
       choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "响应体中断后的标题" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("non stop title regression")) {
+    nonStopTitleRequestCount += 1;
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-non-stop-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: JSON.stringify({ title: nonStopTitleRequestCount === 1 ? "不完整标题" : "完整标题" }) },
+        finish_reason: nonStopTitleRequestCount === 1 ? "length" : "stop"
+      }]
     }));
     return;
   }
@@ -2369,13 +2386,14 @@ try {
   assert.equal(titlePayload.stream, false);
   assert.equal(titlePayload.temperature, 0.1);
   assert.equal(titlePayload.reasoning_effort, "low");
-  assert.equal(titlePayload.max_tokens, 96);
+  assert.equal(titlePayload.max_tokens, 64);
   assert.equal(titlePayload.tools, undefined);
   assert.equal(titlePayload.messages.length, 2);
   assert.equal(titlePayload.messages[0].role, "system");
   assert.match(titlePayload.messages[0].content, /never answer it/);
   assert.match(titlePayload.messages[1].content, /"quarterly planning title for the launch meeting"/);
   assert.match(titlePayload.messages[0].content, /not a conversational assistant/);
+  assert.match(titlePayload.messages[0].content, /10 CJK characters/);
   const directReplyCaptureStart = captures.length;
   const recoveredDirectReplyTitle = await generateTitleWithProviderResult({
     providerName: "jasmine-mock",
@@ -2486,6 +2504,20 @@ try {
   assert.equal(recoveredInterruptedBodyTitle.usedFallback, false);
   assert.equal(interruptedTitleBodyRequestCount, 2);
   assert.match(recoveredInterruptedBodyTitle.debugSummary, /Tool title request failed/);
+  nonStopTitleRequestCount = 0;
+  const recoveredNonStopTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "non stop title regression", "non stop title regression");
+  assert.equal(recoveredNonStopTitle.title, "完整标题");
+  assert.equal(recoveredNonStopTitle.usedFallback, false);
+  assert.equal(nonStopTitleRequestCount, 2);
   const titleProvider = (providerName, modelId) => ({
     providerName,
     apiKey: "test-key",
@@ -2497,13 +2529,13 @@ try {
   await generateTitleWithProvider(titleProvider("deepseek", "deepseek-v4-flash"), "quarterly planning title deepseek", "fallback", "off");
   const deepSeekTitlePayload = captures.at(-1);
   assert.deepEqual(deepSeekTitlePayload.thinking, { type: "disabled" });
-  assert.equal(deepSeekTitlePayload.max_tokens, 96);
+  assert.equal(deepSeekTitlePayload.max_tokens, 64);
   assert.equal(deepSeekTitlePayload.temperature, undefined);
   assert.equal(deepSeekTitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.6"), "quarterly planning title kimi 2.6", "fallback", "off");
   const kimi26TitlePayload = captures.at(-1);
   assert.deepEqual(kimi26TitlePayload.thinking, { type: "disabled" });
-  assert.equal(kimi26TitlePayload.max_tokens, 96);
+  assert.equal(kimi26TitlePayload.max_tokens, 64);
   assert.equal(kimi26TitlePayload.temperature, undefined);
   assert.equal(kimi26TitlePayload.reasoning_effort, undefined);
   await generateTitleWithProvider(titleProvider("moonshot", "kimi-k2.7-code"), "quarterly planning title kimi 2.7", "fallback", "off");
