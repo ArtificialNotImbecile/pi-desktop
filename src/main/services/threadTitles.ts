@@ -39,10 +39,11 @@ export async function generateTitleWithProviderResult(
   fallback: string,
   reasoningEffort: ReasoningEffort = "off"
 ): Promise<TitleGenerationResult> {
+  const deadlineAt = Date.now() + TITLE_REQUEST_TIMEOUT_MS;
   const summaries: string[] = [];
   let first: Awaited<ReturnType<typeof requestTitle>> | undefined;
   try {
-    first = await requestTitle(provider, content, "primary", reasoningEffort);
+    first = await requestTitle(provider, content, "primary", reasoningEffort, remainingTitleRequestMs(deadlineAt));
     summaries.push(first.summary);
   } catch (error) {
     summaries.push(`primary: ${requestFailureSummary(error)}`);
@@ -62,7 +63,7 @@ export async function generateTitleWithProviderResult(
     summaries.push(`primary validation=${candidate.reason}`);
   }
 
-  const retry = await requestTitle(provider, content, "retry", reasoningEffort);
+  const retry = await requestTitle(provider, content, "retry", reasoningEffort, remainingTitleRequestMs(deadlineAt));
   summaries.push(retry.summary);
   const retryCandidate = validateTitle(retry.text, content);
   if (retryCandidate.title) {
@@ -87,7 +88,8 @@ async function requestTitle(
   provider: RuntimeProviderConfig,
   content: string,
   variant: "primary" | "retry",
-  reasoningEffort: ReasoningEffort
+  reasoningEffort: ReasoningEffort,
+  timeoutMs: number
 ): Promise<{ text: string; summary: string }> {
   const body: Record<string, unknown> = {
     model: provider.modelId,
@@ -107,7 +109,7 @@ async function requestTitle(
         "Content-Type": "application/json",
         Accept: "application/json"
       },
-      signal: AbortSignal.timeout(TITLE_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify(body)
     });
     text = await response.text();
@@ -153,6 +155,12 @@ async function requestTitle(
       `responseChars=${text.length}`
     ].join(" ")
   };
+}
+
+function remainingTitleRequestMs(deadlineAt: number): number {
+  const remaining = Math.ceil(deadlineAt - Date.now());
+  if (remaining <= 0) throw new TitleRequestError("Tool title request deadline exceeded", false);
+  return remaining;
 }
 
 function applyTitleReasoningOptions(
