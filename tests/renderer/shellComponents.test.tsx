@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatThread } from "../../src/shared/ipc";
 import { AskUserQuestionDialog } from "../../src/renderer/components/chat/AskUserQuestionDialog";
+import { AppShell } from "../../src/renderer/components/shell/AppShell";
 import { SearchOverlay } from "../../src/renderer/components/shell/SearchOverlay";
 import { I18nProvider } from "../../src/renderer/i18n";
 
@@ -124,5 +125,75 @@ describe("shell renderer components", () => {
 
     fireEvent.change(input, { target: { value: "no-chat-with-this-title" } });
     expect(screen.getByText("No chats found")).toBeDefined();
+  });
+
+  test("collapsing the sidebar keeps its top-row trio reachable as title-bar chrome", () => {
+    const toggleSidebar = vi.fn();
+    const search = vi.fn();
+    const newChat = vi.fn();
+    const closeFloatingSurfaces = vi.fn();
+
+    function renderShell(sidebarCollapsed: boolean) {
+      return render(withI18n(
+        <AppShell
+          threads={[]}
+          projects={[]}
+          activeThreadId={null}
+          activeProjectId={null}
+          workingActive={false}
+          workingActiveCount={0}
+          workingAttention={false}
+          messagesEmpty
+          sidebarCollapsed={sidebarCollapsed}
+          moreOpen={false}
+          onToggleSidebar={toggleSidebar}
+          onSearch={search}
+          onNewChat={newChat}
+          onNewChatInChats={vi.fn()}
+          onNewChatInProject={vi.fn()}
+          onOpenProjectFolder={vi.fn()}
+          onSelectProject={vi.fn()}
+          onSelectThread={vi.fn()}
+          onOpenWorking={vi.fn()}
+          onToggleMore={vi.fn()}
+          onOpenAbout={vi.fn()}
+          onOpenSettings={vi.fn()}
+          onRenameThread={vi.fn()}
+          onDeleteThread={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onOpenProjectInExplorer={vi.fn()}
+          onCloseFloatingSurfaces={closeFloatingSurfaces}
+        >
+          <div />
+        </AppShell>
+      ));
+    }
+
+    const expanded = renderShell(false);
+    expect(expanded.container.querySelector(".sidebar-restore-bar")).toBeNull();
+    expanded.unmount();
+
+    const collapsed = renderShell(true);
+    const bar = collapsed.container.querySelector(".sidebar-restore-bar");
+    expect(bar).not.toBeNull();
+    const toolbar = within(bar as HTMLElement);
+    expect(toolbar.getAllByRole("button")).toHaveLength(3);
+
+    fireEvent.click(toolbar.getByRole("button", { name: "Show sidebar" }));
+    expect(toggleSidebar).toHaveBeenCalledTimes(1);
+    fireEvent.click(toolbar.getByRole("button", { name: "Search" }));
+    expect(search).toHaveBeenCalledTimes(1);
+    fireEvent.click(toolbar.getByRole("button", { name: "New chat" }));
+    expect(newChat).toHaveBeenCalledTimes(1);
+    expect(closeFloatingSurfaces).toHaveBeenCalledTimes(2);
+
+    // Electron subtracts `no-drag` rects from `drag` rects in layout-tree
+    // order, so the shell's drag strip has to be emitted before the toolbar it
+    // overlaps or macOS swallows every click on it as a window drag.
+    const dragRegion = collapsed.container.querySelector(".window-drag-region");
+    expect(dragRegion).not.toBeNull();
+    expect((dragRegion as HTMLElement).compareDocumentPosition(bar as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeGreaterThan(0);
   });
 });

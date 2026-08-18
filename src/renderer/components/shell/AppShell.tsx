@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ChatThread, WorkspaceProject } from "../../../shared/ipc";
-import { SidebarIcon } from "../icons/Icons";
+import { EditIcon, SearchIcon, SidebarIcon } from "../icons/Icons";
+import { IconButton } from "../ui/IconButton";
 import { Sidebar } from "./Sidebar";
 import { WindowControls } from "./WindowControls";
 import { useI18n } from "../../i18n";
@@ -43,6 +44,17 @@ export function AppShell(props: {
   const stable = useStableCallbacks(props);
   return (
     <main className={`app-shell ${props.sidebarCollapsed ? "sidebar-collapsed" : ""} ${props.messagesEmpty ? "empty-active" : ""}`}>
+      {/* Title-bar chrome is shell-owned so every workspace route keeps window
+          controls; see UI-FIXED-126. It renders before every control that
+          overlaps it because Electron builds the native draggable region by
+          walking the layout tree in order, unioning `drag` rects and
+          subtracting `no-drag` ones. A drag rect emitted after an overlapping
+          no-drag rect covers that control back up and the OS swallows its
+          clicks as window drags — which is exactly how the collapsed-sidebar
+          restore control became unclickable on macOS. z-index does not save it:
+          the region walk ignores paint order. */}
+      <div className="window-drag-region" aria-hidden="true" />
+
       <Sidebar
         threads={props.threads}
         projects={props.projects}
@@ -72,15 +84,29 @@ export function AppShell(props: {
         onCloseFloatingSurfaces={stable.onCloseFloatingSurfaces}
       />
 
+      {/* Collapsing the rail used to leave one stray restore box in the corner
+          and take Search and New chat away with it. The sidebar's top-row trio
+          survives the collapse instead, in the same order, as title-bar chrome. */}
       {props.sidebarCollapsed && (
-        <button className="sidebar-restore" type="button" onClick={stable.onToggleSidebar} aria-label={t("sidebar.show")} title={t("sidebar.show")}>
-          <SidebarIcon />
-        </button>
+        <div className="sidebar-restore-bar" role="group" aria-label={t("sidebar.collapsedActions")}>
+          <IconButton label={t("sidebar.show")} onClick={stable.onToggleSidebar}>
+            <SidebarIcon />
+          </IconButton>
+          <IconButton label={t("sidebar.search")} onClick={() => {
+            stable.onCloseFloatingSurfaces();
+            stable.onSearch();
+          }}>
+            <SearchIcon />
+          </IconButton>
+          <IconButton label={t("sidebar.newChat")} onClick={() => {
+            stable.onCloseFloatingSurfaces();
+            stable.onNewChat();
+          }}>
+            <EditIcon />
+          </IconButton>
+        </div>
       )}
 
-      {/* Title-bar chrome is shell-owned so every workspace route keeps window
-          controls; see UI-FIXED-126. */}
-      <div className="window-drag-region" aria-hidden="true" />
       <WindowControls />
 
       {props.children}

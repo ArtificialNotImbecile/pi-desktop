@@ -1263,24 +1263,38 @@ select:focus-visible {
   display: none;
 }
 
-.sidebar-restore {
+/* Collapsed-sidebar chrome. A lone floating restore box read as debris left
+   behind by the rail; the same three actions the rail's own top row carries
+   read as a toolbar, and mirror .right-panel-tabs, the cluster already
+   floating over the opposite corner. */
+.sidebar-restore-bar {
   position: absolute;
-  top: 14px;
-  /* Sits to the right of the macOS traffic lights when the sidebar is hidden;
-     stays flush left on Windows/Linux, where the inset is 0. */
+  /* 36px tall (3px padding + 28px button + 3px padding + 2 borders), so this
+     centers it on y=34 — the midline main.ts centers the macOS traffic lights
+     on, and within a pixel of the expanded rail's own icon row. Collapsing
+     slides the trio left instead of lifting it off the title-bar row. */
+  top: 16px;
+  /* Clears the macOS traffic lights; stays flush left on Windows/Linux, where
+     the inset is 0. */
   left: max(14px, var(--titlebar-inset-left));
-  /* Above .window-drag-region (20), which otherwise swallows its clicks. */
+  /* Above .window-drag-region (20). Paint order alone is not enough — see the
+     layout-tree ordering note in AppShell. */
   z-index: 30;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
-  background: var(--surface);
-  box-shadow: 0 8px 20px rgba(var(--ink-rgb), 0.07);
+  border-radius: 10px;
+  background: rgba(var(--surface-rgb), 0.94);
+  box-shadow: 0 6px 18px rgba(var(--ink-rgb), 0.06);
+  animation: sidebar-restore-bar-in 140ms ease-out;
+}
+
+@keyframes sidebar-restore-bar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
 }
 
 .sidebar {
@@ -1362,7 +1376,8 @@ select:focus-visible {
 }
 
 .side-top button,
-.sidebar-restore,
+.sidebar-restore-bar,
+.sidebar-restore-bar button,
 .sidebar-feature-list button,
 .window-controls,
 .window-controls *,
