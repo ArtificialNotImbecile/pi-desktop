@@ -152,8 +152,18 @@ async function captureFrames() {
 
 async function ensureOpen(details) {
   if (!(await details.count())) throw new Error("Expected taxonomy details are missing.");
+  const shouldResume = recording;
+  if (shouldResume) {
+    recording = false;
+    await capturePromise;
+  }
   if ((await details.getAttribute("open")) === null) await details.locator(":scope > summary").click();
   await details.locator(":scope > .taxonomy-item-body, :scope > .taxonomy-part-body").first().waitFor();
+  await sanitizeCapturePage(page, { rootDir, demoProjectDir });
+  if (shouldResume) {
+    recording = true;
+    capturePromise = captureFrames();
+  }
 }
 
 async function smoothCenter(locator) {
