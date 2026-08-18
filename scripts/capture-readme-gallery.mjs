@@ -1,10 +1,11 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { _electron as electron } from "playwright";
 import { configureRealDeepSeek, readmeLaunchOptions, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
 
 const rootDir = process.cwd();
 const outputDir = path.join(rootDir, "docs", "assets", "screenshots");
+const stagingOutputDir = path.join(rootDir, "test-results", "readme-gallery", "screenshots");
 const userDataDir = path.join(rootDir, ".tmp", "readme-gallery");
 const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
 const checklistPath = path.join(demoProjectDir, "src", "release-checklist.md");
@@ -15,15 +16,15 @@ const expectedChecklist = `# Release checklist
 - Packaging: verify each installer starts cleanly and reports the expected version.
 `;
 
-await rm(outputDir, { recursive: true, force: true });
+if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for the real-model README gallery.");
+
+await rm(stagingOutputDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
-await mkdir(outputDir, { recursive: true });
+await mkdir(stagingOutputDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nFollow exact file-edit requests and keep final summaries concise.\n", "utf8");
 await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is an independent desktop GUI for the Pi coding agent.\n", "utf8");
 await writeFile(checklistPath, "# Release checklist\n\n- Draft\n", "utf8");
-
-if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for the real-model README gallery.");
 
 const app = await electron.launch(readmeLaunchOptions({ rootDir, userDataDir, demoProjectDir }));
 
@@ -128,14 +129,17 @@ try {
   await app.close().catch(() => undefined);
 }
 
+await rm(outputDir, { recursive: true, force: true });
+await mkdir(path.dirname(outputDir), { recursive: true });
+await rename(stagingOutputDir, outputDir);
 console.log(`Captured ${captured.length} README screenshots with Jasmine ${appVersion} and real ${providerCheck.model}:\n${captured.join("\n")}`);
 
 async function capture(name) {
   await page.waitForTimeout(180);
   await sanitizeVisiblePaths();
-  const filePath = path.join(outputDir, `${name}.png`);
+  const filePath = path.join(stagingOutputDir, `${name}.png`);
   await page.screenshot({ path: filePath });
-  captured.push(path.relative(rootDir, filePath));
+  captured.push(path.relative(rootDir, path.join(outputDir, `${name}.png`)));
 }
 
 async function sanitizeVisiblePaths() {

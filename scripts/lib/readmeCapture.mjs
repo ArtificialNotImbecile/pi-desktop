@@ -31,25 +31,25 @@ export async function configureRealDeepSeek(page) {
   const baseUrl = process.env.JASMINE_README_DEEPSEEK_BASE_URL?.trim();
   const defaultModel = process.env.JASMINE_README_DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash";
   if (baseUrl) {
-    await page.evaluate(
-      ({ baseUrl: requestedBaseUrl, defaultModel: requestedModel }) =>
-        window.jasmine.updateProvider({ id: "deepseek", baseUrl: requestedBaseUrl, defaultModel: requestedModel }),
-      { baseUrl, defaultModel }
-    );
-  } else {
-    await page.evaluate(
-      (requestedModel) => window.jasmine.updateProvider({ id: "deepseek", defaultModel: requestedModel }),
-      defaultModel
-    );
+    await page.evaluate((requestedBaseUrl) =>
+      window.jasmine.updateProvider({ id: "deepseek", baseUrl: requestedBaseUrl }), baseUrl);
   }
 
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async (requestedModel) => {
+    const discovery = await window.jasmine.fetchProviderModels("deepseek");
+    if (discovery.provider.status !== "connected") {
+      throw new Error("DeepSeek model discovery did not connect.");
+    }
+    if (!discovery.models.some((model) => model.id === requestedModel)) {
+      throw new Error(`DeepSeek model discovery did not return ${requestedModel}.`);
+    }
+    await window.jasmine.updateProvider({ id: "deepseek", defaultModel: requestedModel });
     const providers = await window.jasmine.listProviders();
     const deepseek = providers.find((provider) => provider.id === "deepseek");
     if (!deepseek) throw new Error("DeepSeek provider is missing");
     const test = await window.jasmine.testProvider(deepseek.id);
     return { model: deepseek.defaultModel, status: test.status };
-  });
+  }, defaultModel);
   if (result.status !== "connected") throw new Error(`DeepSeek provider test returned ${result.status}`);
   return result;
 }
