@@ -39,13 +39,18 @@ try {
   await page.evaluate(() => window.localStorage.setItem("jasmine.reasoningEffort", "high"));
   await page.reload();
   await page.locator(".app-shell").waitFor({ timeout: 20_000 });
+  const providerCheck = await configureRealDeepSeek(page);
+  await page.reload();
+  await page.locator(".app-shell").waitFor({ timeout: 20_000 });
+  const selectedModelLabel = await page.locator(".model-pill").innerText();
+  if (!selectedModelLabel.includes(providerCheck.model)) {
+    throw new Error(`Renderer selected ${selectedModelLabel}, expected ${providerCheck.model}.`);
+  }
   const projectRow = page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).first();
   await projectRow.waitFor();
   await projectRow.locator(".project-item").click();
   await page.getByRole("button", { name: "Open Context taxonomy" }).click();
   await page.getByRole("complementary", { name: "Context taxonomy" }).waitFor();
-
-  const providerCheck = await configureRealDeepSeek(page);
 
   const replies = [];
   replies.push(await sendRealMessage("In one short sentence, explain why inspectable context improves an AI assistant."));
