@@ -535,6 +535,7 @@ if (process.platform === "win32") {
 
 const captures = [];
 let retryableTitleRequestCount = 0;
+let interruptedTitleBodyRequestCount = 0;
 let resolveQueuedAbortRequestStarted;
 const queuedAbortRequestStarted = new Promise((resolve) => {
   resolveQueuedAbortRequestStarted = resolve;
@@ -860,6 +861,25 @@ const server = createServer(async (request, response) => {
       created: 0,
       model: "jasmine-test",
       choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "超时后的标题重试" }) }, finish_reason: "stop" }]
+    }));
+    return;
+  }
+  if (requestText.includes("interrupted title body regression")) {
+    interruptedTitleBodyRequestCount += 1;
+    if (interruptedTitleBodyRequestCount === 1) {
+      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      response.write('{"choices":[');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      response.destroy();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+    response.end(JSON.stringify({
+      id: "chatcmpl-retried-interrupted-body-title",
+      object: "chat.completion",
+      created: 0,
+      model: "jasmine-test",
+      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ title: "响应体中断后的标题" }) }, finish_reason: "stop" }]
     }));
     return;
   }
@@ -2297,6 +2317,8 @@ try {
   assert.equal(fallbackTitle("  你好，告诉我拿破仑说过什么精彩的palindrome  "), "你好，告诉我拿破仑说过什么精彩的palindrome");
   assert.equal(Array.from(fallbackTitle("很长的首条消息".repeat(20))).length, 48);
   assert.doesNotMatch(fallbackTitle("😀".repeat(60)), /\uD83D$/u);
+  assert.equal(fallbackTitle(`${"a".repeat(47)}e\u0301tail`), `${"a".repeat(47)}e\u0301`);
+  assert.equal(fallbackTitle(`${"a".repeat(47)}👨‍👩‍👧‍👦tail`), `${"a".repeat(47)}👨‍👩‍👧‍👦`);
   const generatedTitle = await generateTitleWithProvider({
     providerName: "jasmine-mock",
     apiKey: "test-key",
@@ -2387,6 +2409,21 @@ try {
   assert.equal(recoveredTimedOutTitle.usedFallback, false);
   assert.equal(retryableTitleRequestCount, 2);
   assert.match(recoveredTimedOutTitle.debugSummary, /Tool title request failed: 408/);
+  interruptedTitleBodyRequestCount = 0;
+  const recoveredInterruptedBodyTitle = await generateTitleWithProviderResult({
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: false, embedding: false },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  }, "interrupted title body regression", "interrupted title body regression");
+  assert.equal(recoveredInterruptedBodyTitle.title, "响应体中断后的标题");
+  assert.equal(recoveredInterruptedBodyTitle.usedFallback, false);
+  assert.equal(interruptedTitleBodyRequestCount, 2);
+  assert.match(recoveredInterruptedBodyTitle.debugSummary, /Tool title request failed/);
   const titleProvider = (providerName, modelId) => ({
     providerName,
     apiKey: "test-key",

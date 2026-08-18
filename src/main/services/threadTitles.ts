@@ -10,6 +10,7 @@ export type TitleGenerationResult = {
 };
 
 const MAX_TITLE_CHARACTERS = 48;
+const titleSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 class TitleRequestError extends Error {
   constructor(message: string, readonly retryable: boolean) {
@@ -96,6 +97,7 @@ async function requestTitle(
   applyTitleReasoningOptions(body, provider, reasoningEffort);
 
   let response: Response;
+  let text: string;
   try {
     response = await fetch(`${provider.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -107,13 +109,13 @@ async function requestTitle(
       signal: AbortSignal.timeout(12_000),
       body: JSON.stringify(body)
     });
+    text = await response.text();
   } catch (error) {
     throw new TitleRequestError(
       error instanceof Error ? `Tool title request failed: ${error.message}` : "Tool title request failed",
       true
     );
   }
-  const text = await response.text();
   if (!response.ok) {
     const retryable = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500;
     throw new TitleRequestError(`Tool title request failed: ${response.status}`, retryable);
@@ -226,7 +228,7 @@ function validateTitle(value: string, source: string): { title: string; reason: 
     .replace(/\s+/g, " ")
     .trim() || "";
   if (!normalized) return { title: "", reason: "empty title" };
-  if (Array.from(normalized).length > MAX_TITLE_CHARACTERS) return { title: "", reason: "title too long" };
+  if (titleGraphemes(normalized).length > MAX_TITLE_CHARACTERS) return { title: "", reason: "title too long" };
 
   const sourceTitle = fallbackTitle(source);
   if (normalized !== sourceTitle) {
@@ -269,7 +271,11 @@ function parseTitleEnvelope(value: string): { title: string } | undefined {
 }
 
 function truncateTitle(value: string): string {
-  return Array.from(value).slice(0, MAX_TITLE_CHARACTERS).join("");
+  return titleGraphemes(value).slice(0, MAX_TITLE_CHARACTERS).join("");
+}
+
+function titleGraphemes(value: string): string[] {
+  return Array.from(titleSegmenter.segment(value), (part) => part.segment);
 }
 
 function isRetryableTitleError(error: unknown): boolean {
