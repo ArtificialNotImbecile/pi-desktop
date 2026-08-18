@@ -76,6 +76,45 @@ describe("About update settings", () => {
     expect(alert.textContent).toContain("no usable browser handler");
   });
 
+  // A packaged build with no app-update.yml used to reach electron-updater and
+  // fail every check with a raw "ENOENT ... app-update.yml". It now resolves to
+  // an unsupported build in manual mode, and the only honest action left is the
+  // releases page -- not a disabled "Check for updates" button.
+  test("routes a build with no update feed to the release page", () => {
+    const updater = updaterResult({
+      ...BASE_STATE,
+      phase: "unsupported",
+      supported: false,
+      installMode: "manual"
+    });
+    useAppUpdaterMock.mockReturnValue(updater);
+    renderAbout();
+
+    expect(screen.getByText(
+      "This build cannot check for updates. Download the latest Jasmine from GitHub Releases."
+    )).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Check for updates" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open download page" }));
+    expect(updater.openDownloadPage).toHaveBeenCalledTimes(1);
+    expect(updater.check).not.toHaveBeenCalled();
+  });
+
+  // A development build has no installer behind it at all, so the download page
+  // would be a dead end there; it keeps the disabled check button and its reason.
+  test("keeps the disabled check button for an unpackaged development build", () => {
+    useAppUpdaterMock.mockReturnValue(updaterResult({
+      ...BASE_STATE,
+      phase: "unsupported",
+      supported: false
+    }));
+    renderAbout();
+
+    expect(screen.getByText("Update checks are available in the installed app.")).toBeDefined();
+    const check = screen.getByRole("button", { name: "Check for updates" }) as HTMLButtonElement;
+    expect(check.disabled).toBe(true);
+    expect(check.title).toBe("Install Jasmine before checking for updates.");
+  });
+
   test("reports an up-to-date build and keeps update checks available", () => {
     const updater = updaterResult({ ...BASE_STATE, phase: "up-to-date" });
     useAppUpdaterMock.mockReturnValue(updater);

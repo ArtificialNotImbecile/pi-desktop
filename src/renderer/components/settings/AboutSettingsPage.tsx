@@ -61,6 +61,16 @@ export function AboutSettingsPage() {
   );
 
   function renderUpdateAction() {
+    // A packaged build with no update feed can never answer a check. The
+    // releases page is the only route left, so offer it rather than a dead
+    // "Check for updates" button.
+    if (!state.supported && state.installMode === "manual") {
+      return (
+        <Button size="sm" variant="primary" onClick={() => void updater.openDownloadPage()}>
+          {t("settings.about.openDownloadPage")}
+        </Button>
+      );
+    }
     if (state.phase === "available") {
       // Builds that cannot replace themselves still report the new version;
       // the download page is the only action that can finish the job.
@@ -106,6 +116,7 @@ export function AboutSettingsPage() {
 }
 
 function updateStatusKey(phase: AppUpdatePhase, installMode: AppUpdateInstallMode): I18nKey {
+  if (phase === "unsupported" && installMode === "manual") return "settings.about.updateFeedMissing";
   if (phase === "available" && installMode === "manual") return "settings.about.updateAvailableManual";
   const keys: Record<AppUpdatePhase, I18nKey> = {
     unsupported: "settings.about.updateUnsupported",

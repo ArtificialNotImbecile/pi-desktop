@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   AppUpdateService,
   FakeAppUpdater,
+  createInitialState,
+  describePackagedUpdateStateMismatch,
+  hasUpdateFeedConfig,
   isUpdaterUsable,
   safeUpdateError
 } from "../../dist/main/main/services/appUpdater.js";
 
 await testUnsupportedDevelopmentBuild();
+testMissingUpdateFeedConfig();
+testPackagedUpdateStatePairing();
 await testManualUpdateLifecycle();
 await testUpToDateAndRetryableError();
 await testInactiveInstallationCheck();
@@ -140,6 +148,68 @@ async function testInactiveInstallationCheck() {
   assert.equal(checked.phase, "error");
   assert.match(checked.error || "", /cannot install updates automatically/);
   assert.equal((await service.checkForUpdates()).phase, "error");
+}
+
+// A packaged `dir` build ships no app-update.yml, and letting it reach
+// electron-updater surfaced a raw "ENOENT ... app-update.yml" on every macOS
+// check. The missing file has to be read as "no feed" before the check runs, and
+// the resulting state has to keep the manual download route open.
+function testMissingUpdateFeedConfig() {
+  const resourcesPath = mkdtempSync(path.join(tmpdir(), "jasmine-updater-"));
+  assert.equal(hasUpdateFeedConfig(resourcesPath), false, "a dir build carries no feed");
+  assert.equal(
+    hasUpdateFeedConfig(resourcesPath, "http://127.0.0.1:8799/"),
+    true,
+    "an explicit feed override supplies a feed of its own"
+  );
+
+  writeFileSync(path.join(resourcesPath, "app-update.yml"), "provider: github\n");
+  assert.equal(hasUpdateFeedConfig(resourcesPath), true, "an installer build carries a feed");
+
+  const unconfigured = createInitialState("0.3.5", false, "manual");
+  assert.equal(unconfigured.phase, "unsupported");
+  assert.equal(unconfigured.supported, false);
+  assert.equal(unconfigured.installMode, "manual", "the About page keys the download route off this");
+}
+
+// The packaged smoke runs on whatever tree each release job leaves behind, and
+// those trees do not agree on what "ships a feed" implies. The Linux job
+// packages AppImage/deb but smoke-tests linux-unpacked, which carries the feed
+// while AppImageUpdater disowns it for having no $APPIMAGE -- so equating feed
+// presence with updater support would block that job's release smoke.
+function testPackagedUpdateStatePairing() {
+  const noFeed = { phase: "unsupported", supported: false, installMode: "manual" };
+  const updatable = { phase: "idle", supported: true, installMode: "automatic" };
+  const adHocMac = { phase: "idle", supported: true, installMode: "manual" };
+  const disowned = { phase: "unsupported", supported: false, installMode: "automatic" };
+  const check = (hasUpdateFeed, state, platform, isAppImage = false) =>
+    describePackagedUpdateStateMismatch({ hasUpdateFeed, state, platform, isAppImage });
+
+  assert.equal(check(false, noFeed, "darwin"), null, "a dir build offers the manual download route");
+  assert.match(
+    check(false, updatable, "darwin") || "",
+    /manual download route/,
+    "a build with no feed must never claim it can update"
+  );
+
+  assert.equal(check(true, adHocMac, "darwin"), null, "the released ad-hoc macOS build stays checkable");
+  assert.equal(check(true, updatable, "win32"), null);
+  assert.equal(check(true, disowned, "linux"), null, "linux-unpacked is disowned by its AppImage updater");
+  assert.match(
+    check(true, disowned, "linux", true) || "",
+    /reports updates as unsupported/,
+    "a real AppImage run has no excuse for an unusable updater"
+  );
+  assert.match(
+    check(true, disowned, "darwin") || "",
+    /reports updates as unsupported/,
+    "only Linux trees are disowned this way"
+  );
+  assert.match(
+    check(true, noFeed, "linux") || "",
+    /no-feed manual route/,
+    "a build shipping a feed must not fall into the no-feed fallback"
+  );
 }
 
 // Only an AppImage build started outside its AppImage disowns itself. A deb
