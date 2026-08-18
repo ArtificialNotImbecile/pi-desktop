@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { _electron as electron } from "playwright";
+import { describePackagedUpdateStateMismatch } from "../dist/main/main/services/appUpdater.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite");
@@ -142,19 +143,19 @@ try {
   });
 
   // An installer build ships app-update.yml; the `dir` target does not. Either
-  // way the About page has to resolve to a coherent state before any check runs
-  // -- a build with a feed reports itself updatable, and a build without one
-  // reports the manual download route rather than failing every check with the
-  // raw ENOENT electron-updater raises for the missing file.
+  // way the About page has to resolve to a coherent state before any check runs,
+  // rather than failing every check with the raw ENOENT electron-updater raises
+  // for the missing file. The pairing rules live beside the updater service so
+  // tests/unit/app-updater.mjs can exercise every platform from here.
   const hasUpdateFeed = Boolean(await stat(path.join(appResourcesRoot, "app-update.yml")).catch(() => null));
-  const { supported, installMode, phase } = result.updateState;
-  if (hasUpdateFeed) {
-    if (!supported) throw new Error(`Packaged build ships app-update.yml but reports updates as unsupported: ${phase}`);
-  } else if (supported || installMode !== "manual" || phase !== "unsupported") {
-    throw new Error(
-      `Packaged build ships no app-update.yml and must offer the manual download route, got ${JSON.stringify(result.updateState)}`
-    );
-  }
+  const { phase, installMode } = result.updateState;
+  const mismatch = describePackagedUpdateStateMismatch({
+    hasUpdateFeed,
+    state: result.updateState,
+    platform: process.platform,
+    isAppImage: Boolean(process.env.APPIMAGE)
+  });
+  if (mismatch) throw new Error(`Packaged build ${mismatch}`);
   console.log(`Packaged update feed ${hasUpdateFeed ? "present" : "absent"}; About reports ${phase}/${installMode}.`);
   if (result.title !== "Jasmine — The desktop app for Pi" || result.bodyTextLength < 100) {
     throw new Error(`Packaged renderer is blank or mislabeled: ${JSON.stringify(result)}`);
