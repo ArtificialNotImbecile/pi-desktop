@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { _electron as electron } from "playwright";
 import { configureRealDeepSeek, readmeLaunchOptions, verifyCapturedVersion } from "./lib/readmeCapture.mjs";
@@ -7,6 +7,13 @@ const rootDir = process.cwd();
 const outputDir = path.join(rootDir, "docs", "assets", "screenshots");
 const userDataDir = path.join(rootDir, ".tmp", "readme-gallery");
 const demoProjectDir = path.join(userDataDir, "Jasmine Demo Workspace");
+const checklistPath = path.join(demoProjectDir, "src", "release-checklist.md");
+const expectedChecklist = `# Release checklist
+
+- Tests: run the automated checks and inspect the final desktop flow.
+- Documentation: confirm setup, screenshots, and release notes match the build.
+- Packaging: verify each installer starts cleanly and reports the expected version.
+`;
 
 await rm(outputDir, { recursive: true, force: true });
 await rm(userDataDir, { recursive: true, force: true });
@@ -14,7 +21,7 @@ await mkdir(outputDir, { recursive: true });
 await mkdir(path.join(demoProjectDir, "src"), { recursive: true });
 await writeFile(path.join(demoProjectDir, "AGENTS.md"), "# Demo workspace\n\nFollow exact file-edit requests and keep final summaries concise.\n", "utf8");
 await writeFile(path.join(demoProjectDir, "src", "overview.md"), "# Product overview\n\nJasmine is an independent desktop GUI for the Pi coding agent.\n", "utf8");
-await writeFile(path.join(demoProjectDir, "src", "release-checklist.md"), "# Release checklist\n\n- Draft\n", "utf8");
+await writeFile(checklistPath, "# Release checklist\n\n- Draft\n", "utf8");
 
 if (!process.env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for the real-model README gallery.");
 
@@ -48,7 +55,11 @@ try {
   const projectRow = page.locator(".project-row", { hasText: "Jasmine Demo Workspace" }).first();
   await projectRow.locator(".project-item").click();
   await page.locator(".empty-state").waitFor();
-  await sendMessage("Update src/release-checklist.md with a polished three-item checklist covering tests, documentation, and packaging. Use the file tools, then confirm the result in one sentence.");
+  await sendMessage(`Use the file tools to replace src/release-checklist.md with exactly this content, then confirm the result in one sentence:\n\n${expectedChecklist}`);
+  const capturedChecklist = (await readFile(checklistPath, "utf8")).replace(/\r\n/g, "\n").trimEnd();
+  if (capturedChecklist !== expectedChecklist.trimEnd()) {
+    throw new Error("Real provider did not write the expected README gallery fixture.");
+  }
   await page.evaluate(async () => {
     const threads = await window.jasmine.listThreads();
     const target = threads
@@ -63,6 +74,7 @@ try {
   await capture("main");
 
   await page.getByRole("button", { name: "Open Artifacts" }).click();
+  await page.locator(".artifact-change-row", { hasText: "release-checklist.md" }).waitFor({ timeout: 20_000 });
   await capture("artifacts");
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await page.locator(".terminal-output").waitFor();
