@@ -451,6 +451,7 @@ test("published package carries a hash-verified offline runtime and thin extensi
   assert.match(builder, /cp -L/u, "WSL binary copies must not pass through its truncation-prone stdout pipe");
   assert.match(builder, /readelf --version-info/u, "WSL runtime builds must inspect ELF symbol-version requirements");
   assert.match(builder, /assertGlibcBaseline/u, "runtime publication must enforce the declared glibc baseline");
+  assert.match(builder, /assertLinuxX64BuildHost/u, "host-native runtime tools must come from an x86_64 build environment");
   assert.match(builder, /apt-get -c \\"\$config\\"/u, "apt helper must explicitly load its secret temporary proxy config instead of trusting APT_CONFIG");
   const runtimeSource = await readFile(path.join(packageRoot, "runtime.ts"), "utf8");
   assert.ok(runtimeSource.includes('mv -T \\"$stage\\" \\"$runtime\\"'), "concurrent runtime publication must not nest staging directories");

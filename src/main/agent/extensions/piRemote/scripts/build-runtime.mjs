@@ -5,7 +5,7 @@ import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertGlibcBaseline } from "./glibc-baseline.mjs";
+import { assertGlibcBaseline, assertLinuxX64BuildHost } from "./glibc-baseline.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(packageRoot, "../../../../..");
@@ -156,6 +156,7 @@ async function bundleTmux(targetRoot) {
   await Promise.all([mkdir(binDir, { recursive: true }), mkdir(libDir, { recursive: true }), mkdir(licenseDir, { recursive: true })]);
   if (process.platform === "win32") {
     const distro = process.env.PI_REMOTE_WSL_DISTRO || "Ubuntu-18.04";
+    assertLinuxX64BuildHost(await wslText(distro, "uname -m"), `WSL distro ${distro}`);
     const tmuxPath = (await wslText(distro, "command -v tmux")).trim();
     if (!tmuxPath) throw new Error(`tmux is unavailable in WSL distro ${distro}`);
     const binDirWsl = await toWslPath(distro, binDir);
@@ -177,6 +178,7 @@ async function bundleTmux(targetRoot) {
       await runWsl(distro, `source=/usr/share/doc/${packageName}/copyright; if test -f \"$source\"; then cp -L \"$source\" ${shellQuote(`${licenseDirWsl}/${packageName}.copyright`)}; fi`);
     }
   } else if (process.platform === "linux") {
+    assertLinuxX64BuildHost((await runCapture("uname", ["-m"])).toString("utf8"), "Linux build host");
     const tmuxPath = (await runCapture("sh", ["-c", "command -v tmux"])).toString("utf8").trim();
     if (!tmuxPath) throw new Error("tmux is unavailable on the Linux build host");
     const tmuxTarget = path.join(binDir, "tmux.real");
