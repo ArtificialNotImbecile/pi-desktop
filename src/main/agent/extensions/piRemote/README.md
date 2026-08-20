@@ -213,6 +213,10 @@ Instead, `artifact.json` pins the archive SHA-256 and an HTTPS download URL,
 `npm run runtime:fetch` downloads and verifies it (run automatically by the
 root `postinstall`), and `npm run runtime:build:linux-x64` rebuilds it locally
 from pinned upstream sources when the descriptor is updated.
+Before publishing, the builder runs `readelf --version-info` over tmux and every
+bundled shared library and rejects any required GLIBC symbol version newer than
+the declared 2.27 baseline. The Windows build path defaults to the pinned
+`Ubuntu-18.04` WSL distribution, but this check also guards direct Linux builds.
 
 ```powershell
 npm.cmd run check

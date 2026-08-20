@@ -28,6 +28,8 @@ try {
   const info = await manager.ensureRuntime(profile);
   const currentAfterFirst = await readCurrent();
   assert(currentAfterFirst.endsWith(info.artifactSha256), "first connect installs package runtime");
+  const cwdSetup = await manager.ssh.run(profile, `mkdir -p -- ${remoteCwd}`);
+  assert(cwdSetup.code === 0, "upgrade fixture cwd exists before opening the old runtime session");
 
   // Sync a local model config so we can prove updates preserve it.
   const syncAgentDir = path.join(localRoot, "agent");
@@ -46,8 +48,12 @@ try {
   assert(previousInfo.artifactSha256 !== info.artifactSha256, "upgrade fixture uses a distinct content-addressed runtime");
   const currentAfterOld = await readCurrent();
   assert(currentAfterOld.endsWith(previousInfo.artifactSha256), "older package runtime selected while it is the shipped artifact");
+  const previousPort = await previousManager.openSession(profile, { cwd: remoteCwd });
+  await previousPort.close({ abort: false });
 
   // Step 3: the very next connection with the current package must auto-upgrade back.
+  const sessionsAfterUpgrade = await manager.listSessions(profile);
+  assert(Array.isArray(sessionsAfterUpgrade), "first current-runtime connection replaces the idle stale daemon");
   const upgraded = await manager.ensureRuntime(profile);
   assert(upgraded.artifactSha256 === info.artifactSha256, "next connection auto-upgrades to current package artifact");
   const currentAfterUpgrade = await readCurrent();
@@ -63,7 +69,7 @@ try {
   assert(stillWorks.artifactSha256 === info.artifactSha256, "runtime still healthy after old generation cleanup");
 
   completed = true;
-  process.stdout.write(`${JSON.stringify({ ok: true, results: ["runtime-auto-upgrade", "upgrade-preserves-config", "old-generation-removable"] }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, results: ["runtime-auto-upgrade", "idle-daemon-auto-upgrade", "upgrade-preserves-config", "old-generation-removable"] }, null, 2)}\n`);
 } finally {
   if (profile) {
     await manager.stop(profile).catch(() => {});

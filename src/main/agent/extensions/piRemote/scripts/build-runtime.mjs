@@ -5,6 +5,7 @@ import { chmod, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertGlibcBaseline } from "./glibc-baseline.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(packageRoot, "../../../../..");
@@ -18,6 +19,7 @@ const upstreamArchive = process.env.PI_REMOTE_PI_ARCHIVE
 const UPSTREAM_PI_SHA256 = "906fbe787fd225c4ac624fe7ebd5b1d55a60e0f5c7ef51795d231564f9ee1c13";
 const PI_VERSION = "0.84.2";
 const RUNTIME_VERSION = "0.1.0";
+const GLIBC_MINIMUM = "2.27";
 const toolCache = path.join(repoRoot, ".tmp", "pi-remote-tools");
 const FD_ARCHIVE = "fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz";
 const FD_SHA256 = "e3257d48e29a6be965187dbd24ce9af564e0fe67b3e73c9bdcd180f4ec11bdde";
@@ -97,21 +99,21 @@ try {
     piVersion: PI_VERSION,
     platform: "linux",
     arch: "x64",
-    libcMinimum: "2.27",
+    libcMinimum: GLIBC_MINIMUM,
     upstreamPiSha256: UPSTREAM_PI_SHA256,
     files
   }, null, 2)}\n`, "utf8");
   await createArchive(stage, archivePath);
   const archiveSha256 = await sha256(archivePath);
   const previousDescriptor = await readFile(path.join(outputDir, "artifact.json"), "utf8")
-    .then((raw) => JSON.parse(raw) as { archiveUrl?: string })
+    .then((raw) => JSON.parse(raw))
     .catch(() => ({}));
   const archiveUrl = process.env.PI_REMOTE_RUNTIME_URL || previousDescriptor.archiveUrl;
   await writeFile(path.join(outputDir, "artifact.json"), `${JSON.stringify({
     version: 1,
     platform: "linux",
     arch: "x64",
-    libcMinimum: "2.27",
+    libcMinimum: GLIBC_MINIMUM,
     runtimeVersion: RUNTIME_VERSION,
     piVersion: PI_VERSION,
     archive: path.basename(archivePath),
@@ -159,10 +161,17 @@ async function bundleTmux(targetRoot) {
     const binDirWsl = await toWslPath(distro, binDir);
     const libDirWsl = await toWslPath(distro, libDir);
     const licenseDirWsl = await toWslPath(distro, licenseDir);
-    await runWsl(distro, `cp -L ${shellQuote(tmuxPath)} ${shellQuote(`${binDirWsl}/tmux.real`)}`);
+    const glibcTargets = [`${binDirWsl}/tmux.real`];
+    await runWsl(distro, `cp -L ${shellQuote(tmuxPath)} ${shellQuote(glibcTargets[0])}`);
     const ldd = await wslText(distro, `ldd ${shellQuote(tmuxPath)}`);
     for (const source of parseBundledLibraries(ldd)) {
-      await runWsl(distro, `cp -L ${shellQuote(source)} ${shellQuote(`${libDirWsl}/${path.posix.basename(source)}`)}`);
+      const target = `${libDirWsl}/${path.posix.basename(source)}`;
+      await runWsl(distro, `cp -L ${shellQuote(source)} ${shellQuote(target)}`);
+      glibcTargets.push(target);
+    }
+    for (const target of glibcTargets) {
+      const versionInfo = await wslText(distro, `readelf --version-info ${shellQuote(target)}`);
+      assertGlibcBaseline(versionInfo, GLIBC_MINIMUM, path.posix.basename(target));
     }
     for (const packageName of ["tmux", "libevent-2.1-6", "libtinfo5", "libutempter0"]) {
       await runWsl(distro, `source=/usr/share/doc/${packageName}/copyright; if test -f \"$source\"; then cp -L \"$source\" ${shellQuote(`${licenseDirWsl}/${packageName}.copyright`)}; fi`);
@@ -170,9 +179,19 @@ async function bundleTmux(targetRoot) {
   } else if (process.platform === "linux") {
     const tmuxPath = (await runCapture("sh", ["-c", "command -v tmux"])).toString("utf8").trim();
     if (!tmuxPath) throw new Error("tmux is unavailable on the Linux build host");
-    await copyFile(tmuxPath, path.join(binDir, "tmux.real"));
+    const tmuxTarget = path.join(binDir, "tmux.real");
+    const glibcTargets = [tmuxTarget];
+    await copyFile(tmuxPath, tmuxTarget);
     const ldd = (await runCapture("ldd", [tmuxPath])).toString("utf8");
-    for (const source of parseBundledLibraries(ldd)) await copyFile(source, path.join(libDir, path.basename(source)));
+    for (const source of parseBundledLibraries(ldd)) {
+      const target = path.join(libDir, path.basename(source));
+      await copyFile(source, target);
+      glibcTargets.push(target);
+    }
+    for (const target of glibcTargets) {
+      const versionInfo = (await runCapture("readelf", ["--version-info", target])).toString("utf8");
+      assertGlibcBaseline(versionInfo, GLIBC_MINIMUM, path.basename(target));
+    }
     await copyFile("/usr/share/doc/tmux/copyright", path.join(licenseDir, "tmux.copyright")).catch(() => {});
   } else {
     throw new Error("linux-x64 runtime artifacts must be built on Linux or Windows with WSL");

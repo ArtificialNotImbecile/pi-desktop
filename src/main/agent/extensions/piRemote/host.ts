@@ -14,9 +14,11 @@ import {
   consumeRunDescriptor,
   daemonStatus,
   ensureHostPaths,
+  hasLiveSessionMode,
   runtimeEnvironment,
   releaseSessionMode,
   refreshSessionModeOwner,
+  sessionModeAcquireLockPath,
   storeRunDescriptor,
   type HostPaths
 } from "./daemon.js";
@@ -96,20 +98,13 @@ async function daemonServe(context: HostContext): Promise<number> {
 
 async function daemonEnsure(context: HostContext, print: boolean): Promise<number> {
   return withOwnedFileLock(path.join(context.paths.runDir, "daemon-start.lock"), async () => {
-    const current = await daemonStatus(context.paths);
+    let current = await daemonStatus(context.paths);
     if (current.running) {
-      if (!daemonMatchesRuntime(current, context)) {
-        throw new PiRemoteError("daemon-runtime-stale", "The active profile daemon belongs to a different managed runtime.", {
-          phase: "runtime",
-          remediation: "Run `pi-remote stop <profile>` before connecting with the upgraded runtime.",
-          safeDetails: {
-            activeRuntimeVersion: current.runtimeVersion ?? null,
-            expectedRuntimeVersion: RUNTIME_VERSION,
-            activeArtifactSha256: current.artifactSha256 ?? null,
-            expectedArtifactSha256: context.artifactSha256
-          }
-        });
-      }
+      if (!daemonMatchesRuntime(current, context)) await replaceIdleStaleDaemon(context);
+      current = await daemonStatus(context.paths);
+      if (current.running && !daemonMatchesRuntime(current, context)) throw staleDaemonError(current, context);
+    }
+    if (current.running) {
       if (print) printLifecycle("PI_REMOTE_DAEMON/1", { running: true, pid: current.pid, reused: true });
       return 0;
     }
@@ -150,6 +145,43 @@ export function daemonMatchesRuntime(
   expected: { artifactSha256: string }
 ): boolean {
   return status.runtimeVersion === RUNTIME_VERSION && status.artifactSha256 === expected.artifactSha256;
+}
+
+async function replaceIdleStaleDaemon(context: HostContext): Promise<void> {
+  await withOwnedFileLock(sessionModeAcquireLockPath(context.paths), async () => {
+    const current = await daemonStatus(context.paths);
+    if (!current.running || daemonMatchesRuntime(current, context)) return;
+    // Holding the mode acquire lock closes the check-to-kill race: an old
+    // daemon cannot start an RPC child, and TUI startup cannot claim the mode,
+    // after we have established that no managed work is active.
+    if (await hasLiveSessionMode(context.paths)) throw staleDaemonError(current, context);
+    await terminateDaemonProcess(context.paths, current.pid!, {
+      code: "daemon-upgrade-stop-timeout",
+      message: "Idle stale daemon did not finish stopping during the runtime upgrade."
+    });
+  }, {
+    attempts: 100,
+    pollMs: 25,
+    timeoutCode: "session-mode-lock-timeout",
+    timeoutMessage: "Timed out waiting to inspect the active runtime mode during upgrade.",
+    phase: "session"
+  });
+}
+
+function staleDaemonError(
+  current: { runtimeVersion?: string; artifactSha256?: string },
+  context: HostContext
+): PiRemoteError {
+  return new PiRemoteError("daemon-runtime-stale", "The active profile daemon belongs to a different managed runtime.", {
+    phase: "runtime",
+    remediation: "Wait for active work to finish, or run `pi-remote stop <profile>` before connecting with the upgraded runtime.",
+    safeDetails: {
+      activeRuntimeVersion: current.runtimeVersion ?? null,
+      expectedRuntimeVersion: RUNTIME_VERSION,
+      activeArtifactSha256: current.artifactSha256 ?? null,
+      expectedArtifactSha256: context.artifactSha256
+    }
+  });
 }
 
 async function daemonStatusCommand(context: HostContext): Promise<number> {
@@ -287,19 +319,10 @@ async function stopCommand(context: HostContext): Promise<number> {
     }
     await withOwnedFileLock(path.join(context.paths.runDir, "daemon-start.lock"), async () => {
       const status = await daemonStatus(context.paths);
-      if (status.running) {
-        try { process.kill(status.pid!, "SIGTERM"); } catch { /* already stopped */ }
-        const deadline = Date.now() + 5_000;
-        while (Date.now() < deadline) {
-          const current = await daemonStatus(context.paths);
-          if (!current.running && !existsSync(context.paths.socketPath) && !existsSync(context.paths.statusPath)) break;
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        const remaining = await daemonStatus(context.paths);
-        if (remaining.running || existsSync(context.paths.socketPath) || existsSync(context.paths.statusPath)) {
-          throw new PiRemoteError("daemon-stop-timeout", "Remote daemon did not finish stopping within five seconds.", { phase: "runtime", retryable: true });
-        }
-      }
+      if (status.running) await terminateDaemonProcess(context.paths, status.pid!, {
+        code: "daemon-stop-timeout",
+        message: "Remote daemon did not finish stopping within five seconds."
+      });
       await rm(sessionDescriptorPath, { force: true }).catch(() => {});
       await rm(path.join(context.paths.profileRoot, "session-mode.json"), { force: true }).catch(() => {});
       await rm(path.join(context.paths.profileRoot, "egress.json"), { force: true }).catch(() => {});
@@ -307,6 +330,24 @@ async function stopCommand(context: HostContext): Promise<number> {
   });
   printLifecycle("PI_REMOTE_STOP/1", { stopped: true });
   return 0;
+}
+
+async function terminateDaemonProcess(
+  paths: HostPaths,
+  pid: number,
+  timeout: { code: string; message: string }
+): Promise<void> {
+  try { process.kill(pid, "SIGTERM"); } catch { /* already stopped */ }
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const current = await daemonStatus(paths);
+    if (!current.running && !existsSync(paths.socketPath) && !existsSync(paths.statusPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const remaining = await daemonStatus(paths);
+  if (remaining.running || existsSync(paths.socketPath) || existsSync(paths.statusPath)) {
+    throw new PiRemoteError(timeout.code, timeout.message, { phase: "runtime", retryable: true });
+  }
 }
 
 async function egressLease(context: HostContext): Promise<number> {

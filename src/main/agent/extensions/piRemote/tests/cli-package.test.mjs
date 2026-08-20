@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -448,6 +449,8 @@ test("published package carries a hash-verified offline runtime and thin extensi
   assert.match(builder, /pi-remote-runtime-build-linux-x64/u, "compiled host output path must stay deterministic");
   assert.match(builder, /gzip -n/u, "gzip header timestamps must be disabled");
   assert.match(builder, /cp -L/u, "WSL binary copies must not pass through its truncation-prone stdout pipe");
+  assert.match(builder, /readelf --version-info/u, "WSL runtime builds must inspect ELF symbol-version requirements");
+  assert.match(builder, /assertGlibcBaseline/u, "runtime publication must enforce the declared glibc baseline");
   assert.match(builder, /apt-get -c \\"\$config\\"/u, "apt helper must explicitly load its secret temporary proxy config instead of trusting APT_CONFIG");
   const runtimeSource = await readFile(path.join(packageRoot, "runtime.ts"), "utf8");
   assert.ok(runtimeSource.includes('mv -T \\"$stage\\" \\"$runtime\\"'), "concurrent runtime publication must not nest staging directories");
@@ -484,6 +487,14 @@ test("published package carries a hash-verified offline runtime and thin extensi
   assert.match(fileLock, /claimed\.mtimeMs !== observedMtimeMs/u, "stale takeover must detect a heartbeat after its first observation");
   assert.match(fileLock, /rename\(tombstonePath, path\.join\(lockPath, ownerName\)\)/u, "a refreshed owner must be restored before takeover returns");
   assert.match(fileLock, /rmdir\(lockPath\)/u, "replacement lock directories must remain protected by their non-empty owner token");
+});
+
+test("package maintenance scripts are valid Node modules", async () => {
+  const scriptsDir = path.join(process.cwd(), "scripts");
+  for (const name of (await readdir(scriptsDir)).filter((entry) => entry.endsWith(".mjs")).sort()) {
+    const result = spawnSync(process.execPath, ["--check", path.join(scriptsDir, name)], { encoding: "utf8" });
+    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+  }
 });
 
 async function sha256(filePath) {

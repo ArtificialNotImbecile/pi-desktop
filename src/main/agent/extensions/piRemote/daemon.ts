@@ -556,13 +556,9 @@ export async function daemonStatus(paths: HostPaths): Promise<{ running: boolean
 
 export async function acquireSessionMode(paths: HostPaths, mode: "rpc" | "tui", runId: string): Promise<void> {
   const target = path.join(paths.profileRoot, "session-mode.json");
-  const guardPath = `${target}.acquire.lock`;
+  const guardPath = sessionModeAcquireLockPath(paths);
   await withOwnedFileLock(guardPath, async () => {
-    const lease = await readFile(target, "utf8").then((raw) => JSON.parse(raw) as { pid?: number; processIdentity?: string }).catch((): { pid?: number; processIdentity?: string } => ({}));
-    const live = lease.pid && lease.processIdentity
-      ? await procStartTime(lease.pid).then((identity) => identity === lease.processIdentity).catch(() => false)
-      : false;
-    if (live) throw new PiRemoteError("session-mode-conflict", "Another Pi runtime mode is already active for this profile.", {
+    if (await hasLiveSessionMode(paths)) throw new PiRemoteError("session-mode-conflict", "Another Pi runtime mode is already active for this profile.", {
       phase: "session", retryable: true, remediation: "Reconnect to the active mode or run `pi-remote stop <profile>` first."
     });
     await rm(target, { force: true }).catch(() => {});
@@ -576,6 +572,21 @@ export async function acquireSessionMode(paths: HostPaths, mode: "rpc" | "tui", 
     timeoutMessage: "Timed out waiting for the runtime mode lock.",
     phase: "session"
   });
+}
+
+/** The same lock guards both mode acquisition and idle-daemon replacement. */
+export function sessionModeAcquireLockPath(paths: HostPaths): string {
+  return path.join(paths.profileRoot, "session-mode.json.acquire.lock");
+}
+
+/** True only while a live RPC or TUI process owns this profile's mode lease. */
+export async function hasLiveSessionMode(paths: HostPaths): Promise<boolean> {
+  const target = path.join(paths.profileRoot, "session-mode.json");
+  const lease = await readFile(target, "utf8")
+    .then((raw) => JSON.parse(raw) as { pid?: number; processIdentity?: string })
+    .catch((): { pid?: number; processIdentity?: string } => ({}));
+  return Boolean(lease.pid && lease.processIdentity
+    && await procStartTime(lease.pid).then((identity) => identity === lease.processIdentity).catch(() => false));
 }
 
 export async function refreshSessionModeOwner(paths: HostPaths, runId: string): Promise<void> {
