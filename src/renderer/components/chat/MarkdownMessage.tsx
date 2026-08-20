@@ -395,17 +395,32 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
     h4({ children }) {
       return <strong className="markdown-heading">{children}</strong>;
     },
-    a({ children, href }) {
+    a({ children, href, node }) {
       const target = classifyMessageLink(href);
-      if (target.kind === "external") return <MessageExternalLink href={target.href}>{children}</MessageExternalLink>;
+      const onlyChild = node?.children.length === 1 ? node.children[0] : undefined;
+      const linkedImageAlt = onlyChild?.type === "element" && onlyChild.tagName === "img"
+        ? (typeof onlyChild.properties.alt === "string" ? onlyChild.properties.alt : "")
+        : null;
+      // A Markdown image nested in a link normally reaches this component as an
+      // already-interactive MessageImage/MessageExternalLink child. The outer
+      // destination owns activation, so render its alt text as the one control
+      // instead of producing button-in-anchor, button-in-button, or nested links.
+      const label = linkedImageAlt === null ? children : linkedImageAlt;
+      if (target.kind === "external") return <MessageExternalLink href={target.href}>{label}</MessageExternalLink>;
       // An image destination reached through `[label](/abs/a.png)` was written
       // as a link, so it stays a link -- the author asked to reference the file,
       // not to display it.
       if (target.kind === "local-file" || target.kind === "local-image") {
-        return <MessageFileReference path={target.path} line={target.line} label={children} />;
+        return (
+          <MessageFileReference
+            path={target.path}
+            line={target.line}
+            label={linkedImageAlt === "" ? undefined : label}
+          />
+        );
       }
       // Nothing safe to navigate to: keep the text, drop the affordance.
-      return target.href ? <a href={target.href}>{children}</a> : <span>{children}</span>;
+      return target.href ? <a href={target.href}>{label || target.href}</a> : <span>{label}</span>;
     },
     img({ src, alt }) {
       const target = classifyMessageLink(typeof src === "string" ? src : "");

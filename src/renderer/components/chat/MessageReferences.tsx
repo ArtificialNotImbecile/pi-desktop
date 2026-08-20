@@ -32,6 +32,8 @@ export function ReferenceResolution(props: { settled: boolean; children: ReactNo
 }
 
 export function MessageExternalLink(props: { href: string; children: ReactNode }) {
+  const { t } = useI18n();
+  const [actionError, setActionError] = useState<string | null>(null);
   const safeDisplayHref = /^https?:/i.test(props.href)
     ? sanitizedHttpUrl(props.href)
     : credentialSafeText(props.href);
@@ -44,11 +46,15 @@ export function MessageExternalLink(props: { href: string; children: ReactNode }
         // DOM attributes expose only a credential-safe display URL. The full
         // destination stays in this handler closure for the explicit open.
         event.preventDefault();
-        void getBridge().openExternalUrl(props.href).catch(() => undefined);
+        setActionError(null);
+        void getBridge().openExternalUrl(props.href).catch(() => {
+          setActionError(t("message.linkOpenFailed"));
+        });
       }}
     >
-      {props.children}
+      {props.children || safeDisplayHref}
       <span className="message-link-mark" aria-hidden="true">↗</span>
+      {actionError && <span className="message-link-error" aria-live="polite">{actionError}</span>}
     </a>
   );
 }
@@ -65,13 +71,17 @@ export function MessageFileReference(props: { path: string; line?: number; label
   const { t } = useI18n();
   const { settled, scope } = useContext(ReferenceResolutionContext);
   const description = useLocalFileDescription(props.path, settled, scope);
+  const [actionError, setActionError] = useState<string | null>(null);
   const resolvedPath = description?.path ?? props.path;
+  const displayPath = credentialSafeText(resolvedPath);
   const missing = description ? !description.exists : false;
   const isDirectory = description?.kind === "directory";
-  const name = description?.name || fileName(props.path) || props.path;
-  const directory = fileDirectory(resolvedPath);
+  const rawName = description?.name || fileName(props.path) || props.path;
+  const name = credentialSafeText(rawName) || t(isDirectory ? "message.openFolder" : "message.openFile");
+  const directory = displayPath ? fileDirectory(displayPath) : "";
   const badge = fileBadge(props.path, isDirectory);
   const lineLabel = fileLineLabel(props.line);
+  const stateText = missing ? t("message.fileMissing") : actionError;
 
   return (
     <button
@@ -79,15 +89,22 @@ export function MessageFileReference(props: { path: string; line?: number; label
       className="file-reference"
       data-category={isDirectory ? "folder" : fileCategory(props.path)}
       data-missing={missing ? "true" : undefined}
-      title={props.line ? `${resolvedPath}:${props.line}` : resolvedPath}
+      data-action-error={actionError ? "true" : undefined}
+      title={displayPath ? (props.line ? `${displayPath}:${props.line}` : displayPath) : undefined}
       disabled={missing}
       onClick={() => {
-        void getBridge().openLocalPath(resolvedPath).catch(() => undefined);
+        setActionError(null);
+        void getBridge().openLocalPath(resolvedPath).catch(() => {
+          setActionError(t("message.fileOpenFailed"));
+        });
       }}
       onContextMenu={(event) => {
         event.preventDefault();
         if (missing) return;
-        void getBridge().revealLocalPath(resolvedPath).catch(() => undefined);
+        setActionError(null);
+        void getBridge().revealLocalPath(resolvedPath).catch(() => {
+          setActionError(t("message.fileRevealFailed"));
+        });
       }}
     >
       <span className="file-reference-badge" aria-hidden="true">{badge}</span>
@@ -96,7 +113,7 @@ export function MessageFileReference(props: { path: string; line?: number; label
         {directory && <span className="file-reference-path">{directory}</span>}
       </span>
       {lineLabel && <span className="file-reference-line" aria-hidden="true">{lineLabel}</span>}
-      {missing && <span className="file-reference-state">{t("message.fileMissing")}</span>}
+      {stateText && <span className="file-reference-state" aria-live="polite">{stateText}</span>}
     </button>
   );
 }
@@ -118,7 +135,7 @@ export function MessageImage(props: { path: string; alt: string }) {
     return <span className="message-image-placeholder" aria-hidden="true" />;
   }
   if (failed || !description.exists || !description.isImage) {
-    return <MessageFileReference path={props.path} label={props.alt || fileName(props.path)} />;
+    return <MessageFileReference path={props.path} label={props.alt || undefined} />;
   }
 
   const source = localFileSrc(description.path);
@@ -134,7 +151,11 @@ export function MessageImage(props: { path: string; alt: string }) {
       </button>
       {props.alt && <span className="message-image-caption">{props.alt}</span>}
       {preview && (
-        <ImageLightbox src={source} name={description.name} onClose={() => setPreview(false)} />
+        <ImageLightbox
+          src={source}
+          name={credentialSafeText(description.name) || t("message.openImage")}
+          onClose={() => setPreview(false)}
+        />
       )}
     </>
   );

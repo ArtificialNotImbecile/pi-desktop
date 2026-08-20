@@ -114,6 +114,12 @@ export type FakeBridge = {
    * sees when a model names a file that is not there.
    */
   setLocalFiles(files: Array<Partial<LocalFileDescription> & { path: string }>): void;
+  /** Overrides the next local-file open so failure feedback can be exercised. */
+  setOpenLocalPathBehavior(behavior: JasmineApi["openLocalPath"]): void;
+  /** Overrides the next reveal action so failure feedback can be exercised. */
+  setRevealLocalPathBehavior(behavior: JasmineApi["revealLocalPath"]): void;
+  /** Overrides the next external open so failure feedback can be exercised. */
+  setOpenExternalUrlBehavior(behavior: JasmineApi["openExternalUrl"]): void;
   /** Overrides the next `sendChatMessage` outcome (e.g. a provider failure). */
   setSendBehavior(behavior: JasmineApi["sendChatMessage"]): void;
   /** Replaces draft reads so a test can hold hydration deterministically. */
@@ -128,6 +134,9 @@ export function createFakeBridge(): FakeBridge {
   let holdCount = 0;
   let sendBehavior: JasmineApi["sendChatMessage"] | null = null;
   let getThreadDraftBehavior: JasmineApi["getThreadDraft"] = async () => "";
+  let openLocalPathBehavior: JasmineApi["openLocalPath"] | null = null;
+  let revealLocalPathBehavior: JasmineApi["revealLocalPath"] | null = null;
+  let openExternalUrlBehavior: JasmineApi["openExternalUrl"] | null = null;
   const appUpdateState: AppUpdateState = {
     phase: "idle",
     supported: true,
@@ -379,14 +388,29 @@ export function createFakeBridge(): FakeBridge {
     },
     openLocalPath(filePath) {
       calls.openLocalPath.push(filePath);
+      if (openLocalPathBehavior) {
+        const behavior = openLocalPathBehavior;
+        openLocalPathBehavior = null;
+        return behavior(filePath);
+      }
       return Promise.resolve();
     },
     revealLocalPath(filePath) {
       calls.revealLocalPath.push(filePath);
+      if (revealLocalPathBehavior) {
+        const behavior = revealLocalPathBehavior;
+        revealLocalPathBehavior = null;
+        return behavior(filePath);
+      }
       return Promise.resolve();
     },
     openExternalUrl(url) {
       calls.openExternalUrl.push(url);
+      if (openExternalUrlBehavior) {
+        const behavior = openExternalUrlBehavior;
+        openExternalUrlBehavior = null;
+        return behavior(url);
+      }
       return Promise.resolve();
     }
   } satisfies ModeledBridgeApi;
@@ -447,6 +471,15 @@ export function createFakeBridge(): FakeBridge {
     },
     setGetThreadDraftBehavior(behavior) {
       getThreadDraftBehavior = behavior;
+    },
+    setOpenLocalPathBehavior(behavior) {
+      openLocalPathBehavior = behavior;
+    },
+    setRevealLocalPathBehavior(behavior) {
+      revealLocalPathBehavior = behavior;
+    },
+    setOpenExternalUrlBehavior(behavior) {
+      openExternalUrlBehavior = behavior;
     },
     setLocalFiles(files) {
       for (const file of files) {

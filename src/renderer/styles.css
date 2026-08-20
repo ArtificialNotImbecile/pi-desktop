@@ -4195,6 +4195,14 @@ body:has(.settings-panel) .message-jump-rail {
   font-size: 0.85em;
 }
 
+.file-reference[data-action-error="true"] .file-reference-state { color: var(--danger); }
+
+.message-link-error {
+  margin-left: 6px;
+  color: var(--danger);
+  font-size: 0.85em;
+}
+
 .file-reference:disabled {
   border-style: dashed;
   background: transparent;

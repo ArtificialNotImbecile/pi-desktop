@@ -95,6 +95,50 @@ describe("local file references in an answer", () => {
     expect(fake.calls.revealLocalPath).toEqual(["/Users/me/a.csv"]);
   });
 
+  test("keeps credential-bearing local paths out of visible file chrome", async () => {
+    const sensitivePath = "/tmp/access_token=hidden/report.docx";
+    fake.setLocalFiles([{ path: sensitivePath }]);
+    mount(`See [report](<${sensitivePath}>).`);
+
+    const button = await chip();
+    await waitFor(() => expect(fake.calls.describeLocalFiles).toEqual([[sensitivePath]]));
+    expect(button.getAttribute("title")).toBeNull();
+    expect(button.querySelector(".file-reference-path")).toBeNull();
+    expect(button.outerHTML).not.toContain("access_token");
+
+    fireEvent.click(button);
+    expect(fake.calls.openLocalPath).toEqual([sensitivePath]);
+  });
+
+  test("shows an actionable error when opening a file fails", async () => {
+    const filePath = "/tmp/report.docx";
+    fake.setLocalFiles([{ path: filePath }]);
+    fake.setOpenLocalPathBehavior(() => Promise.reject(new Error("private OS detail")));
+    mount(`[report](${filePath})`);
+
+    const button = await chip();
+    fireEvent.click(button);
+    expect(await screen.findByText(/Could not open file/)).toBeTruthy();
+    expect(button.outerHTML).not.toContain("private OS detail");
+
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.queryByText(/Could not open file/)).toBeNull());
+    expect(fake.calls.openLocalPath).toEqual([filePath, filePath]);
+  });
+
+  test("shows an actionable error when revealing a file fails", async () => {
+    const filePath = "/tmp/report.docx";
+    fake.setLocalFiles([{ path: filePath }]);
+    fake.setRevealLocalPathBehavior(() => Promise.reject(new Error("private OS detail")));
+    mount(`[report](${filePath})`);
+
+    const button = await chip();
+    fireEvent.contextMenu(button);
+    expect(await screen.findByText(/Could not show file in its folder/)).toBeTruthy();
+    expect(button.outerHTML).not.toContain("private OS detail");
+    expect(fake.calls.revealLocalPath).toEqual([filePath]);
+  });
+
   test("asks the main process about each referenced path exactly once", async () => {
     fake.setLocalFiles([{ path: "/a/one.ts" }, { path: "/a/two.ts" }]);
     mount("[one](/a/one.ts) and [two](/a/two.ts) and [one again](/a/one.ts)");
@@ -239,11 +283,52 @@ describe("web links in an answer", () => {
     expect(screen.getByRole("link", { name: "dashboard" })).toBeTruthy();
   });
 
+  test("shows an actionable error when the OS cannot open a web link", async () => {
+    fake.setOpenExternalUrlBehavior(() => Promise.reject(new Error("private OS detail")));
+    mount("Open the [report](https://example.com/report).");
+
+    const link = await screen.findByRole("link", { name: "report" });
+    fireEvent.click(link);
+    expect(await screen.findByText(/Could not open link/)).toBeTruthy();
+    expect(link.outerHTML).not.toContain("private OS detail");
+
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.queryByText(/Could not open link/)).toBeNull());
+    expect(fake.calls.openExternalUrl).toEqual([
+      "https://example.com/report",
+      "https://example.com/report"
+    ]);
+  });
+
   test("strips a destination whose scheme the contract excludes", async () => {
     mount("Do not [click](javascript:alert(1)) this.");
 
     await waitFor(() => expect(screen.getByText("click")).toBeTruthy());
     expect(document.querySelector("a")).toBeNull();
+  });
+});
+
+describe("linked images in an answer", () => {
+  test("renders a remote image nested in a web link as one outer link", async () => {
+    mount("[![preview](https://images.example/chart.png)](https://example.com/report)");
+
+    const link = await screen.findByRole("link", { name: "preview" });
+    expect(document.querySelectorAll("a")).toHaveLength(1);
+    expect(document.querySelector("button")).toBeNull();
+    fireEvent.click(link);
+    expect(fake.calls.openExternalUrl).toEqual(["https://example.com/report"]);
+  });
+
+  test("renders a file image nested in a local link as one outer file control", async () => {
+    fake.setLocalFiles([{ path: "/tmp/report.pdf" }]);
+    mount("[![preview](/tmp/readme.txt)](/tmp/report.pdf)");
+
+    const button = await chip();
+    await waitFor(() => expect(fake.calls.describeLocalFiles).toEqual([["/tmp/report.pdf"]]));
+    expect(document.querySelectorAll("button")).toHaveLength(1);
+    expect(document.querySelector("a")).toBeNull();
+    fireEvent.click(button);
+    expect(fake.calls.openLocalPath).toEqual(["/tmp/report.pdf"]);
   });
 });
 
