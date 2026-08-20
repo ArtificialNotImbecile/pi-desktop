@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { JsonFrameDecoder, PiRemoteError, ProfileStore, encodeJsonFrame } from "../dist/index.js";
-import { reclaimOwnedLock, removeOwnedLock, withOwnedFileLock } from "../dist/file-lock.js";
+import { isLockDirectoryGone, reclaimOwnedLock, removeOwnedLock, withOwnedFileLock } from "../dist/file-lock.js";
 
 test("profile storage is atomic, versioned, isolated, and validates SSH/path input", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-profile-"));
@@ -94,6 +94,20 @@ test("editing a profile keeps its id, so remote sessions and credentials stay at
     assert.equal((await store.list()).length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a lock directory a contender is deleting reads as gone on every platform", () => {
+  // Scanning the lock races another contender removing it. POSIX answers
+  // ENOENT, but Windows answers EPERM or EBUSY for a directory pending
+  // deletion, and treating those as failures made concurrent profile writes
+  // fail there while passing everywhere else.
+  for (const code of ["ENOENT", "ENOTDIR", "EPERM", "EBUSY"]) {
+    assert.equal(isLockDirectoryGone(code), true, `${code} means the lock is already gone`);
+  }
+  // A lock this process genuinely may not read is a real error, not a race.
+  for (const code of ["EACCES", "EIO", "EMFILE", undefined]) {
+    assert.equal(isLockDirectoryGone(code), false, `${code} is not a missing lock`);
   }
 });
 

@@ -14,6 +14,19 @@ export interface OwnedFileLockOptions {
 
 const OWNER_NAME = /^owner-[0-9a-f-]{36}\.lock$/u;
 const RELEASING_NAME = /^releasing-[0-9a-f-]{36}-[0-9a-f-]{36}\.lock$/u;
+/** Codes that mean the lock directory is already gone or on its way out. */
+const LOCK_DIRECTORY_GONE = ["ENOENT", "ENOTDIR", "EPERM", "EBUSY"];
+
+/**
+ * Whether a filesystem error means the lock directory a contender was about to
+ * scan or remove no longer exists. POSIX reports that as ENOENT; Windows
+ * reports a directory pending deletion as EPERM or EBUSY, which is why those
+ * are the same answer rather than a failure. EACCES is deliberately absent: a
+ * lock directory the process genuinely may not read is a real error.
+ */
+export function isLockDirectoryGone(code: string | undefined): boolean {
+  return LOCK_DIRECTORY_GONE.includes(code ?? "");
+}
 
 /**
  * Remove one cryptographically unique owner from a non-empty lock directory.
@@ -57,7 +70,8 @@ async function claimOwnedLock(lockPath: string, ownerName: string): Promise<stri
 async function finishOwnedLockRemoval(lockPath: string, tombstonePath: string): Promise<void> {
   await rm(tombstonePath, { force: true }).catch(() => {});
   await rmdir(lockPath).catch((error) => {
-    if (!["ENOENT", "ENOTEMPTY", "EEXIST", "EBUSY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!isLockDirectoryGone(code) && !["ENOTEMPTY", "EEXIST"].includes(code ?? "")) throw error;
   });
 }
 
@@ -129,7 +143,11 @@ async function reclaimStaleLock(lockPath: string, staleBefore: number): Promise<
   try {
     entries = await readdir(lockPath, { withFileTypes: true });
   } catch (error) {
-    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+    // Scanning races a contender removing the same directory. POSIX reports
+    // that as ENOENT, but Windows reports a directory pending deletion as EPERM
+    // or EBUSY -- the same outcome, and the same one the rmdir below already
+    // treats as benign. There is nothing left to reclaim either way.
+    if (isLockDirectoryGone((error as NodeJS.ErrnoException).code)) return;
     throw error;
   }
   const owner = entries.find((entry) => entry.isFile() && OWNER_NAME.test(entry.name));
@@ -145,6 +163,7 @@ async function reclaimStaleLock(lockPath: string, staleBefore: number): Promise<
     if (info && info.mtimeMs <= staleBefore) await rm(target, { force: true }).catch(() => {});
   }
   await rmdir(lockPath).catch((error) => {
-    if (!["ENOENT", "ENOTEMPTY", "EEXIST", "EBUSY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!isLockDirectoryGone(code) && !["ENOTEMPTY", "EEXIST"].includes(code ?? "")) throw error;
   });
 }
