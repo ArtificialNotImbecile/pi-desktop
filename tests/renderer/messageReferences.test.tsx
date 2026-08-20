@@ -50,6 +50,7 @@ describe("local file references in an answer", () => {
     expect(button.textContent).toContain("Q3 summary");
     expect(button.querySelector(".file-reference-badge")?.textContent).toBe("DOCX");
     expect(button.dataset.category).toBe("document");
+    expect(screen.getByRole("button", { name: /Q3 summary/ })).toBe(button);
 
     fireEvent.click(button);
     expect(fake.calls.openLocalPath).toEqual(["/Users/me/reports/Q3.docx"]);
@@ -103,6 +104,26 @@ describe("local file references in an answer", () => {
     // Batched into a single round trip, with the repeated path asked for once.
     expect(fake.calls.describeLocalFiles).toEqual([["/a/one.ts", "/a/two.ts"]]);
   });
+
+  test("revalidates a missing path when a later answer references the created file", async () => {
+    const first = mount("Not ready: [report](/tmp/report.docx)");
+    const missing = await chip();
+    await waitFor(() => expect(missing.disabled).toBe(true));
+    first.unmount();
+
+    fake.setLocalFiles([{ path: "/tmp/report.docx" }]);
+    mount("Now ready: [report](/tmp/report.docx)");
+
+    const available = await chip();
+    await waitFor(() => expect(fake.calls.describeLocalFiles).toHaveLength(2));
+    await waitFor(() => expect(available.disabled).toBe(false));
+    fireEvent.click(available);
+    expect(fake.calls.describeLocalFiles).toEqual([
+      ["/tmp/report.docx"],
+      ["/tmp/report.docx"]
+    ]);
+    expect(fake.calls.openLocalPath).toEqual(["/tmp/report.docx"]);
+  });
 });
 
 describe("local images in an answer", () => {
@@ -114,7 +135,7 @@ describe("local images in an answer", () => {
     expect(rendered.getAttribute("src")).toBe("jasmine-file://local/Users/me/chart.png");
     expect(rendered.getAttribute("alt")).toBe("Revenue chart");
 
-    fireEvent.click(screen.getByRole("button", { name: "Open image preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revenue chart" }));
     expect(document.querySelector(".image-lightbox")).not.toBeNull();
   });
 
@@ -144,6 +165,23 @@ describe("local images in an answer", () => {
     expect(document.querySelector(".message-image")).toBeNull();
   });
 
+  test("revalidates image capability when a later answer references a replaced file", async () => {
+    fake.setLocalFiles([{ path: "/tmp/chart.png", isImage: false }]);
+    const first = mount("![chart](/tmp/chart.png)");
+    await chip();
+    first.unmount();
+
+    fake.setLocalFiles([{ path: "/tmp/chart.png", isImage: true, mediaType: "image/png" }]);
+    mount("![updated chart](/tmp/chart.png)");
+
+    const rendered = await image();
+    expect(rendered.getAttribute("alt")).toBe("updated chart");
+    expect(fake.calls.describeLocalFiles).toEqual([
+      ["/tmp/chart.png"],
+      ["/tmp/chart.png"]
+    ]);
+  });
+
   test("never fetches a remote image", async () => {
     mount("![remote](https://example.com/a.png)");
 
@@ -163,8 +201,30 @@ describe("web links in an answer", () => {
     });
     fireEvent.click(link);
     expect(fake.calls.openExternalUrl).toEqual(["https://example.com/docs"]);
+    expect(screen.getByRole("link", { name: "docs" })).toBe(link);
     // Nothing in the app may open a window for model-authored content.
     expect(link.getAttribute("target")).toBeNull();
+  });
+
+  test("keeps credentials out of link chrome while opening the original destination", async () => {
+    const destination = "https://user:pass@example.test/file?access_token=hidden";
+    mount(`Read the [report](<${destination}>).`);
+
+    const link = await waitFor(() => screen.getByRole<HTMLAnchorElement>("link", { name: "report" }));
+    expect(link.getAttribute("href")).toBe("https://example.test/file");
+    expect(link.getAttribute("title")).toBe("https://example.test/file");
+    expect(link.outerHTML).not.toContain("user:pass");
+    expect(link.outerHTML).not.toContain("access_token");
+
+    fireEvent.click(link);
+    expect(fake.calls.openExternalUrl).toEqual([destination]);
+  });
+
+  test("preserves each web link label as its accessible name", async () => {
+    mount("Open the [report](https://example.com/report) or [dashboard](https://example.com/dashboard).");
+
+    expect(await screen.findByRole("link", { name: "report" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "dashboard" })).toBeTruthy();
   });
 
   test("strips a destination whose scheme the contract excludes", async () => {

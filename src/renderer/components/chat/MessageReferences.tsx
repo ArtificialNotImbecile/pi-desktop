@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import { ImageLightbox } from "./ImageLightbox";
 import { useLocalFileDescription } from "./localFileStore";
 import { fileBadge, fileCategory, fileDirectory, fileLineLabel, fileName, localFileSrc } from "./messageLinks";
+import { credentialSafeText, sanitizedHttpUrl } from "./safeDisplay";
 
 /**
  * Whether references in this Markdown root may resolve themselves yet. The
@@ -11,27 +12,37 @@ import { fileBadge, fileCategory, fileDirectory, fileLineLabel, fileName, localF
  * main process about it would be one wasted lookup per token and would briefly
  * render a real-looking "file not found" for a path still being typed.
  */
-const ReferenceResolutionContext = createContext(true);
+type ReferenceResolutionValue = {
+  settled: boolean;
+  scope: object;
+};
+
+const ReferenceResolutionContext = createContext<ReferenceResolutionValue>({
+  settled: true,
+  scope: {}
+});
 
 export function ReferenceResolution(props: { settled: boolean; children: ReactNode }) {
+  const [scope] = useState<object>(() => ({}));
   return (
-    <ReferenceResolutionContext.Provider value={props.settled}>
+    <ReferenceResolutionContext.Provider value={{ settled: props.settled, scope }}>
       {props.children}
     </ReferenceResolutionContext.Provider>
   );
 }
 
 export function MessageExternalLink(props: { href: string; children: ReactNode }) {
-  const { t } = useI18n();
+  const safeDisplayHref = /^https?:/i.test(props.href)
+    ? sanitizedHttpUrl(props.href)
+    : credentialSafeText(props.href);
   return (
     <a
       className="message-link"
-      href={props.href}
-      title={props.href}
-      aria-label={t("message.openLink")}
+      href={safeDisplayHref || undefined}
+      title={safeDisplayHref || undefined}
       onClick={(event) => {
-        // The href stays on the anchor for hover, copy-link, and accessibility,
-        // but the OS browser owns the navigation -- never a window in this app.
+        // DOM attributes expose only a credential-safe display URL. The full
+        // destination stays in this handler closure for the explicit open.
         event.preventDefault();
         void getBridge().openExternalUrl(props.href).catch(() => undefined);
       }}
@@ -52,8 +63,8 @@ export function MessageExternalLink(props: { href: string; children: ReactNode }
  */
 export function MessageFileReference(props: { path: string; line?: number; label?: ReactNode }) {
   const { t } = useI18n();
-  const settled = useContext(ReferenceResolutionContext);
-  const description = useLocalFileDescription(props.path, settled);
+  const { settled, scope } = useContext(ReferenceResolutionContext);
+  const description = useLocalFileDescription(props.path, settled, scope);
   const resolvedPath = description?.path ?? props.path;
   const missing = description ? !description.exists : false;
   const isDirectory = description?.kind === "directory";
@@ -69,7 +80,6 @@ export function MessageFileReference(props: { path: string; line?: number; label
       data-category={isDirectory ? "folder" : fileCategory(props.path)}
       data-missing={missing ? "true" : undefined}
       title={props.line ? `${resolvedPath}:${props.line}` : resolvedPath}
-      aria-label={isDirectory ? t("message.openFolder") : t("message.openFile")}
       disabled={missing}
       onClick={() => {
         void getBridge().openLocalPath(resolvedPath).catch(() => undefined);
@@ -99,8 +109,8 @@ export function MessageFileReference(props: { path: string; line?: number; label
  */
 export function MessageImage(props: { path: string; alt: string }) {
   const { t } = useI18n();
-  const settled = useContext(ReferenceResolutionContext);
-  const description = useLocalFileDescription(props.path, settled);
+  const { settled, scope } = useContext(ReferenceResolutionContext);
+  const description = useLocalFileDescription(props.path, settled, scope);
   const [failed, setFailed] = useState(false);
   const [preview, setPreview] = useState(false);
 
@@ -117,7 +127,7 @@ export function MessageImage(props: { path: string; alt: string }) {
       <button
         type="button"
         className="message-image"
-        aria-label={t("message.openImage")}
+        aria-label={props.alt ? undefined : t("message.openImage")}
         onClick={() => setPreview(true)}
       >
         <img src={source} alt={props.alt} onError={() => setFailed(true)} />

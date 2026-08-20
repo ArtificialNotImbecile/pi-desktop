@@ -52,7 +52,7 @@ test.describe("references in an assistant answer", () => {
     // still be visible and still carry its src.
     await expect.poll(async () => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0);
 
-    await page.getByRole("button", { name: "Open image preview" }).click();
+    await page.getByRole("button", { name: "Revenue chart" }).click();
     await expect(page.locator(".image-lightbox")).toBeVisible();
     await expect(page.locator(".image-lightbox img")).toHaveAttribute("src", /^jasmine-file:\/\/local\//);
   });
