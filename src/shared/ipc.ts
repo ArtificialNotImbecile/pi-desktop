@@ -944,6 +944,12 @@ export type PickedPath = {
 };
 
 /**
+ * Maximum paths accepted by one local-file metadata IPC request. The renderer
+ * splits larger restores against this same contract value.
+ */
+export const LOCAL_FILE_DESCRIBE_LIMIT = 200;
+
+/**
  * What the chat renderer knows about a path an assistant answer referenced.
  * Carries no file bytes: image content reaches the renderer over the
  * `jasmine-file://` protocol so Chromium owns decoding and caching.

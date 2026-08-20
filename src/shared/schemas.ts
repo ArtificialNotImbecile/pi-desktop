@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_BRAND_LOGO_DATA_URL_LENGTH, MAX_BRAND_SUBTITLE_LENGTH, MAX_BRAND_TITLE_LENGTH, isSupportedBrandLogoDataUrl } from "./brand.js";
+import { LOCAL_FILE_DESCRIBE_LIMIT } from "./ipc.js";
 import { permissionModeSchema } from "./permissionSchemas.js";
 
 export const threadCreateSchema = z.object({
@@ -83,7 +84,7 @@ export const localFilePathSchema = z.string().trim().min(1).max(4_096);
 
 // Assistant answers can name many files at once; the cap keeps one message from
 // turning into an unbounded stat sweep.
-export const localFileDescribeRequestSchema = z.array(localFilePathSchema).max(200);
+export const localFileDescribeRequestSchema = z.array(localFilePathSchema).max(LOCAL_FILE_DESCRIBE_LIMIT);
 
 export const externalUrlSchema = z.string().trim().min(1).max(8_192);
 

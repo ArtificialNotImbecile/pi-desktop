@@ -105,6 +105,18 @@ describe("local file references in an answer", () => {
     expect(fake.calls.describeLocalFiles).toEqual([["/a/one.ts", "/a/two.ts"]]);
   });
 
+  test("splits a large restore before the IPC metadata limit", async () => {
+    const paths = Array.from({ length: 205 }, (_, index) => `/tmp/reference-${index}.txt`);
+    fake.setLocalFiles(paths.map((path) => ({ path })));
+    mount(paths.map((path, index) => `[reference ${index}](${path})`).join("\n"));
+
+    await waitFor(() => expect(fake.calls.describeLocalFiles).toHaveLength(2));
+    expect(fake.calls.describeLocalFiles.map((batch) => batch.length)).toEqual([200, 5]);
+    await waitFor(() => expect(document.querySelectorAll(".file-reference")).toHaveLength(205));
+    expect([...document.querySelectorAll<HTMLButtonElement>(".file-reference")]
+      .every((button) => !button.disabled)).toBe(true);
+  });
+
   test("revalidates a missing path when a later answer references the created file", async () => {
     const first = mount("Not ready: [report](/tmp/report.docx)");
     const missing = await chip();

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { LocalFileDescription } from "../../../shared/ipc";
+import { LOCAL_FILE_DESCRIBE_LIMIT, type LocalFileDescription } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 
 /**
@@ -63,26 +63,30 @@ async function flush(): Promise<void> {
   queued = [];
   if (batch.length === 0) return;
 
-  try {
-    const paths = [...new Set(batch.map((entry) => entry.requestedPath))];
-    const results = await getBridge().describeLocalFiles(paths);
-    const byPath = new Map(results.map((result) => [result.requestedPath, result]));
-    for (const entry of batch) {
-      const scopeDescriptions = descriptions.get(entry.scope) ?? new Map<string, LocalFileDescription>();
-      scopeDescriptions.set(
-        entry.requestedPath,
-        byPath.get(entry.requestedPath) ?? unresolved(entry.requestedPath)
-      );
-      descriptions.set(entry.scope, scopeDescriptions);
+  const paths = [...new Set(batch.map((entry) => entry.requestedPath))];
+  const pathBatches: string[][] = [];
+  for (let offset = 0; offset < paths.length; offset += LOCAL_FILE_DESCRIBE_LIMIT) {
+    pathBatches.push(paths.slice(offset, offset + LOCAL_FILE_DESCRIBE_LIMIT));
+  }
+  const resultBatches = await Promise.all(pathBatches.map(async (pathBatch) => {
+    try {
+      return await getBridge().describeLocalFiles(pathBatch);
+    } catch {
+      // One rejected IPC batch must not strand other references in a loading
+      // state or discard successful batches alongside it.
+      return pathBatch.map(unresolved);
     }
-  } catch {
-    // A failed lookup must not leave references stuck in a loading state
-    // forever; treat the paths as unresolvable and let the UI fall back.
-    for (const entry of batch) {
-      const scopeDescriptions = descriptions.get(entry.scope) ?? new Map<string, LocalFileDescription>();
-      scopeDescriptions.set(entry.requestedPath, unresolved(entry.requestedPath));
-      descriptions.set(entry.scope, scopeDescriptions);
-    }
+  }));
+  const byPath = new Map(
+    resultBatches.flatMap((results) => results.map((result) => [result.requestedPath, result] as const))
+  );
+  for (const entry of batch) {
+    const scopeDescriptions = descriptions.get(entry.scope) ?? new Map<string, LocalFileDescription>();
+    scopeDescriptions.set(
+      entry.requestedPath,
+      byPath.get(entry.requestedPath) ?? unresolved(entry.requestedPath)
+    );
+    descriptions.set(entry.scope, scopeDescriptions);
   }
   for (const callback of subscribers) callback();
 }

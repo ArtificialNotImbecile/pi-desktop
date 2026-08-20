@@ -1,4 +1,5 @@
 import { act } from "@testing-library/react";
+import { LOCAL_FILE_DESCRIBE_LIMIT } from "../../src/shared/ipc";
 import type {
   AppUpdateState,
   ChatEditRequest,
@@ -365,6 +366,9 @@ export function createFakeBridge(): FakeBridge {
     },
     describeLocalFiles(paths) {
       calls.describeLocalFiles.push(paths);
+      if (paths.length > LOCAL_FILE_DESCRIBE_LIMIT) {
+        return Promise.reject(new Error(`describeLocalFiles accepts at most ${LOCAL_FILE_DESCRIBE_LIMIT} paths`));
+      }
       return Promise.resolve(paths.map((requestedPath) => localFiles.get(requestedPath) ?? {
         requestedPath,
         path: requestedPath,
