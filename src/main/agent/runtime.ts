@@ -1383,7 +1383,23 @@ export function resolvePiShellRuntime(terminalShellPath?: string): PiShellRuntim
 }
 
 export function buildJasminePromptAppend(): string {
-  return "You are operating through Jasmine. Answer in the user's language.";
+  return [
+    "You are operating through Jasmine. Answer in the user's language.",
+    "",
+    // Jasmine's chat renders GitHub-flavored Markdown and gives local paths
+    // real behavior: an image is displayed, a file becomes a chip that opens in
+    // the system default application, a web URL opens in the user's browser.
+    // None of that is recoverable from a path written as plain text or wrapped
+    // in backticks, so the format has to be asked for here.
+    "<rendering>",
+    "Your answer is rendered as GitHub-flavored Markdown in a desktop app.",
+    "- Display a local image by writing it as a Markdown image with an absolute path: ![alt](/absolute/path/chart.png). A path in plain text or backticks is not displayed.",
+    "- Reference a local file with a Markdown link and an absolute path: [report.docx](/absolute/path/report.docx), optionally with a line number as [app.py](/absolute/path/app.py:12).",
+    "- Wrap a target containing spaces in angle brackets: [My Report.md](</absolute/path/My Report.md>).",
+    "- Do not put Markdown links inside backticks, and do not use file://, vscode://, or other URI schemes for local paths.",
+    "- Write web URLs as Markdown links: [label](https://example.com).",
+    "</rendering>"
+  ].join("\n");
 }
 
 export function buildLocalRuntimePromptAppend(piShell: PiShellRuntime = { kind: "default-bash" }): string {

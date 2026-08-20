@@ -4,9 +4,40 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ShikiCodeBlock } from "../code";
+import { MessageExternalLink, MessageFileReference, MessageImage, ReferenceResolution } from "./MessageReferences";
+import { classifyMessageLink, messageUrlTransform } from "./messageLinks";
 
 const REMARK_PLUGINS = [remarkGfm, remarkCodeBlockMeta];
 const STREAMING_CHUNK_TARGET = 1_200;
+
+type LinkLabelNode = {
+  type?: string;
+  value?: unknown;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: LinkLabelNode[];
+};
+
+/**
+ * A link label may mix images with text or formatting at any depth. Once an
+ * image is present, flatten the whole label to text (using image alt text) so
+ * react-markdown's interactive image replacement is never nested in the outer
+ * link control.
+ */
+function flattenedLinkedImageLabel(node: unknown): string | null {
+  let containsImage = false;
+  const read = (value: LinkLabelNode | null | undefined): string => {
+    if (!value) return "";
+    if (value.type === "text") return typeof value.value === "string" ? value.value : "";
+    if (value.type === "element" && value.tagName === "img") {
+      containsImage = true;
+      return typeof value.properties?.alt === "string" ? value.properties.alt : "";
+    }
+    return value.children?.map(read).join("") ?? "";
+  };
+  const text = read(node as LinkLabelNode | undefined).replace(/\s+/g, " ").trim();
+  return containsImage ? text : null;
+}
 
 declare global {
   interface Window {
@@ -42,14 +73,16 @@ export const MarkdownMessage = memo(function MarkdownMessage(props: { content: s
 
   return (
     <div className="markdown-message" data-streaming-markdown={streaming ? "true" : undefined}>
-      {chunks.map((chunk, index) => (
-        <MarkdownRenderSegment
-          key={chunk.start}
-          content={chunk.content}
-          active={streaming && index === chunks.length - 1}
-          onCopyCode={onCopyCode}
-        />
-      ))}
+      {chunks.map((chunk, index) => {
+        const active = streaming && index === chunks.length - 1;
+        return (
+          // Frozen chunks resolve their file references straight away; only the
+          // chunk still being written holds off until its paths are complete.
+          <ReferenceResolution key={chunk.start} settled={!active}>
+            <MarkdownRenderSegment content={chunk.content} active={active} onCopyCode={onCopyCode} />
+          </ReferenceResolution>
+        );
+      })}
     </div>
   );
 });
@@ -117,7 +150,7 @@ const MarkdownChunk = memo(function MarkdownChunk(props: { content: string; onCo
   );
   recordMarkdownRender(content.length);
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components} urlTransform={messageUrlTransform}>
       {content}
     </ReactMarkdown>
   );
@@ -391,12 +424,38 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
     h4({ children }) {
       return <strong className="markdown-heading">{children}</strong>;
     },
-    a({ children, href }) {
-      return (
-        <a href={href} target="_blank" rel="noreferrer">
-          {children}
-        </a>
-      );
+    a({ children, href, node }) {
+      const target = classifyMessageLink(href);
+      const linkedImageAlt = flattenedLinkedImageLabel(node);
+      // A Markdown image nested in a link normally reaches this component as an
+      // already-interactive MessageImage/MessageExternalLink child. The outer
+      // destination owns activation, so render its alt text as the one control
+      // instead of producing button-in-anchor, button-in-button, or nested links.
+      const label = linkedImageAlt === null ? children : linkedImageAlt;
+      if (target.kind === "external") return <MessageExternalLink href={target.href}>{label}</MessageExternalLink>;
+      // An image destination reached through `[label](/abs/a.png)` was written
+      // as a link, so it stays a link -- the author asked to reference the file,
+      // not to display it.
+      if (target.kind === "local-file" || target.kind === "local-image") {
+        return (
+          <MessageFileReference
+            path={target.path}
+            line={target.line}
+            label={linkedImageAlt === "" ? undefined : label}
+          />
+        );
+      }
+      // Nothing safe to navigate to: keep the text, drop the affordance.
+      return target.href ? <a href={target.href}>{label || target.href}</a> : <span>{label}</span>;
+    },
+    img({ src, alt }) {
+      const target = classifyMessageLink(typeof src === "string" ? src : "");
+      if (target.kind === "local-image") return <MessageImage path={target.path} alt={alt ?? ""} />;
+      if (target.kind === "local-file") return <MessageFileReference path={target.path} label={alt || undefined} />;
+      // Remote images are not fetched: an answer must not be able to make the
+      // app call out to an arbitrary host just by being rendered.
+      if (target.kind === "external") return <MessageExternalLink href={target.href}>{alt || target.href}</MessageExternalLink>;
+      return <span>{alt}</span>;
     },
     pre({ children }) {
       const info = codeBlockInfos[preIndex];

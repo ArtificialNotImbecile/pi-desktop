@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import type { PickedPath } from "../../../shared/ipc";
 import { useI18n } from "../../i18n";
 
-export function ImageLightbox(props: { attachment: PickedPath; onClose(): void }) {
+// Takes a source rather than an attachment: composer previews arrive as data
+// URLs, while images inside an answer are served over the local-file protocol.
+export function ImageLightbox(props: { src: string; name: string; onClose(): void }) {
   const { t } = useI18n();
 
   useEffect(() => {
@@ -14,11 +15,11 @@ export function ImageLightbox(props: { attachment: PickedPath; onClose(): void }
   }, [props.onClose]);
 
   return (
-    <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={props.attachment.name} onMouseDown={props.onClose}>
+    <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={props.name} onMouseDown={props.onClose}>
       <div className="image-lightbox-frame" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" onClick={props.onClose} aria-label={t("message.closeImagePreview")}>x</button>
-        <img src={props.attachment.previewDataUrl ?? ""} alt={props.attachment.name} />
-        <span>{props.attachment.name}</span>
+        <img src={props.src} alt={props.name} />
+        <span>{props.name}</span>
       </div>
     </div>
   );

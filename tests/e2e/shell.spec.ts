@@ -378,4 +378,38 @@ test.describe("Jasmine app shell", () => {
     await closed;
   });
 
+  test("application menu carries the editing roles clipboard shortcuts depend on", async () => {
+    const { app } = harness;
+
+    // Setting an application menu replaces the default one. On macOS the
+    // standard editing shortcuts are delivered through that menu, so a template
+    // without these roles leaves Cmd+X/C/V/A inert in every input in the app and
+    // no paste event ever reaches the renderer.
+    //
+    // This is asserted on the menu rather than by typing Cmd+V because
+    // Playwright dispatches keys over CDP straight into the renderer, which
+    // bypasses the OS menu path entirely -- a scripted paste passes either way
+    // and would not have caught this.
+    const menu = await app.evaluate(({ Menu }) => {
+      const collect = (items: Electron.MenuItem[]): string[] =>
+        items.flatMap((item) => [item.role ?? "", ...(item.submenu ? collect(item.submenu.items) : [])]);
+      const application = Menu.getApplicationMenu();
+      return {
+        roles: application ? collect(application.items).filter(Boolean).map((role) => role.toLowerCase()) : [],
+        firstTopLevelRole: application?.items[0]?.role?.toLowerCase() ?? null
+      };
+    });
+
+    for (const role of ["cut", "copy", "paste", "selectall", "undo", "redo"]) {
+      expect(menu.roles).toContain(role);
+    }
+    // macOS renders the first submenu in the application-menu slot, so it has to
+    // be the real app menu; otherwise File takes that slot and nothing carries
+    // Quit.
+    if (process.platform === "darwin") {
+      expect(menu.firstTopLevelRole).toBe("appmenu");
+      expect(menu.roles).toContain("quit");
+    }
+  });
+
 });
