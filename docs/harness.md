@@ -88,7 +88,11 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
   framing, exact Pi-version compatibility, OpenSSH argv construction, public-only
   CONNECT policy, upstream proxy chaining, audit redaction, and the experimental
   upstream protocol boundary. Its separately invoked live SSH harness owns offline
-  runtime install, TUI/RPC reconnect, egress, and remote-state isolation.
+  runtime install, TUI/RPC reconnect, egress, and remote-state isolation. The
+  runtime archive is fetched from the pinned HTTPS URL in `artifact.json`
+  (`runtime:fetch`, wired into root `postinstall`) instead of being committed, and
+  `test:upgrade-live` verifies old-to-new runtime auto-upgrade against a
+  `PI_REMOTE_E2E_PREVIOUS_ARTIFACT_DIR` artifact directory.
 
 ## Renderer test map
 

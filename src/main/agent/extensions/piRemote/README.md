@@ -229,5 +229,16 @@ Linux-only execution and a client-visible Python service, direct/client-proxy LL
 requests, direct and audited client-proxy pip/npm/apt paths, forwarding reconnect,
 private-target denial, file-transfer integrity, redaction, and native Pi isolation.
 
+`npm run test:upgrade-live` runs the runtime auto-upgrade acceptance against a
+disposable SSH profile: it installs the current artifact, installs a *previous*
+artifact from `PI_REMOTE_E2E_PREVIOUS_ARTIFACT_DIR` (a directory holding that
+version's `artifact.json` and archive), then verifies the next connection with
+the current package automatically switches the remote `current` runtime back,
+preserves the synced profile model configuration, and that the old runtime
+generation can be removed afterwards. Because tarballs are no longer committed to
+Git, build the previous artifact directory by re-compressing the same runtime
+content (for example `gzip -9n`) so the inner `SHA256SUMS` still verifies while the
+archive hash differs.
+
 No code from the reverse-engineered Codex desktop sources is copied into this
 package. They were used only to identify behavioral boundaries.

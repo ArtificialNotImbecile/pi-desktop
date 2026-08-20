@@ -44,6 +44,7 @@
     "runtime:build:linux-x64": "npm run build && node scripts/build-runtime.mjs",
     "runtime:fetch": "node scripts/fetch-runtime.mjs",
     "runtime:verify": "node scripts/verify-runtime.mjs",
+    "test:upgrade-live": "npm run build && node scripts/run-upgrade-e2e.mjs",
     "prepack": "npm run build && npm run runtime:verify"
   },
   "peerDependencies": {
