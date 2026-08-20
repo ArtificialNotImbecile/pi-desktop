@@ -110,6 +110,23 @@ test.describe("Jasmine composer", () => {
     });
     await expectComposerDraft(page, "pasted plain text");
 
+    for (const trailingBlankLines of [1, 2]) {
+      await editor.fill("before");
+      await waitForComposerSettled(page);
+      for (let index = 0; index < trailingBlankLines; index += 1) {
+        await page.keyboard.down("Shift");
+        await page.keyboard.press("Enter");
+        await page.keyboard.up("Shift");
+      }
+      const pasted = trailingBlankLines === 1 ? "after" : "after\nmore";
+      await editor.evaluate((node, pastedText) => {
+        const clipboard = new DataTransfer();
+        clipboard.setData("text/plain", pastedText);
+        node.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
+      }, pasted);
+      await expectComposerDraft(page, `before${"\n".repeat(trailingBlankLines)}${pasted}`);
+    }
+
     await editor.press("ControlOrMeta+A");
     await page.keyboard.press("Backspace");
     await expectComposerDraft(page, "");
@@ -140,6 +157,34 @@ test.describe("Jasmine composer", () => {
     await commitImeComposition(composition, "$tech");
     await expect(page.locator(".skill-command-menu")).toBeVisible();
     await page.keyboard.press("Escape");
+
+    await editor.press("ControlOrMeta+A");
+    await page.keyboard.press("Backspace");
+    await waitForComposerSettled(page);
+    await editor.fill("before");
+    await waitForComposerSettled(page);
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("Enter");
+    await page.keyboard.up("Shift");
+    await page.keyboard.type("$tech");
+    await expect(page.locator(".skill-command-menu")).toBeVisible();
+    await page.locator(".skill-command-menu").getByRole("option", { name: /technical-writer/ }).click();
+    await expectComposerDraft(page, "before\n");
+
+    await editor.press("ControlOrMeta+A");
+    await page.keyboard.press("Backspace");
+    await waitForComposerSettled(page);
+    await editor.fill("before");
+    await waitForComposerSettled(page);
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("Enter");
+    await page.keyboard.up("Shift");
+    const trailingLineComposition = await startImeComposition(harness.app, page, "$tech");
+    await expect(page.locator(".skill-command-menu")).toHaveCount(0);
+    await commitImeComposition(trailingLineComposition, "$tech");
+    await expect(page.locator(".skill-command-menu")).toBeVisible();
+    await page.locator(".skill-command-menu").getByRole("option", { name: /technical-writer/ }).click();
+    await expectComposerDraft(page, "before\n");
   });
 
   test("composer toolbar stays compact and shows actual context usage", async () => {

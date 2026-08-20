@@ -139,7 +139,7 @@ npm.cmd run test:e2e:smoke
 
 运行 `npm.cmd run test:e2e` 可在后台/离屏模式下执行完整的 Electron 套件：测试窗口保持透明、不可聚焦且不出现在任务栏；只有在需要有意的前台调试时才使用 `npm.cmd run test:e2e:headed`。完整的本地发布门禁是 `npm.cmd run harness:release`，其最后的验收阶段有意运行在前台。生成的截图、trace、审计和验收结果都写入被 Git 忽略的 `test-results/` 路径。
 
-用 `npm.cmd run readme:capture` 重新生成 README 截图和真实模型的上下文分类 GIF，该命令会使用 `DEEPSEEK_API_KEY` 发起两次真实请求。用 `npm.cmd run dist:win` 构建 Windows 安装包，并用 `npm.cmd run test:packaged` 验证解包后的应用。Linux 和 macOS 的安装包在发布时于对应的 GitHub Actions 原生运行器上构建与冒烟测试。
+用 `npm.cmd run readme:capture` 重新生成 README 截图和真实模型的上下文分类 GIF，该命令会使用 `DEEPSEEK_API_KEY` 录制三轮真实模型对话。设置 `JASMINE_README_EXECUTABLE` 与 `JASMINE_README_EXPECTED_VERSION` 可以录制指定的已安装版本，而不是本地开发构建；使用兼容 OpenAI 协议的 DeepSeek 网关时，还可以设置 `JASMINE_README_DEEPSEEK_BASE_URL` 与 `JASMINE_README_DEEPSEEK_MODEL`。用 `npm.cmd run dist:win` 构建 Windows 安装包，并用 `npm.cmd run test:packaged` 验证解包后的应用。Linux 和 macOS 的安装包在发布时于对应的 GitHub Actions 原生运行器上构建与冒烟测试。
 
 测试地图与验证策略见 [docs/harness.md](docs/harness.md)。
 

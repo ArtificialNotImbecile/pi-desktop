@@ -777,6 +777,7 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".error-strip")).toBeHidden();
 
     const queuedFailurePrompt = "slow response queued provider partial persistence";
+    const queuedFailureFallbackTitle = queuedFailurePrompt.slice(0, 48);
     const failedFollowUp = "mock queued provider failure";
     await startEmptyThread(page);
     await page.locator(".rich-composer-editor").fill(queuedFailurePrompt);
@@ -794,16 +795,18 @@ test.describe("Jasmine chat runtime", () => {
     await expect(page.locator(".queue-item")).toHaveCount(0);
 
     const queuedFailureState = await page.evaluate(async (title) => {
-      const thread = (await window.jasmine.listThreads()).find((item) => item.title.includes(title));
+      const thread = (await window.jasmine.listThreads()).find((item) => item.title === title);
       if (!thread) throw new Error("Queued provider-failure thread is missing.");
       return {
         threadId: thread.id,
+        threadTitle: thread.title,
         messages: (await window.jasmine.listMessages(thread.id)).map((message) => ({
           role: message.role,
           content: message.content
         }))
       };
-    }, queuedFailurePrompt);
+    }, queuedFailureFallbackTitle);
+    expect(queuedFailureState.threadTitle).toBe(queuedFailureFallbackTitle);
     expect(queuedFailureState.messages).toEqual([
       { role: "user", content: queuedFailurePrompt },
       { role: "assistant", content: "Slow response complete." },
