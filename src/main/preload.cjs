@@ -381,6 +381,9 @@ contextBridge.exposeInMainWorld("jasmine", {
   spotlightClose() {
     return ipcRenderer.invoke("spotlight:close");
   },
+  getSpotlightShortcutStatus() {
+    return ipcRenderer.invoke("spotlight:getShortcutStatus");
+  },
   onSpotlightReset(callback) {
     const listener = () => callback();
     ipcRenderer.on("spotlight:reset", listener);

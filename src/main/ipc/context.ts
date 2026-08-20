@@ -6,4 +6,5 @@ export type IpcContext = {
   getDatabase(): JasmineDatabase;
   getWorkingRegistry(): WorkingRegistry;
   consumePendingWorkingNavigation(): WorkingNavigationTarget | null;
+  replaceSpotlightShortcut(accelerator: string): () => void;
 };

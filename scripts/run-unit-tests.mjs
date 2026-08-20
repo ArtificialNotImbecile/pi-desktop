@@ -53,6 +53,7 @@ const tasks = [
   { name: "pi-session-import", steps: [["node", "--no-warnings", "tests/unit/pi-session-import.mjs"]] },
   { name: "plugin-packages", steps: [["node", "--no-warnings", "tests/unit/plugin-packages.mjs"]] },
   { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
+  { name: "spotlight-shortcut", steps: [["node", "--no-warnings", "tests/unit/spotlight-shortcut.mjs"]] },
   { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
   { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
   { name: "unit-runner", steps: [["node", "--no-warnings", "tests/unit/unit-runner.mjs"]] },

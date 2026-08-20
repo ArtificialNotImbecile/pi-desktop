@@ -5,6 +5,7 @@ import type { AiProvider, ProviderModelConfig } from "../../src/shared/ipc";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { ProviderSettingsPanel } from "../../src/renderer/components/settings/ProviderSettingsPanel";
 import { ModelOptionsDialog } from "../../src/renderer/components/settings/ModelOptionsDialog";
+import { shortcutFromKeyEvent } from "../../src/renderer/components/settings/ShortcutRecorder";
 import { installFakeBridge } from "./fakeBridge";
 import { fakeAppSettings, fakeProvider, settingsPanelProps } from "./settingsPanelProps";
 
@@ -43,6 +44,25 @@ function renderPanel(overrides: Parameters<typeof settingsPanelProps>[0] = {}) {
 }
 
 describe("provider settings", () => {
+  test("shortcut recording uses the physical letter or digit under modified layouts", () => {
+    expect(shortcutFromKeyEvent({
+      altKey: false,
+      code: "Digit1",
+      ctrlKey: true,
+      key: "!",
+      metaKey: false,
+      shiftKey: true
+    }, "win32")).toBe("Control+Shift+1");
+    expect(shortcutFromKeyEvent({
+      altKey: true,
+      code: "KeyE",
+      ctrlKey: false,
+      key: "Dead",
+      metaKey: false,
+      shiftKey: false
+    }, "darwin")).toBe("Alt+E");
+  });
+
   test("shows the configured provider and keeps unreleased settings out of navigation", () => {
     const view = renderPanel();
     expect(within(view.container).getByRole("heading", { name: "Fake Provider" })).toBeDefined();
@@ -100,6 +120,9 @@ describe("provider settings", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Entry subtitle" }), {
       target: { value: "Custom subtitle for this workspace." }
     });
+    const shortcut = screen.getByRole("textbox", { name: "Quick launcher keyboard shortcut" });
+    fireEvent.focus(shortcut);
+    fireEvent.keyDown(shortcut, { key: "j", code: "KeyJ", ctrlKey: true, shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
@@ -112,8 +135,22 @@ describe("provider settings", () => {
       brand: {
         mainTitle: "Custom helper",
         subtitle: "Custom subtitle for this workspace."
-      }
+      },
+      spotlightShortcut: "Control+Shift+J"
     });
+  });
+
+  test("general settings omit an unchanged launcher shortcut from unrelated saves", async () => {
+    const onUpdate = vi.fn(async (_request: unknown) => fakeAppSettings);
+    renderPanel({ initialSection: "general", onUpdateAppSettings: onUpdate });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Entry main title" }), {
+      target: { value: "Only the brand changed" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+    expect(onUpdate.mock.calls[0]?.[0]).not.toHaveProperty("spotlightShortcut");
   });
 
   test("appearance presets update every color and submit the selected theme", async () => {

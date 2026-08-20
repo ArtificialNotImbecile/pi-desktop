@@ -3,7 +3,8 @@ import type {
   SpotlightExecuteRequest,
   SpotlightItem,
   SpotlightSearchRequest,
-  SpotlightSearchResponse
+  SpotlightSearchResponse,
+  SpotlightShortcutStatus
 } from "../../shared/ipc.js";
 import { spotlightExecuteSchema, spotlightSearchSchema } from "../../shared/schemas.js";
 import type { IpcContext } from "./context.js";
@@ -15,6 +16,7 @@ export type SpotlightWindowHelpers = {
   hideSpotlight(): void;
   routeCommand(payload: SpotlightExecuteRequest): void;
   consumePendingCommand(): SpotlightExecuteRequest | null;
+  getShortcutStatus(): SpotlightShortcutStatus;
 };
 
 export function registerSpotlightIpc(context: Pick<IpcContext, "getDatabase">, helpers: SpotlightWindowHelpers): void {
@@ -60,6 +62,8 @@ export function registerSpotlightIpc(context: Pick<IpcContext, "getDatabase">, h
   ipcMain.handle("spotlight:close", (): void => {
     helpers.hideSpotlight();
   });
+
+  ipcMain.handle("spotlight:getShortcutStatus", (): SpotlightShortcutStatus => helpers.getShortcutStatus());
 }
 
 function buildFixedCommands(query: string): SpotlightItem[] {

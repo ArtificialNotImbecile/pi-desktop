@@ -198,6 +198,7 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       language TEXT NOT NULL DEFAULT 'en',
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
+      spotlight_shortcut TEXT,
       permission_mode TEXT NOT NULL DEFAULT 'ask',
       file_change_tracking_mode TEXT NOT NULL DEFAULT 'managed-tools-only',
       skill_editor_path TEXT,
@@ -377,6 +378,8 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       ON context_captures(thread_id);
   `);
   markMigration(db, 41, "rolling on-demand context taxonomy capture", now);
+  addColumnIfMissing(db, "app_settings", "spotlight_shortcut", "TEXT");
+  markMigration(db, 42, "configurable Spotlight shortcut", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

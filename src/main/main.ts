@@ -6,10 +6,12 @@ import path from "node:path";
 import os from "node:os";
 import { DEFAULT_APPEARANCE } from "../shared/theme.js";
 import type { AppLanguage, SpotlightExecuteRequest, WorkingNavigationTarget } from "../shared/ipc.js";
+import { defaultSpotlightShortcut } from "../shared/shortcuts.js";
 import type { JasmineDatabase } from "./db/database.js";
 import { attachWindowStateEvents } from "./ipc/window.js";
 import { guardWindowNavigation, registerLocalFileProtocol, registerLocalFileScheme } from "./services/localFiles.js";
 import { WorkingRegistry, type WorkingNotification } from "./services/workingRegistry.js";
+import { SpotlightShortcutManager } from "./services/spotlightShortcut.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +22,6 @@ let ipcRegistered = false;
 let mainWindow: BrowserWindow | null = null;
 let spotlightWindow: BrowserWindow | null = null;
 let trayIconSize: { width: number; height: number } | null = null;
-let spotlightShortcutRegistered = false;
 let focusOnWindowCreate = false;
 let tray: Tray | null = null;
 let isQuitting = false;
@@ -28,7 +29,6 @@ let pendingSpotlightCommand: SpotlightExecuteRequest | null = null;
 let pendingWorkingNavigation: WorkingNavigationTarget | null = null;
 const harnessWorkingNotifications: Array<{ notification: WorkingNotification; click(): void }> = [];
 const APP_USER_MODEL_ID = "works.earendil.jasmine";
-const SPOTLIGHT_SHORTCUT = "Alt+Space";
 const SPOTLIGHT_WIDTH = 680;
 const SPOTLIGHT_HEIGHT = 460;
 const isE2eHarness = process.env.JASMINE_E2E_HARNESS === "1";
@@ -38,6 +38,14 @@ const isE2eHarness = process.env.JASMINE_E2E_HARNESS === "1";
 // over CDP, which needs neither OS visibility nor focus. Not gated on
 // JASMINE_E2E_HARNESS because cold-start specs launch without the harness flag.
 const isE2eOffscreen = process.env.JASMINE_E2E_OFFSCREEN === "1";
+const spotlightShortcutManager = new SpotlightShortcutManager(
+  {
+    register: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+    unregister: (accelerator) => globalShortcut.unregister(accelerator),
+    isRegistered: (accelerator) => globalShortcut.isRegistered(accelerator)
+  },
+  toggleSpotlight
+);
 
 // Keep a 1px overlap with the desktop: fully detached positions (e.g. -32000)
 // make Windows report minimized-style frame insets, which shifts content
@@ -174,8 +182,7 @@ app.on("will-quit", () => {
   // and globalShortcut throws when it is touched that early -- which surfaces
   // as an "A JavaScript error occurred in the main process" dialog on what
   // should be a silent handoff to the running instance.
-  if (app.isReady()) globalShortcut.unregisterAll();
-  spotlightShortcutRegistered = false;
+  if (app.isReady()) spotlightShortcutManager.dispose();
   if (tray) {
     tray.destroy();
     tray = null;
@@ -244,7 +251,12 @@ async function startApplication(): Promise<void> {
     await initializeAppUpdater(() => {
       isQuitting = true;
     });
-    registerIpc({ getDatabase, getWorkingRegistry, consumePendingWorkingNavigation });
+    registerIpc({
+      getDatabase,
+      getWorkingRegistry,
+      consumePendingWorkingNavigation,
+      replaceSpotlightShortcut: (accelerator) => spotlightShortcutManager.replace(accelerator)
+    });
     getWorkingRegistry().initialize();
     registerSpotlightIpc(
       { getDatabase },
@@ -255,17 +267,20 @@ async function startApplication(): Promise<void> {
           const command = pendingSpotlightCommand;
           pendingSpotlightCommand = null;
           return command;
-        }
+        },
+        getShortcutStatus: () => spotlightShortcutManager.getStatus(defaultSpotlightShortcut(process.platform))
       }
     );
     setupApplicationMenu();
     createTray();
-    registerSpotlightShortcut();
+    registerSpotlightShortcut(getDatabase().getAppSettings().spotlightShortcut);
     if (isE2eHarness) {
       (globalThis as { __jasmineSpotlight?: unknown }).__jasmineSpotlight = {
         show: showSpotlight,
         hide: hideSpotlight,
-        toggle: toggleSpotlight
+        toggle: toggleSpotlight,
+        shortcutStatus: () => spotlightShortcutManager.getStatus(defaultSpotlightShortcut(process.platform)),
+        isShortcutRegistered: (accelerator: string) => globalShortcut.isRegistered(accelerator)
       };
       (globalThis as { __jasmineTray?: unknown }).__jasmineTray = {
         openMain: () => showMainWindow(),
@@ -584,18 +599,9 @@ function toggleSpotlight(): void {
   }
 }
 
-function registerSpotlightShortcut(): void {
-  if (spotlightShortcutRegistered) return;
-  try {
-    const ok = globalShortcut.register(SPOTLIGHT_SHORTCUT, () => toggleSpotlight());
-    if (!ok) {
-      console.warn(`Spotlight shortcut ${SPOTLIGHT_SHORTCUT} could not be registered (likely in use).`);
-      return;
-    }
-    spotlightShortcutRegistered = true;
-  } catch (error) {
-    console.warn(`Spotlight shortcut ${SPOTLIGHT_SHORTCUT} registration failed:`, error);
-  }
+function registerSpotlightShortcut(accelerator: string): void {
+  if (spotlightShortcutManager.initialize(accelerator)) return;
+  console.warn(`Spotlight shortcut ${accelerator} could not be registered (likely in use).`);
 }
 
 function resolvePreloadPath(): string {
