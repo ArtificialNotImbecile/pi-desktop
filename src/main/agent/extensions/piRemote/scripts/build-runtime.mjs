@@ -103,6 +103,10 @@ try {
   }, null, 2)}\n`, "utf8");
   await createArchive(stage, archivePath);
   const archiveSha256 = await sha256(archivePath);
+  const previousDescriptor = await readFile(path.join(outputDir, "artifact.json"), "utf8")
+    .then((raw) => JSON.parse(raw) as { archiveUrl?: string })
+    .catch(() => ({}));
+  const archiveUrl = process.env.PI_REMOTE_RUNTIME_URL || previousDescriptor.archiveUrl;
   await writeFile(path.join(outputDir, "artifact.json"), `${JSON.stringify({
     version: 1,
     platform: "linux",
@@ -112,6 +116,7 @@ try {
     piVersion: PI_VERSION,
     archive: path.basename(archivePath),
     archiveSha256,
+    ...(archiveUrl ? { archiveUrl } : {}),
     upstreamPiSha256: UPSTREAM_PI_SHA256
   }, null, 2)}\n`, "utf8");
   process.stdout.write(`${JSON.stringify({ archivePath, archiveSha256, files: files.length })}\n`);

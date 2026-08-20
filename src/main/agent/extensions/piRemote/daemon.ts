@@ -207,6 +207,13 @@ export class RemoteHostDaemon {
 
   private async startRpc(params: Record<string, unknown>, socket: Socket): Promise<{ started: boolean; cwd: string; sessionId?: string }> {
     const cwd = requiredAbsolutePath(params.cwd, "cwd");
+    const cwdStat = await stat(cwd).catch(() => null);
+    if (!cwdStat?.isDirectory()) {
+      throw new PiRemoteError("cwd-missing", `Remote working directory ${cwd} does not exist.`, {
+        phase: "session",
+        remediation: "Create the directory on the remote host or configure an existing profile cwd."
+      });
+    }
     const sessionId = optionalSessionId(params.sessionId);
     if (this.rpc) {
       if (this.rpc.owner && this.rpc.owner !== socket) {

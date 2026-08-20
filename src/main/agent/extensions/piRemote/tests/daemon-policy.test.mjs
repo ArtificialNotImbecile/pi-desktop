@@ -118,7 +118,7 @@ test("daemon cancels RPC startup and releases its mode lease when the requesting
   await held;
   const daemon = new RemoteHostDaemon({ profileId: "00000000-0000-4000-8000-000000000001", paths, artifactSha256: "a".repeat(64) });
   const socket = fakeSocket();
-  const startup = daemon.startRpc({ cwd: "/workspace" }, socket);
+  const startup = daemon.startRpc({ cwd: "/" }, socket);
   await new Promise((resolve) => setImmediate(resolve));
   socket.destroy();
   releaseGuard();
@@ -211,3 +211,29 @@ function fakeSocket() {
   socket.destroy = () => { socket.destroyed = true; socket.destroyedByDaemon = true; socket.emit("close"); };
   return socket;
 }
+
+test("rpc.start rejects a missing remote working directory with a clear error before spawning", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-cwd-missing-"));
+  const profileRoot = path.join(root, "profile");
+  const paths = {
+    remoteRoot: root,
+    runtimeRoot: path.join(root, "runtime"),
+    profileRoot,
+    agentDir: path.join(profileRoot, "agent"),
+    sessionDir: path.join(profileRoot, "sessions"),
+    piExecutable: path.join(root, "must-not-spawn")
+  };
+  try {
+    const daemon = new RemoteHostDaemon({ profileId: "00000000-0000-4000-8000-000000000001", paths, artifactSha256: "a".repeat(64) });
+    const socket = fakeSocket();
+    // Regression: a nonexistent cwd previously surfaced as an opaque spawn ENOENT
+    // ("Remote Pi RPC process exited") only after the process launched and failed.
+    await assert.rejects(daemon.startRpc({ cwd: "/nonexistent-pi-remote-cwd-fixture" }, socket), (error) => {
+      return error?.code === "cwd-missing" && /does not exist/u.test(error.message) && Boolean(error.remediation);
+    });
+    assert.equal(daemon.rpc, undefined, "no RPC process was started for a missing cwd");
+    await assert.rejects(readFile(path.join(profileRoot, "session-mode.json")), (error) => error?.code === "ENOENT");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
