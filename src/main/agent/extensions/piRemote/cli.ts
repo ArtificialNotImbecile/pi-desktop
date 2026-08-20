@@ -2,7 +2,8 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { PiRemoteError } from "./errors.js";
 import { loadLocalPiModelConfig } from "./config.js";
@@ -379,5 +380,11 @@ Usage:
 
 function isMainModule(): boolean {
   const entry = process.argv[1];
-  return Boolean(entry && pathToFileURL(path.resolve(entry)).href === import.meta.url);
+  if (!entry) return true;
+  try {
+    // Resolve symlinks so the CLI still runs when invoked through an npm link shim.
+    return realpathSync(path.resolve(entry)) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return true;
+  }
 }
