@@ -1,0 +1,12 @@
+export { PiRemoteError, type PiRemoteErrorOptions, type PiRemoteErrorPhase } from "./errors.js";
+export { ProxyAuditLog } from "./audit.js";
+export { EgressBroker, type EgressSession } from "./egress.js";
+export { ClientGateway, isPublicAddress, pinnedHttpTarget, resolvePublicAddress, type ClientGatewayAddress, type ClientGatewayOptions } from "./gateway.js";
+export { loadLocalPiModelConfig } from "./config.js";
+export { encodeJsonFrame, JsonFrameDecoder } from "./framing.js";
+export { ProfileStore, defaultProfilesPath, type AddProfileInput } from "./profiles.js";
+export { DaemonClient, PiRpcSessionPort, resolveSessionMetadata, type ControlTransport } from "./rpc.js";
+export { ManagedRemoteRuntime, resolveSessionForOpen } from "./runtime.js";
+export { SshRunner, redactDiagnostic, shellQuote, type RemoteProbe, type SshCommandResult } from "./ssh.js";
+export { UPSTREAM_PI_REMOTE_BASELINE } from "./upstream-compat.js";
+export * from "./types.js";

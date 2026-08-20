@@ -7,11 +7,12 @@ const readJson = async (relativePath) => JSON.parse(await readFile(path.join(roo
 const rootManifest = await readJson("package.json");
 const permissionManifest = await readJson("src/main/agent/extensions/permissionGate/package.json");
 const fileChangesManifest = await readJson("src/main/agent/extensions/fileChanges/package.json");
+const piRemoteManifest = await readJson("src/main/agent/extensions/piRemote/package.json");
 const runner = await readFile(path.join(rootDir, "scripts", "run-unit-tests.mjs"), "utf8");
 
 assert.match(
   rootManifest.scripts.build,
-  /build:context-capture.*build:file-changes.*build:permission-gate/,
+  /build:context-capture.*build:file-changes.*build:permission-gate.*build:pi-remote/,
   "the root build must compile every extension whose built output the unit runner consumes"
 );
 assert.equal(
@@ -24,10 +25,16 @@ assert.equal(
   "npm run build && node --test tests/*.test.mjs",
   "the file-changes standalone test must remain self-building"
 );
+assert.equal(
+  piRemoteManifest.scripts.test,
+  "npm run build && node --test tests/*.test.mjs",
+  "the pi-remote standalone test must remain self-building"
+);
 
 assert.match(runner, /scripts\/smoke-context-capture-package\.mjs/);
 assert.match(runner, /packageTestStep\(path\.join\("src", "main", "agent", "extensions", "permissionGate"\), \["tests\/permission-gate\.test\.mjs"\]\)/);
 assert.match(runner, /packageTestFiles\(path\.join\("src", "main", "agent", "extensions", "fileChanges"\)\)/);
+assert.match(runner, /packageTestFiles\(path\.join\("src", "main", "agent", "extensions", "piRemote"\)\)/);
 assert.match(runner, /cwd: path\.join\(rootDir, packagePath\)/,
   "direct package tests must keep the same working directory as standalone npm test");
 assert.doesNotMatch(runner, /npm --prefix|npmCommand/,

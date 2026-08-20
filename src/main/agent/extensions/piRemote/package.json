@@ -1,0 +1,76 @@
+{
+  "name": "@jasmine-ai/pi-remote",
+  "version": "0.1.0",
+  "description": "Managed, isolated Pi runtimes over OpenSSH with native TUI and headless RPC clients.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "ssh",
+    "remote-development"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "pi-remote": "./dist/cli.js",
+    "pi-remote-host": "./dist/host.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "runtime",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "package.json"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:remote-live": "npm run build && node scripts/run-live-e2e.mjs",
+    "check": "npm run typecheck && npm test",
+    "runtime:build:linux-x64": "npm run build && node scripts/build-runtime.mjs",
+    "runtime:fetch": "node scripts/fetch-runtime.mjs",
+    "runtime:verify": "node scripts/verify-runtime.mjs",
+    "test:upgrade-live": "npm run build && node scripts/run-upgrade-e2e.mjs",
+    "prepack": "npm run build && npm run runtime:verify"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-client": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-protocol": "0.84.2",
+    "@earendil-works/pi-server": "0.84.2",
+    "@types/node": "^22.10.2",
+    "node-pty": "1.1.0",
+    "typescript": "^5.7.2"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/extension.js"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "license": "MIT",
+  "sideEffects": false
+}

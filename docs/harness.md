@@ -4,7 +4,8 @@ Jasmine combines unit tests, renderer tests, Electron E2E tests, a structured UI
 
 ## Commands
 
-- `npm run build`: extension package builds, typecheck, renderer build, and Electron main build.
+- `npm run build`: extension package builds (including the standalone pi-remote
+  client/host sources), typecheck, renderer build, and Electron main build.
 - `npm run test:unit`: database, runtime, icon, startup, stream, updater,
   permission, and context-capture checks. The root runner consumes the compiled
   app and extension outputs from the preceding `npm run build`; extension
@@ -83,6 +84,15 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
   activity labels, explicit renderer locales for dates/numbers, and a source
   guard that rejects literal accessible attributes, interpolated labels, and
   control names outside the fixed-language UI catalogue fixture.
+- The `pi-remote` package unit surface validates profile/schema handling, binary
+  framing, exact Pi-version compatibility, OpenSSH argv construction, public-only
+  CONNECT policy, upstream proxy chaining, audit redaction, and the experimental
+  upstream protocol boundary. Its separately invoked live SSH harness owns offline
+  runtime install, TUI/RPC reconnect, egress, and remote-state isolation. The
+  runtime archive is fetched from the pinned HTTPS URL in `artifact.json`
+  (`runtime:fetch`, wired into root `postinstall`) instead of being committed, and
+  `test:upgrade-live` verifies old-to-new runtime auto-upgrade against a
+  `PI_REMOTE_E2E_PREVIOUS_ARTIFACT_DIR` artifact directory.
 
 ## Renderer test map
 
