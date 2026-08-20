@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   baseLaunchEnv,
   clickCenter,
@@ -98,7 +99,7 @@ test.describe("Jasmine settings", () => {
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect(page.locator(".settings-panel")).toHaveClass(/single-nav/);
     await expect(page.locator(".settings-subnav")).toHaveCount(0);
-    await expect(page.locator(".settings-nav button .icon")).toHaveCount(9);
+    await expect(page.locator(".settings-nav button .icon")).toHaveCount(10);
     await expect(page.locator(".settings-detail")).not.toContainText("Command palette");
     await expect(page.locator(".settings-detail")).not.toContainText("Theme");
     await expect(page.locator(".settings-detail .settings-header")).toHaveCount(0);
@@ -250,6 +251,67 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".empty-state p")).toHaveText("\u6211\u89c1\u9752\u5c71\u591a\u59a9\u5a9a\uff0c\u6599\u9752\u5c71\u89c1\u6211\u5e94\u5982\u662f\u3002");
     await expect(page.locator(".rich-composer-editor")).toHaveAttribute("aria-placeholder", "\u5199\u70b9\u4ec0\u4e48\u3002\u4ec0\u4e48\u90fd\u53ef\u4ee5\u3002");
     await expect(page.getByRole("button", { name: "更多", exact: true })).toBeVisible();
+  });
+
+  // Covers the whole real path a profile travels -- renderer, preload, IPC,
+  // pi-remote's own profile store, and the file it writes -- which the renderer
+  // suite cannot reach because it stops at a fake bridge. No SSH is involved:
+  // creating a profile only records how to reach a host, never contacts it.
+  test("a remote profile is created, grouped under its host, and survives a restart", async ({}, testInfo) => {
+    let { page } = harness;
+    const remoteSection = page.locator(".remote-tree");
+
+    await expect(remoteSection.getByText("Remotes")).toBeVisible();
+    await remoteSection.getByRole("button", { name: "No remote hosts" }).click();
+
+    const wizard = page.locator(".remote-wizard");
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("textbox", { name: "Name" }).fill("ops-box");
+    await wizard.getByRole("textbox", { name: "SSH host" }).fill("ops-box.example");
+    await wizard.getByRole("textbox", { name: "Default directory" }).fill("/srv/application");
+    await wizard.getByRole("button", { name: "Next" }).click();
+
+    // Egress is a creation-time choice because it decides which isolated remote
+    // directory the profile owns, so the wizard states that before committing.
+    await expect(wizard).toContainText("Egress cannot change later");
+    await wizard.getByRole("button", { name: "Create profile" }).click();
+    await expect(wizard).toContainText("Profile created.");
+    // The dialog's own dismiss control shares this name, so target the action row.
+    await wizard.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
+
+    await remoteSection.getByRole("button", { name: "Expand host ops-box.example" }).click();
+    await expect(remoteSection.getByText("Direct")).toBeVisible();
+    await expect(remoteSection.getByText("1 profile")).toBeVisible();
+
+    // The default directory is a workspace immediately, before any session on
+    // the host exists to discover one from.
+    await remoteSection.getByRole("button", { name: "Expand profile ops-box" }).click();
+    await expect(remoteSection.getByText("application")).toBeVisible();
+
+    await openSettings(page, "Remotes");
+    await expect(page.locator(".settings-detail")).toContainText("ops-box.example");
+    await expect(page.locator(".settings-detail")).toContainText("/srv/application");
+    // Removing a profile must promise only what it does.
+    await expect(page.locator(".settings-detail")).toContainText("Remote sessions, credentials, and the installed runtime are left untouched.");
+    await page.getByRole("button", { name: "Close settings" }).click();
+
+    const userDataDir = harness.userDataDir;
+    const profilesPath = path.join(userDataDir, "pi-remote", "profiles.json");
+    const stored = JSON.parse(await readFile(profilesPath, "utf8")) as {
+      profiles: Array<{ id: string; name: string; network: { mode: string } }>;
+    };
+    expect(stored.profiles).toHaveLength(1);
+    expect(stored.profiles[0].name).toBe("ops-box");
+    expect(stored.profiles[0].network.mode).toBe("remote-direct");
+
+    await quitElectron(harness.app);
+    harness = await launchJasmine(`${testInfo.title.replace(/\W+/g, "-")}-restart`, userDataDir);
+    page = harness.page;
+    await page.locator(".remote-tree").getByRole("button", { name: "Expand host ops-box.example" }).click();
+    await expect(page.locator(".remote-tree").getByText("Direct")).toBeVisible();
+    // The id is what remote sessions hang off, so an edit must never mint a new one.
+    const afterRestart = JSON.parse(await readFile(profilesPath, "utf8")) as { profiles: Array<{ id: string }> };
+    expect(afterRestart.profiles[0].id).toBe(stored.profiles[0].id);
   });
 
 });

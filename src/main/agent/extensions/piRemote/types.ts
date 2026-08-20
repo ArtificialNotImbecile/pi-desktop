@@ -68,6 +68,39 @@ export interface RemoteSessionMetadata {
   createdAt: string;
   updatedAt?: string;
   name?: string;
+  /** Number of user turns in the session, so a client can label a row without downloading it. */
+  turnCount?: number;
+  /** First user message, trimmed, so an unnamed session still has a readable title. */
+  preview?: string;
+  /** Session file size when the metadata was taken; the resume offset for an incremental read. */
+  sizeBytes?: number;
+  /** Fingerprint of the session header line. A change means a cached prefix is no longer valid. */
+  headerFingerprint?: string;
+}
+
+/**
+ * One byte range of a session file. Data is base64 because a range boundary can
+ * split a multi-byte character, and a client that appends raw bytes and parses
+ * only whole lines never has to care.
+ */
+export interface RemoteSessionChunk {
+  id: string;
+  /** Offset the returned data starts at. */
+  offset: number;
+  /** Decoded length of `data`. */
+  bytes: number;
+  /** Total size of the remote file when the range was read. */
+  size: number;
+  data: string;
+  headerFingerprint: string;
+  /** True when this chunk reaches the end of the file as it was at read time. */
+  eof: boolean;
+}
+
+export interface ReadSessionOptions {
+  /** Resume point. Must be a boundary the client got from a previous chunk. */
+  fromOffset?: number;
+  maxBytes?: number;
 }
 
 export interface RemoteImageInput {
@@ -126,6 +159,7 @@ export interface RemoteRuntimeManager {
   doctor(profile: RemoteProfile): Promise<DoctorReport>;
   ensureRuntime(profile: RemoteProfile): Promise<RuntimeInfo>;
   listSessions(profile: RemoteProfile): Promise<RemoteSessionMetadata[]>;
+  readSession(profile: RemoteProfile, sessionId: string, options?: ReadSessionOptions): Promise<RemoteSessionChunk>;
   openTui(profile: RemoteProfile, options?: OpenTuiOptions): Promise<number>;
   openSession(profile: RemoteProfile, options?: OpenSessionOptions): Promise<RemoteSessionPort>;
   syncModelConfig(profile: RemoteProfile, config: RemoteModelConfig): Promise<Record<string, unknown>>;

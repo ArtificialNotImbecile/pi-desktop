@@ -1,11 +1,19 @@
-import type { ReactNode } from "react";
-import type { ChatThread, WorkspaceProject } from "../../../shared/ipc";
+import { useMemo, type ReactNode } from "react";
+import type {
+  ChatThread,
+  RemoteProfileStatus,
+  RemoteSessionSummary,
+  RemoteWorkspace,
+  WorkspaceProject
+} from "../../../shared/ipc";
 import { EditIcon, SearchIcon, SidebarIcon } from "../icons/Icons";
 import { IconButton } from "../ui/IconButton";
 import { Sidebar } from "./Sidebar";
 import { WindowControls } from "./WindowControls";
 import { useI18n } from "../../i18n";
 import { useStableCallbacks } from "../../hooks/useStableCallbacks";
+import type { RemoteHostGroup } from "../../hooks/useRemotes";
+import type { RemoteTreeProps } from "../remote/RemoteTree";
 
 export function AppShell(props: {
   children: ReactNode;
@@ -37,11 +45,58 @@ export function AppShell(props: {
   onRemoveProject(projectId: string): void;
   onOpenProjectInExplorer(projectId: string): void;
   onCloseFloatingSurfaces(): void;
+  remoteHostGroups: RemoteHostGroup[];
+  remoteWorkspaces: RemoteWorkspace[];
+  remoteSessions: Record<string, RemoteSessionSummary[]>;
+  remoteStatuses: Record<string, RemoteProfileStatus>;
+  remoteRefreshingProfileIds: string[];
+  activeRemoteProfileId: string | null;
+  activeRemoteSessionId: string | null;
+  onAddRemoteProfile(): void;
+  onExpandRemoteProfile(profileId: string): void;
+  onRefreshRemoteProfile(profileId: string): void;
+  onOpenRemoteProfileSettings(profileId: string): void;
+  onCheckRemoteProfile(profileId: string): void;
+  onAddRemoteWorkspace(profileId: string): void;
+  onRemoveRemoteWorkspace(workspace: RemoteWorkspace): void;
+  onToggleRemoteWorkspacePinned(workspace: RemoteWorkspace): void;
+  onOpenRemoteWorkspace(profileId: string, cwd: string): void;
+  onOpenRemoteSession(profileId: string, sessionId: string): void;
 }) {
   const { t } = useI18n();
   // App recreates these handler closures on every render (including each stream
   // tick); identity-stable wrappers keep the memoized Sidebar from reconciling.
   const stable = useStableCallbacks(props);
+  // One grouped object so the memoized Sidebar sees a new remote prop only when
+  // remote data actually changes, not on every stream tick.
+  const remote = useMemo<RemoteTreeProps>(() => ({
+    hostGroups: props.remoteHostGroups,
+    workspaces: props.remoteWorkspaces,
+    sessions: props.remoteSessions,
+    statuses: props.remoteStatuses,
+    refreshingProfileIds: props.remoteRefreshingProfileIds,
+    activeProfileId: props.activeRemoteProfileId,
+    activeSessionId: props.activeRemoteSessionId,
+    onAddProfile: stable.onAddRemoteProfile,
+    onExpandProfile: stable.onExpandRemoteProfile,
+    onRefreshProfile: stable.onRefreshRemoteProfile,
+    onOpenProfileSettings: stable.onOpenRemoteProfileSettings,
+    onCheckProfile: stable.onCheckRemoteProfile,
+    onAddWorkspace: stable.onAddRemoteWorkspace,
+    onRemoveWorkspace: stable.onRemoveRemoteWorkspace,
+    onToggleWorkspacePinned: stable.onToggleRemoteWorkspacePinned,
+    onOpenWorkspace: stable.onOpenRemoteWorkspace,
+    onOpenSession: stable.onOpenRemoteSession
+  }), [
+    props.remoteHostGroups,
+    props.remoteWorkspaces,
+    props.remoteSessions,
+    props.remoteStatuses,
+    props.remoteRefreshingProfileIds,
+    props.activeRemoteProfileId,
+    props.activeRemoteSessionId,
+    stable
+  ]);
   return (
     <main className={`app-shell ${props.sidebarCollapsed ? "sidebar-collapsed" : ""} ${props.messagesEmpty ? "empty-active" : ""}`}>
       {/* Title-bar chrome is shell-owned so every workspace route keeps window
@@ -82,6 +137,7 @@ export function AppShell(props: {
         onRemoveProject={stable.onRemoveProject}
         onOpenProjectInExplorer={stable.onOpenProjectInExplorer}
         onCloseFloatingSurfaces={stable.onCloseFloatingSurfaces}
+        remote={remote}
       />
 
       {/* Collapsing the rail used to leave one stray restore box in the corner

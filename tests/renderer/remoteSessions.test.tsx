@@ -1,0 +1,348 @@
+import { useState, type ReactNode } from "react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import type {
+  RemoteProfileStatus,
+  RemoteProfileSummary,
+  RemoteSessionSummary,
+  RemoteSessionTranscript,
+  RemoteWorkspace
+} from "../../src/shared/ipc";
+import { RemoteSessionPage } from "../../src/renderer/components/remote/RemoteSessionPage";
+import { RemoteTree } from "../../src/renderer/components/remote/RemoteTree";
+import { useRemotes } from "../../src/renderer/hooks/useRemotes";
+import { I18nProvider } from "../../src/renderer/i18n";
+import { installFakeBridge, type FakeBridge } from "./fakeBridge";
+
+function withI18n(children: ReactNode) {
+  return <I18nProvider language="en">{children}</I18nProvider>;
+}
+
+const DIRECT: RemoteProfileSummary = {
+  id: "profile-direct",
+  name: "ops-box",
+  sshHost: "ops-box",
+  sshPort: null,
+  defaultCwd: "/srv/application",
+  networkMode: "remote-direct",
+  noProxy: [],
+  allowedPorts: [80, 443],
+  upstreamProxyEnv: null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z"
+};
+
+// The same machine with the client proxy on is a second profile with its own
+// remote directory, which is exactly the distinction the tree has to show.
+const PROXIED: RemoteProfileSummary = {
+  ...DIRECT,
+  id: "profile-proxied",
+  name: "ops-box-proxied",
+  networkMode: "client-proxy"
+};
+
+const WORKSPACE: RemoteWorkspace = {
+  id: "workspace-1",
+  profileId: DIRECT.id,
+  cwd: "/srv/application",
+  name: "application",
+  pinned: false,
+  source: "discovered",
+  isDefaultCwd: true,
+  sessionCount: 2,
+  latestSessionAt: "2026-08-19T10:00:00.000Z",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-19T10:00:00.000Z"
+};
+
+function session(overrides: Partial<RemoteSessionSummary> & { sessionId: string }): RemoteSessionSummary {
+  return {
+    profileId: DIRECT.id,
+    cwd: "/srv/application",
+    title: overrides.sessionId,
+    name: null,
+    preview: null,
+    turnCount: 3,
+    remoteCreatedAt: "2026-08-18T09:00:00.000Z",
+    remoteUpdatedAt: "2026-08-19T10:00:00.000Z",
+    remoteSizeBytes: 4096,
+    cachedBytes: 0,
+    state: "remote",
+    listedAt: "2026-08-19T10:00:00.000Z",
+    ...overrides
+  };
+}
+
+function transcript(overrides: Partial<RemoteSessionTranscript> & { sessionId: string }): RemoteSessionTranscript {
+  return {
+    profileId: DIRECT.id,
+    title: overrides.sessionId,
+    cwd: "/srv/application",
+    state: "cached",
+    entries: [
+      { id: "e1", kind: "user", timestamp: "2026-08-18T09:00:00.000Z", text: "refactor the auth middleware", toolName: null, appended: false }
+    ],
+    omittedEntryCount: 0,
+    cachedBytes: 4096,
+    remoteSizeBytes: 4096,
+    fetchedBytes: 0,
+    refetched: false,
+    syncedAt: "2026-08-19T10:00:00.000Z",
+    ...overrides
+  };
+}
+
+function status(state: RemoteProfileStatus["state"]): RemoteProfileStatus {
+  return {
+    profileId: DIRECT.id,
+    state,
+    message: null,
+    errorCode: null,
+    remediation: null,
+    runtimeVersion: null,
+    piVersion: null,
+    checkedAt: "2026-08-19T10:00:00.000Z",
+    busy: false
+  };
+}
+
+let fake: FakeBridge;
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** Mounts the tree against the hook, the way the shell composes them. */
+function TreeHarness(props: { onOpenSession?(profileId: string, sessionId: string): void }) {
+  const remotes = useRemotes({ onError: () => {}, onToast: () => {} });
+  return (
+    <RemoteTree
+      hostGroups={remotes.hostGroups}
+      workspaces={remotes.workspaces}
+      sessions={remotes.sessions}
+      statuses={remotes.statuses}
+      refreshingProfileIds={remotes.refreshingProfileIds}
+      activeProfileId={null}
+      activeSessionId={null}
+      onAddProfile={() => {}}
+      onExpandProfile={(profileId) => void remotes.openProfile(profileId)}
+      onRefreshProfile={(profileId) => void remotes.refreshSessions(profileId, { force: true })}
+      onOpenProfileSettings={() => {}}
+      onCheckProfile={() => {}}
+      onAddWorkspace={() => {}}
+      onRemoveWorkspace={() => {}}
+      onToggleWorkspacePinned={() => {}}
+      onOpenWorkspace={() => {}}
+      onOpenSession={(profileId, sessionId) => props.onOpenSession?.(profileId, sessionId)}
+    />
+  );
+}
+
+describe("remote tree", () => {
+  test("groups profiles under one host and names each egress mode", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({
+      profiles: [DIRECT, PROXIED],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")]
+    });
+
+    render(withI18n(<TreeHarness />));
+
+    const host = await screen.findByRole("button", { name: /Expand host ops-box/ });
+    fireEvent.click(host);
+
+    // One host row, two profiles, each labelled by how it reaches the network.
+    // The tree column is narrow, so it carries the short form of each name.
+    expect(screen.getByText("Direct")).toBeDefined();
+    expect(screen.getByText("Proxied")).toBeDefined();
+    expect(screen.getByText("2 profiles")).toBeDefined();
+  });
+
+  test("expanding a profile shows stored sessions before any refresh answers", async () => {
+    fake = installFakeBridge();
+    // A refresh that never settles stands in for a slow or unreachable host.
+    const pending = new Promise<RemoteSessionSummary[]>(() => {});
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [session({ sessionId: "session-a", title: "fix CI cache", state: "cached", cachedBytes: 4096 })] }
+    });
+    const originalRefresh = fake.bridge.refreshRemoteSessions;
+    fake.bridge.refreshRemoteSessions = () => pending;
+
+    render(withI18n(<TreeHarness />));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Expand host ops-box/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Expand profile ops-box/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Expand workspace application/ }));
+
+    // The stored row is on screen even though the network call is still open.
+    expect(await screen.findByRole("button", { name: "Open session fix CI cache" })).toBeDefined();
+    expect(screen.getByText("Local copy")).toBeDefined();
+    fake.bridge.refreshRemoteSessions = originalRefresh;
+  });
+
+  test("a session refresh is time-boxed per profile and forced by the refresh control", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [session({ sessionId: "session-a" })] }
+    });
+
+    render(withI18n(<TreeHarness />));
+    const host = await screen.findByRole("button", { name: /Expand host ops-box/ });
+    fireEvent.click(host);
+    const expand = await screen.findByRole("button", { name: /Expand profile ops-box/ });
+
+    fireEvent.click(expand);
+    await waitFor(() => expect(fake.calls.refreshRemoteSessions).toEqual([DIRECT.id]));
+
+    // Collapsing and expanding again inside the window must not repeat the SSH
+    // round trip; the stored rows are still current enough.
+    fireEvent.click(await screen.findByRole("button", { name: /Collapse profile ops-box/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Expand profile ops-box/ }));
+    await waitFor(() => expect(fake.calls.listRemoteSessions.length).toBeGreaterThan(1));
+    expect(fake.calls.refreshRemoteSessions).toEqual([DIRECT.id]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
+    await waitFor(() => expect(fake.calls.refreshRemoteSessions).toEqual([DIRECT.id, DIRECT.id]));
+  });
+});
+
+/** Mounts the reader with a selection the test drives, as the route does. */
+function PageHarness(props: { initialSessionId: string | null; sessions: RemoteSessionSummary[] }) {
+  const remotes = useRemotes({ onError: () => {}, onToast: () => {} });
+  const [selected, setSelected] = useState<string | null>(props.initialSessionId);
+  return (
+    <RemoteSessionPage
+      profile={DIRECT}
+      workspace={WORKSPACE}
+      cwd={WORKSPACE.cwd}
+      status={remotes.statuses[DIRECT.id]}
+      sessions={props.sessions}
+      activeSessionId={selected}
+      refreshing={false}
+      onRefresh={() => void remotes.refreshSessions(DIRECT.id, { force: true })}
+      onSelectSession={setSelected}
+      onOpenSession={(sessionId, options) => remotes.openSession(DIRECT.id, sessionId, options)}
+    />
+  );
+}
+
+describe("remote session reader", () => {
+  test("a cached session opens from the local copy and reports no fetch", async () => {
+    fake = installFakeBridge();
+    const cached = session({ sessionId: "session-cached", title: "fix CI cache", state: "cached", cachedBytes: 4096 });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [cached] },
+      transcripts: { "session-cached": transcript({ sessionId: "session-cached", title: "fix CI cache" }) }
+    });
+
+    render(withI18n(<PageHarness initialSessionId="session-cached" sessions={[cached]} />));
+
+    expect(await screen.findByText("refactor the auth middleware")).toBeDefined();
+    // The rendered clock follows the viewer's timezone, so this asserts that the
+    // sync line reports a time rather than a fetch, not which time it prints.
+    expect(screen.getByText(/^Synced \w/u)).toBeDefined();
+    expect(fake.calls.openRemoteSession).toEqual([{ profileId: DIRECT.id, sessionId: "session-cached" }]);
+  });
+
+  test("a session the remote has grown reports what the incremental read fetched", async () => {
+    fake = installFakeBridge();
+    const stale = session({ sessionId: "session-stale", title: "add e2e cases", state: "stale", cachedBytes: 2_411_008 });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [stale] },
+      transcripts: {
+        "session-stale": transcript({
+          sessionId: "session-stale",
+          title: "add e2e cases",
+          fetchedBytes: 62_464,
+          cachedBytes: 2_473_472,
+          entries: [
+            { id: "old", kind: "user", timestamp: null, text: "earlier turn", toolName: null, appended: false },
+            { id: "new", kind: "assistant", timestamp: null, text: "the newly fetched tail", toolName: null, appended: true }
+          ]
+        })
+      }
+    });
+
+    render(withI18n(<PageHarness initialSessionId="session-stale" sessions={[stale]} />));
+
+    // Only the tail was fetched, and the rows that arrived say so.
+    expect(await screen.findByText("Fetched 61 KB")).toBeDefined();
+    const appended = screen.getByText("the newly fetched tail").closest("article");
+    expect(appended?.className).toContain("appended");
+    expect(within(appended as HTMLElement).getByText("New")).toBeDefined();
+    expect(screen.getByText("earlier turn").closest("article")?.className).not.toContain("appended");
+  });
+
+  test("a session removed on the host stays readable and cannot be downloaded again", async () => {
+    fake = installFakeBridge();
+    const gone = session({ sessionId: "session-gone", title: "clean up logs", state: "gone", cachedBytes: 1024 });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [gone] },
+      transcripts: { "session-gone": transcript({ sessionId: "session-gone", title: "clean up logs", state: "gone" }) }
+    });
+
+    render(withI18n(<PageHarness initialSessionId="session-gone" sessions={[gone]} />));
+
+    expect(await screen.findByText("This session no longer exists on the host. The local copy is read-only.")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Download again" })).toHaveProperty("disabled", true);
+  });
+
+  test("downloading again asks for a full refetch rather than an incremental read", async () => {
+    fake = installFakeBridge();
+    const cached = session({ sessionId: "session-cached", title: "fix CI cache", state: "cached", cachedBytes: 4096 });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [cached] },
+      transcripts: { "session-cached": transcript({ sessionId: "session-cached", title: "fix CI cache" }) }
+    });
+
+    render(withI18n(<PageHarness initialSessionId="session-cached" sessions={[cached]} />));
+    await screen.findByText("refactor the auth middleware");
+
+    fireEvent.click(screen.getByRole("button", { name: "Download again" }));
+
+    await waitFor(() => expect(fake.calls.openRemoteSession.at(-1)).toEqual({
+      profileId: DIRECT.id,
+      sessionId: "session-cached",
+      refetch: true
+    }));
+  });
+
+  test("losing the connection reads as remote work continuing, not as a failure", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [] });
+
+    render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    // The initial snapshot has to land first: it would otherwise resolve after
+    // the broadcast and overwrite it with the state from before.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await fake.emitRemoteStatus(status("disconnected"));
+    });
+
+    expect(screen.getByText("Remote work keeps running. Reconnect to follow it again.")).toBeDefined();
+    expect(screen.getByText("Not connected")).toBeDefined();
+  });
+});

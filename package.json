@@ -140,6 +140,10 @@
         "to": "third-party"
       },
       {
+        "from": "src/main/agent/extensions/piRemote/runtime",
+        "to": "pi-remote-runtime"
+      },
+      {
         "from": "THIRD_PARTY_LICENSES.md",
         "to": "THIRD_PARTY_LICENSES.md"
       }

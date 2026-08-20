@@ -377,6 +377,48 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
       ON context_captures(thread_id);
   `);
   markMigration(db, 41, "rolling on-demand context taxonomy capture", now);
+  // Remote profiles themselves stay in pi-remote's own profiles.json, which is
+  // why neither table has a foreign key to one: SQLite holds only the Jasmine
+  // projections -- which remote directories the user works in, and what is known
+  // about each remote session without downloading it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_workspaces (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      name TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'discovered')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (profile_id, cwd)
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_sessions (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      name TEXT,
+      preview TEXT,
+      turn_count INTEGER,
+      remote_created_at TEXT NOT NULL,
+      remote_updated_at TEXT,
+      remote_size_bytes INTEGER,
+      header_fingerprint TEXT,
+      cached_bytes INTEGER NOT NULL DEFAULT 0,
+      cached_fingerprint TEXT,
+      transcript_path TEXT,
+      synced_at TEXT,
+      missing_since TEXT,
+      listed_at TEXT NOT NULL,
+      UNIQUE (profile_id, session_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_remote_sessions_workspace
+      ON remote_sessions(profile_id, cwd, remote_updated_at DESC);
+  `);
+  markMigration(db, 42, "remote profile workspaces and session projections", now);
 }
 
 function backfillFileChangeDiffLineStats(db: SqlDatabase): void {

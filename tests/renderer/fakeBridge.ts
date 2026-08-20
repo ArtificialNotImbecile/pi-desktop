@@ -2,6 +2,12 @@ import { act } from "@testing-library/react";
 import { LOCAL_FILE_DESCRIBE_LIMIT } from "../../src/shared/ipc";
 import type {
   AppUpdateState,
+  RemoteProfileStatus,
+  RemoteProfileSummary,
+  RemoteSessionOpenRequest,
+  RemoteSessionSummary,
+  RemoteSessionTranscript,
+  RemoteWorkspace,
   ChatEditRequest,
   ChatMessage,
   ChatQueueDeleteRequest,
@@ -63,7 +69,37 @@ type ModeledBridgeApi = Pick<
   | "openLocalPath"
   | "revealLocalPath"
   | "openExternalUrl"
+  | "listRemoteProfiles"
+  | "listRemoteWorkspaces"
+  | "listRemoteProfileStatuses"
+  | "listRemoteSessions"
+  | "refreshRemoteSessions"
+  | "openRemoteSession"
+  | "onRemoteStatusChanged"
+  | "createRemoteProfile"
+  | "updateRemoteProfile"
+  | "removeRemoteProfile"
+  | "checkRemoteProfile"
+  | "installRemoteRuntime"
+  | "stopRemoteProfile"
+  | "addRemoteWorkspace"
+  | "updateRemoteWorkspace"
+  | "removeRemoteWorkspace"
+  | "listRemoteDirectory"
 >;
+
+/** What the main process would report about one machine's remote state. */
+export type FakeRemoteState = {
+  profiles: RemoteProfileSummary[];
+  workspaces: RemoteWorkspace[];
+  statuses: RemoteProfileStatus[];
+  /** Stored rows, keyed by profile id, as SQLite would already hold them. */
+  sessions: Record<string, RemoteSessionSummary[]>;
+  /** What each session renders as once opened, keyed by session id. */
+  transcripts: Record<string, RemoteSessionTranscript>;
+  /** Rows a refresh reports, keyed by profile id. Defaults to `sessions`. */
+  refreshed: Record<string, RemoteSessionSummary[]>;
+};
 
 export type FakeBridge = {
   bridge: JasmineApi;
@@ -107,7 +143,14 @@ export type FakeBridge = {
     openLocalPath: string[];
     revealLocalPath: string[];
     openExternalUrl: string[];
+    listRemoteSessions: string[];
+    refreshRemoteSessions: string[];
+    openRemoteSession: RemoteSessionOpenRequest[];
   };
+  /** Replaces the remote state the bridge answers with. */
+  setRemoteState(state: Partial<FakeRemoteState>): void;
+  /** Delivers a status change the way the main process broadcasts one. */
+  emitRemoteStatus(status: RemoteProfileStatus): Promise<void>;
   /**
    * Declares what the main process would report for paths an assistant answer
    * references. Unlisted paths describe as missing, which is what the renderer
@@ -166,10 +209,22 @@ export function createFakeBridge(): FakeBridge {
     describeLocalFiles: [],
     openLocalPath: [],
     revealLocalPath: [],
-    openExternalUrl: []
+    openExternalUrl: [],
+    listRemoteSessions: [],
+    refreshRemoteSessions: [],
+    openRemoteSession: []
   };
 
   const localFiles = new Map<string, LocalFileDescription>();
+  const remoteStatusListeners = new Set<(status: RemoteProfileStatus) => void>();
+  const remote: FakeRemoteState = {
+    profiles: [],
+    workspaces: [],
+    statuses: [],
+    sessions: {},
+    transcripts: {},
+    refreshed: {}
+  };
 
   function store(threadId: string): StoredMessage[] {
     const existing = threads.get(threadId);
@@ -365,6 +420,119 @@ export function createFakeBridge(): FakeBridge {
     listExecutableDiscovery(kind) {
       return Promise.resolve({ kind, candidates: [] });
     },
+    listRemoteProfiles() {
+      return Promise.resolve([...remote.profiles]);
+    },
+    listRemoteWorkspaces(request) {
+      const workspaces = request?.profileId
+        ? remote.workspaces.filter((workspace) => workspace.profileId === request.profileId)
+        : remote.workspaces;
+      return Promise.resolve([...workspaces]);
+    },
+    listRemoteProfileStatuses() {
+      return Promise.resolve([...remote.statuses]);
+    },
+    listRemoteSessions(request) {
+      calls.listRemoteSessions.push(request.profileId);
+      const rows = remote.sessions[request.profileId] ?? [];
+      return Promise.resolve(request.cwd ? rows.filter((row) => row.cwd === request.cwd) : [...rows]);
+    },
+    refreshRemoteSessions(request) {
+      calls.refreshRemoteSessions.push(request.profileId);
+      const rows = remote.refreshed[request.profileId] ?? remote.sessions[request.profileId] ?? [];
+      remote.sessions[request.profileId] = [...rows];
+      return Promise.resolve([...rows]);
+    },
+    openRemoteSession(request) {
+      calls.openRemoteSession.push(request);
+      const transcript = remote.transcripts[request.sessionId];
+      if (!transcript) return Promise.reject(new Error(`No fake transcript for ${request.sessionId}`));
+      return Promise.resolve(transcript);
+    },
+    onRemoteStatusChanged(callback) {
+      remoteStatusListeners.add(callback);
+      return () => remoteStatusListeners.delete(callback);
+    },
+    createRemoteProfile(request) {
+      const profile: RemoteProfileSummary = {
+        id: `profile-${remote.profiles.length + 1}`,
+        name: request.name,
+        sshHost: request.sshHost,
+        sshPort: request.sshPort ?? null,
+        defaultCwd: request.defaultCwd ?? null,
+        networkMode: request.networkMode,
+        noProxy: request.noProxy ?? [],
+        allowedPorts: request.allowedPorts ?? [80, 443],
+        upstreamProxyEnv: request.upstreamProxyEnv ?? null,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        updatedAt: "2026-08-20T00:00:00.000Z"
+      };
+      remote.profiles = [...remote.profiles, profile];
+      return Promise.resolve(profile);
+    },
+    updateRemoteProfile(request) {
+      const current = remote.profiles.find((profile) => profile.id === request.profileId);
+      if (!current) return Promise.reject(new Error(`No fake profile ${request.profileId}`));
+      const { profileId: _profileId, ...patch } = request;
+      const next = { ...current, ...patch };
+      remote.profiles = remote.profiles.map((profile) => (profile.id === next.id ? next : profile));
+      return Promise.resolve(next);
+    },
+    removeRemoteProfile(request) {
+      remote.profiles = remote.profiles.filter((profile) => profile.id !== request.profileId);
+      return Promise.resolve();
+    },
+    checkRemoteProfile(request) {
+      return Promise.resolve({
+        profileId: request.profileId,
+        ok: true,
+        checks: [{ id: "ssh", status: "pass" as const, message: "OpenSSH connection is usable." }],
+        checkedAt: "2026-08-20T00:00:00.000Z"
+      });
+    },
+    installRemoteRuntime(request) {
+      return Promise.resolve(fakeRemoteStatus(request.profileId, "ready"));
+    },
+    stopRemoteProfile(request) {
+      return Promise.resolve(fakeRemoteStatus(request.profileId, "disconnected"));
+    },
+    addRemoteWorkspace(request) {
+      const workspace: RemoteWorkspace = {
+        id: `workspace-${remote.workspaces.length + 1}`,
+        profileId: request.profileId,
+        cwd: request.cwd,
+        name: request.name ?? request.cwd.split("/").filter(Boolean).pop() ?? request.cwd,
+        pinned: false,
+        source: "manual",
+        isDefaultCwd: Boolean(request.setDefault),
+        sessionCount: 0,
+        latestSessionAt: null,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        updatedAt: "2026-08-20T00:00:00.000Z"
+      };
+      remote.workspaces = [...remote.workspaces, workspace];
+      return Promise.resolve(workspace);
+    },
+    updateRemoteWorkspace(request) {
+      const current = remote.workspaces.find((workspace) => workspace.id === request.id);
+      if (!current) return Promise.reject(new Error(`No fake workspace ${request.id}`));
+      const next = { ...current, ...request };
+      remote.workspaces = remote.workspaces.map((workspace) => (workspace.id === next.id ? next : workspace));
+      return Promise.resolve(next);
+    },
+    removeRemoteWorkspace(request) {
+      remote.workspaces = remote.workspaces.filter((workspace) => workspace.id !== request.id);
+      return Promise.resolve();
+    },
+    listRemoteDirectory(request) {
+      return Promise.resolve({
+        profileId: request.profileId,
+        path: request.path ?? "/",
+        parentPath: request.path && request.path !== "/" ? "/" : null,
+        entries: [],
+        truncated: false
+      });
+    },
     getThreadDraft(threadId) {
       calls.getThreadDraft.push(threadId);
       return getThreadDraftBehavior(threadId);
@@ -481,6 +649,18 @@ export function createFakeBridge(): FakeBridge {
     setOpenExternalUrlBehavior(behavior) {
       openExternalUrlBehavior = behavior;
     },
+    setRemoteState(state) {
+      Object.assign(remote, state);
+    },
+    async emitRemoteStatus(status) {
+      remote.statuses = [
+        ...remote.statuses.filter((current) => current.profileId !== status.profileId),
+        status
+      ];
+      await act(async () => {
+        for (const listener of remoteStatusListeners) listener(status);
+      });
+    },
     setLocalFiles(files) {
       for (const file of files) {
         localFiles.set(file.path, {
@@ -492,6 +672,20 @@ export function createFakeBridge(): FakeBridge {
         });
       }
     }
+  };
+}
+
+function fakeRemoteStatus(profileId: string, state: RemoteProfileStatus["state"]): RemoteProfileStatus {
+  return {
+    profileId,
+    state,
+    message: null,
+    errorCode: null,
+    remediation: null,
+    runtimeVersion: state === "ready" ? "0.1.0" : null,
+    piVersion: state === "ready" ? "0.84.2" : null,
+    checkedAt: "2026-08-20T00:00:00.000Z",
+    busy: false
   };
 }
 

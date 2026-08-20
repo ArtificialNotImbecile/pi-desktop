@@ -827,6 +827,10 @@ export function baseLaunchEnv(userDataDir: string, extra: Record<string, string>
     JASMINE_E2E_MOCK_AI: "1",
     DEEPSEEK_API_KEY: "e2e-mock-key",
     KIMI_API_KEY: "e2e-mock-key",
+    // Remote profiles live in a shared pi-remote config so the CLI and Jasmine
+    // see the same hosts. A test run must not read or write the developer's
+    // real one, so it is redirected into the run's own user data directory.
+    PI_REMOTE_CONFIG_PATH: path.join(userDataDir, "pi-remote", "profiles.json"),
     ...extra
   };
 }

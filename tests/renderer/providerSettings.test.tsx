@@ -47,7 +47,8 @@ describe("provider settings", () => {
     const view = renderPanel();
     expect(within(view.container).getByRole("heading", { name: "Fake Provider" })).toBeDefined();
     expect(view.container.querySelector(".settings-panel")?.className).toContain("has-subnav");
-    expect(view.container.querySelectorAll(".settings-nav button")).toHaveLength(9);
+    expect(view.container.querySelectorAll(".settings-nav button")).toHaveLength(10);
+    expect(within(view.container).getByRole("button", { name: "Remotes" })).toBeDefined();
     expect(view.container.textContent).not.toContain("Chrome control");
     expect(view.container.querySelector(".settings-detail .settings-header")).toBeNull();
   });

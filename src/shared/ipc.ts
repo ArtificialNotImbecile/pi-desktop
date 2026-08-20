@@ -1283,6 +1283,214 @@ export type SpotlightExecuteRequest = {
   section?: string;
 };
 
+/**
+ * How a remote profile reaches the network. It is fixed at creation because it
+ * selects which isolated directory tree the profile owns on the remote host:
+ * the same machine with and without the client proxy is two profiles with two
+ * separate session histories, not one profile with a toggle.
+ */
+export type RemoteEgressMode = "remote-direct" | "client-proxy";
+
+export type RemoteProfileSummary = {
+  id: string;
+  name: string;
+  sshHost: string;
+  sshPort: number | null;
+  defaultCwd: string | null;
+  networkMode: RemoteEgressMode;
+  noProxy: string[];
+  allowedPorts: number[];
+  upstreamProxyEnv: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * `needsSetup` means the host answered but the managed runtime is not installed
+ * yet; `disconnected` means Jasmine is not attached while remote work may well
+ * still be running, which is why it is not an error state.
+ */
+export type RemoteConnectionState = "unknown" | "checking" | "ready" | "needsSetup" | "disconnected" | "failed";
+
+export type RemoteProfileStatus = {
+  profileId: string;
+  state: RemoteConnectionState;
+  message: string | null;
+  errorCode: string | null;
+  remediation: string | null;
+  runtimeVersion: string | null;
+  piVersion: string | null;
+  checkedAt: string | null;
+  busy: boolean;
+};
+
+export type RemoteDoctorCheckStatus = "pass" | "fail" | "warning" | "unknown";
+
+export type RemoteDoctorCheck = {
+  id: string;
+  status: RemoteDoctorCheckStatus;
+  message: string;
+};
+
+export type RemoteDoctorReport = {
+  profileId: string;
+  ok: boolean;
+  checks: RemoteDoctorCheck[];
+  checkedAt: string;
+};
+
+/**
+ * A workspace is a Jasmine concept: pi-remote only knows a profile-wide default
+ * cwd and the cwd each session was started in. Discovered workspaces come from
+ * those session cwds; manual ones are directories the user wants to start in.
+ */
+export type RemoteWorkspaceSource = "manual" | "discovered";
+
+export type RemoteWorkspace = {
+  id: string;
+  profileId: string;
+  cwd: string;
+  name: string;
+  pinned: boolean;
+  source: RemoteWorkspaceSource;
+  isDefaultCwd: boolean;
+  sessionCount: number;
+  latestSessionAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * `remote` has metadata only, `cached` has a complete local copy, `stale` has a
+ * local copy the remote has since grown past, and `gone` was removed remotely
+ * while a local copy survives as read-only.
+ */
+export type RemoteSessionCacheState = "remote" | "cached" | "stale" | "gone";
+
+export type RemoteSessionSummary = {
+  profileId: string;
+  sessionId: string;
+  cwd: string;
+  /** Remote name when it has one, else the first user message, else a short id. */
+  title: string;
+  name: string | null;
+  preview: string | null;
+  turnCount: number | null;
+  remoteCreatedAt: string;
+  remoteUpdatedAt: string | null;
+  remoteSizeBytes: number | null;
+  cachedBytes: number;
+  state: RemoteSessionCacheState;
+  listedAt: string;
+};
+
+export type RemoteTranscriptEntryKind = "user" | "assistant" | "thinking" | "tool" | "compaction" | "notice";
+
+export type RemoteTranscriptEntry = {
+  id: string;
+  kind: RemoteTranscriptEntryKind;
+  timestamp: string | null;
+  text: string;
+  toolName: string | null;
+  /** True when this entry arrived in the most recent incremental sync. */
+  appended: boolean;
+};
+
+export type RemoteSessionTranscript = {
+  profileId: string;
+  sessionId: string;
+  title: string;
+  cwd: string;
+  state: RemoteSessionCacheState;
+  entries: RemoteTranscriptEntry[];
+  /** Entries older than the display window that were dropped from `entries`. */
+  omittedEntryCount: number;
+  cachedBytes: number;
+  remoteSizeBytes: number | null;
+  /** Bytes the last sync had to fetch. Zero means the local copy was already current. */
+  fetchedBytes: number;
+  /** True when the cached prefix no longer matched and the file was refetched whole. */
+  refetched: boolean;
+  syncedAt: string | null;
+};
+
+export type RemoteDirectoryEntry = {
+  name: string;
+  path: string;
+  writable: boolean;
+  gitRepository: boolean;
+  /** True when the profile already has sessions or a workspace under this path. */
+  inUse: boolean;
+};
+
+export type RemoteDirectoryListing = {
+  profileId: string;
+  path: string;
+  parentPath: string | null;
+  entries: RemoteDirectoryEntry[];
+  truncated: boolean;
+};
+
+export type RemoteProfileCreateRequest = {
+  name: string;
+  sshHost: string;
+  sshPort?: number | null;
+  defaultCwd?: string | null;
+  networkMode: RemoteEgressMode;
+  noProxy?: string[];
+  allowedPorts?: number[];
+  upstreamProxyEnv?: string | null;
+};
+
+export type RemoteProfileUpdateRequest = {
+  profileId: string;
+  name?: string;
+  sshHost?: string;
+  sshPort?: number | null;
+  defaultCwd?: string | null;
+  noProxy?: string[];
+  allowedPorts?: number[];
+  upstreamProxyEnv?: string | null;
+};
+
+export type RemoteProfileIdRequest = {
+  profileId: string;
+};
+
+export type RemoteWorkspaceAddRequest = {
+  profileId: string;
+  cwd: string;
+  name?: string;
+  setDefault?: boolean;
+};
+
+export type RemoteWorkspaceUpdateRequest = {
+  id: string;
+  name?: string;
+  pinned?: boolean;
+};
+
+export type RemoteWorkspaceIdRequest = {
+  id: string;
+};
+
+export type RemoteSessionListRequest = {
+  profileId: string;
+  cwd?: string;
+};
+
+export type RemoteSessionOpenRequest = {
+  profileId: string;
+  sessionId: string;
+  /** Discards the local copy and downloads the session again. */
+  refetch?: boolean;
+};
+
+export type RemoteDirectoryListRequest = {
+  profileId: string;
+  path?: string;
+};
+
 export type JasmineApi = {
   platform: NodeJS.Platform;
   listThreads(): Promise<ChatThread[]>;
@@ -1301,6 +1509,23 @@ export type JasmineApi = {
   removeProject(request: ProjectRemoveRequest): Promise<void>;
   openProjectInExplorer(request: ProjectOpenInExplorerRequest): Promise<void>;
   onProjectOpened(callback: (project: WorkspaceProject) => void): () => void;
+  listRemoteProfiles(): Promise<RemoteProfileSummary[]>;
+  createRemoteProfile(request: RemoteProfileCreateRequest): Promise<RemoteProfileSummary>;
+  updateRemoteProfile(request: RemoteProfileUpdateRequest): Promise<RemoteProfileSummary>;
+  removeRemoteProfile(request: RemoteProfileIdRequest): Promise<void>;
+  checkRemoteProfile(request: RemoteProfileIdRequest): Promise<RemoteDoctorReport>;
+  installRemoteRuntime(request: RemoteProfileIdRequest): Promise<RemoteProfileStatus>;
+  stopRemoteProfile(request: RemoteProfileIdRequest): Promise<RemoteProfileStatus>;
+  listRemoteProfileStatuses(): Promise<RemoteProfileStatus[]>;
+  listRemoteWorkspaces(request?: Partial<RemoteProfileIdRequest>): Promise<RemoteWorkspace[]>;
+  addRemoteWorkspace(request: RemoteWorkspaceAddRequest): Promise<RemoteWorkspace>;
+  updateRemoteWorkspace(request: RemoteWorkspaceUpdateRequest): Promise<RemoteWorkspace>;
+  removeRemoteWorkspace(request: RemoteWorkspaceIdRequest): Promise<void>;
+  listRemoteDirectory(request: RemoteDirectoryListRequest): Promise<RemoteDirectoryListing>;
+  listRemoteSessions(request: RemoteSessionListRequest): Promise<RemoteSessionSummary[]>;
+  refreshRemoteSessions(request: RemoteProfileIdRequest): Promise<RemoteSessionSummary[]>;
+  openRemoteSession(request: RemoteSessionOpenRequest): Promise<RemoteSessionTranscript>;
+  onRemoteStatusChanged(callback: (status: RemoteProfileStatus) => void): () => void;
   getWorkingSnapshot(): Promise<WorkingSnapshot>;
   markWorkingRead(requestId: string): Promise<WorkingSnapshot>;
   clearCompletedWorking(): Promise<WorkingSnapshot>;

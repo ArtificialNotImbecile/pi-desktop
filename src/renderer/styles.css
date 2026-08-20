@@ -10203,3 +10203,659 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   .path-picker-control { grid-template-columns: 1fr; }
   .path-picker-actions { justify-content: flex-start; }
 }
+
+/* Remote profiles, workspaces and sessions.
+   The tree reuses the project tree's row grammar so the sidebar reads as one
+   list; only the status dot and the session cache marker are new. */
+.remote-tree {
+  display: contents;
+}
+
+.remote-host-row,
+.remote-profile-row,
+.remote-workspace-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.remote-host-row:hover,
+.remote-profile-row:hover,
+.remote-workspace-row:hover {
+  background: var(--soft);
+}
+
+.remote-profile-row.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.remote-host-row:not(.collapsed) .project-collapse .icon,
+.remote-profile-row .project-collapse[aria-expanded="true"] .icon,
+.remote-workspace-row .project-collapse[aria-expanded="true"] .icon {
+  transform: rotate(90deg);
+}
+
+.remote-host-item,
+.remote-profile-item,
+.remote-workspace-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  width: 100%;
+  padding: 0 8px 0 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+}
+
+.remote-workspace-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.remote-host-item span,
+.remote-profile-item span:not(.remote-status-dot),
+.remote-workspace-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-host-item small,
+.remote-profile-item small,
+.remote-workspace-item small {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.remote-profile-group,
+.remote-workspace-group {
+  margin-left: 14px;
+}
+
+/* State is carried by a label as well as the dot: colour alone is not a
+   status, and these rows are read at a glance. */
+.remote-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  justify-self: center;
+}
+
+.remote-status-dot.ready {
+  background: var(--success);
+}
+
+.remote-status-dot.attention,
+.remote-status-dot.needsSetup {
+  background: var(--attention);
+}
+
+.remote-status-dot.failed {
+  background: var(--danger);
+}
+
+.remote-status-dot.checking {
+  background: var(--accent);
+}
+
+.remote-session-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 26px);
+  min-height: 30px;
+  margin-left: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+}
+
+.remote-session-row:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+
+.remote-session-row.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--ink);
+}
+
+.remote-session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-session-row small {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.remote-session-state {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.remote-session-state.cached {
+  background: var(--success);
+}
+
+.remote-session-state.stale {
+  background: var(--attention);
+}
+
+.remote-session-state.gone {
+  background: var(--danger);
+}
+
+.remote-empty-row {
+  padding: 6px 12px 6px 40px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.remote-empty-row.nested {
+  padding-left: 52px;
+}
+
+.remote-add-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 14px);
+  min-height: 30px;
+  margin-left: 14px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+
+.remote-add-workspace:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+
+/* Remote workspace and session reader */
+.remote-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 20px 24px 24px;
+  overflow: hidden;
+}
+
+.remote-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.remote-page-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.remote-page-heading p {
+  margin: 2px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-page-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.remote-page-note {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.remote-page-note.danger {
+  border-color: var(--border-danger);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+
+.remote-page-body {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+.remote-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.remote-session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.remote-session-card:hover {
+  background: var(--soft);
+}
+
+.remote-session-card.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.remote-session-card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.remote-session-card-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-session-card-meta small {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.remote-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding-right: 6px;
+  overflow-y: auto;
+}
+
+.remote-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-transcript-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.remote-transcript-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-transcript-sync small {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.remote-transcript-status,
+.remote-transcript-omitted {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.remote-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.remote-entry.appended {
+  border-color: var(--accent-line);
+}
+
+.remote-entry.thinking,
+.remote-entry.tool,
+.remote-entry.compaction {
+  background: var(--soft);
+}
+
+.remote-entry header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-entry-kind {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.remote-entry-tool {
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.remote-entry header time {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.remote-entry p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Wizard and workspace picker */
+.remote-wizard-steps {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-wizard-steps li {
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.remote-wizard-steps li.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.remote-wizard-steps li.done {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.remote-wizard-fields,
+.remote-wizard-check {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remote-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.remote-wizard-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-wizard-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.remote-wizard-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--attention-line);
+  border-radius: 8px;
+  background: var(--attention-soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remote-egress-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.remote-egress-choice legend {
+  padding: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-egress-choice label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.remote-egress-choice label.selected {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.remote-egress-choice small {
+  grid-column: 2;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.remote-doctor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remote-doctor-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.remote-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remote-browser-path,
+.remote-browser-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-browser-field.switch {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.remote-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-y: auto;
+}
+
+.remote-browser-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+
+.remote-browser-row:hover {
+  background: var(--soft);
+}
+
+.remote-browser-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-browser-status {
+  margin: 0;
+  padding: 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.remote-browser-status.danger {
+  color: var(--danger);
+}
+
+/* Settings */
+.remote-settings-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* The shared settings row reserves a wide control column, which leaves almost
+   nothing for the copy once the profile list takes its own column. These rows
+   are mostly read-only facts, so the control side only needs its content. */
+.remote-settings-detail .ui-settings-row {
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+}
+
+.remote-settings-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.remote-settings-profile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.remote-settings-profile.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.remote-settings-profile small {
+  grid-column: 2;
+  color: var(--faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-settings-profile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-settings-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.remote-settings-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .remote-page-body,
+  .remote-settings-body {
+    grid-template-columns: 1fr;
+  }
+}

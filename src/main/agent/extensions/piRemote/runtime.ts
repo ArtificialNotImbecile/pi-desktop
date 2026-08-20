@@ -26,6 +26,8 @@ import {
   type RemoteRuntimeManager,
   type RemoteSessionPort,
   type RemoteSessionMetadata,
+  type RemoteSessionChunk,
+  type ReadSessionOptions,
   type RuntimeInfo
 } from "./types.js";
 
@@ -173,6 +175,21 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     const { child, client } = await this.connectDaemon(profile, info);
     try {
       return await client.request("sessions.list") as RemoteSessionMetadata[];
+    } finally {
+      client.close();
+      child.kill();
+    }
+  }
+
+  async readSession(profile: RemoteProfile, sessionId: string, options: ReadSessionOptions = {}): Promise<RemoteSessionChunk> {
+    const info = await this.ensureRuntime(profile);
+    const { child, client } = await this.connectDaemon(profile, info);
+    try {
+      return await client.request("sessions.read", {
+        id: sessionId,
+        ...(options.fromOffset === undefined ? {} : { fromOffset: options.fromOffset }),
+        ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes })
+      }) as RemoteSessionChunk;
     } finally {
       client.close();
       child.kill();
