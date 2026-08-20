@@ -58,6 +58,7 @@ const tasks = [
   { name: "test-infrastructure", steps: [["node", "--no-warnings", "tests/unit/test-infrastructure.mjs"]] },
   { name: "renderer-font-assets", steps: [["node", "--no-warnings", "tests/unit/renderer-font-assets.mjs"]] },
   { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
+  { name: "local-files", steps: [["node", "--no-warnings", "tests/unit/local-files.mjs"]] },
   {
     name: "context-capture",
     steps: [

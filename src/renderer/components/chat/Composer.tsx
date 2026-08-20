@@ -345,7 +345,11 @@ export const Composer = memo(function Composer(props: {
         </div>
       )}
       {previewAttachment?.previewDataUrl && (
-        <ImageLightbox attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />
+        <ImageLightbox
+          src={previewAttachment.previewDataUrl ?? ""}
+          name={previewAttachment.name}
+          onClose={() => setPreviewAttachment(null)}
+        />
       )}
       {props.inlineSkills.length > 0 && (
         <div className="inline-skill-row" aria-label={t("composer.inlineSkills")}>

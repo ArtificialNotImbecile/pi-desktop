@@ -11,6 +11,7 @@ import type {
   ChatSendRequest,
   ChatStreamEvent,
   JasmineApi,
+  LocalFileDescription,
   MessageListRequest,
   ThreadDraftUpdateRequest
 } from "../../src/shared/ipc";
@@ -57,6 +58,10 @@ type ModeledBridgeApi = Pick<
   | "listExecutableDiscovery"
   | "getThreadDraft"
   | "updateThreadDraft"
+  | "describeLocalFiles"
+  | "openLocalPath"
+  | "revealLocalPath"
+  | "openExternalUrl"
 >;
 
 export type FakeBridge = {
@@ -97,7 +102,17 @@ export type FakeBridge = {
     steerQueuedChatMessage: ChatQueueSteerRequest[];
     getThreadDraft: string[];
     updateThreadDraft: ThreadDraftUpdateRequest[];
+    describeLocalFiles: string[][];
+    openLocalPath: string[];
+    revealLocalPath: string[];
+    openExternalUrl: string[];
   };
+  /**
+   * Declares what the main process would report for paths an assistant answer
+   * references. Unlisted paths describe as missing, which is what the renderer
+   * sees when a model names a file that is not there.
+   */
+  setLocalFiles(files: Array<Partial<LocalFileDescription> & { path: string }>): void;
   /** Overrides the next `sendChatMessage` outcome (e.g. a provider failure). */
   setSendBehavior(behavior: JasmineApi["sendChatMessage"]): void;
   /** Replaces draft reads so a test can hold hydration deterministically. */
@@ -137,8 +152,14 @@ export function createFakeBridge(): FakeBridge {
     deleteQueuedChatMessage: [],
     steerQueuedChatMessage: [],
     getThreadDraft: [],
-    updateThreadDraft: []
+    updateThreadDraft: [],
+    describeLocalFiles: [],
+    openLocalPath: [],
+    revealLocalPath: [],
+    openExternalUrl: []
   };
+
+  const localFiles = new Map<string, LocalFileDescription>();
 
   function store(threadId: string): StoredMessage[] {
     const existing = threads.get(threadId);
@@ -341,6 +362,28 @@ export function createFakeBridge(): FakeBridge {
     updateThreadDraft(request) {
       calls.updateThreadDraft.push(request);
       return Promise.resolve();
+    },
+    describeLocalFiles(paths) {
+      calls.describeLocalFiles.push(paths);
+      return Promise.resolve(paths.map((requestedPath) => localFiles.get(requestedPath) ?? {
+        requestedPath,
+        path: requestedPath,
+        name: requestedPath.split(/[\\/]/).pop() ?? requestedPath,
+        exists: false,
+        kind: "missing" as const
+      }));
+    },
+    openLocalPath(filePath) {
+      calls.openLocalPath.push(filePath);
+      return Promise.resolve();
+    },
+    revealLocalPath(filePath) {
+      calls.revealLocalPath.push(filePath);
+      return Promise.resolve();
+    },
+    openExternalUrl(url) {
+      calls.openExternalUrl.push(url);
+      return Promise.resolve();
     }
   } satisfies ModeledBridgeApi;
 
@@ -400,6 +443,17 @@ export function createFakeBridge(): FakeBridge {
     },
     setGetThreadDraftBehavior(behavior) {
       getThreadDraftBehavior = behavior;
+    },
+    setLocalFiles(files) {
+      for (const file of files) {
+        localFiles.set(file.path, {
+          requestedPath: file.path,
+          name: file.path.split(/[\\/]/).pop() ?? file.path,
+          exists: true,
+          kind: "file",
+          ...file
+        });
+      }
     }
   };
 }

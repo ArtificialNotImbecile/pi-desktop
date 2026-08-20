@@ -79,6 +79,14 @@ export const pickedPathSchema = z.object({
   previewDataUrl: z.string().optional()
 });
 
+export const localFilePathSchema = z.string().trim().min(1).max(4_096);
+
+// Assistant answers can name many files at once; the cap keeps one message from
+// turning into an unbounded stat sweep.
+export const localFileDescribeRequestSchema = z.array(localFilePathSchema).max(200);
+
+export const externalUrlSchema = z.string().trim().min(1).max(8_192);
+
 export const fileSearchRequestSchema = z.object({
   query: z.string().max(200),
   cwd: z.string().min(1).optional(),

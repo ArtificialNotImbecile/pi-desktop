@@ -77,7 +77,11 @@ export const MessageView = memo(function MessageView(props: MessageViewProps) {
           <UserMessageActions message={props.message} onEdit={props.onEdit} />
         </div>
         {previewImage?.previewDataUrl && (
-          <ImageLightbox attachment={previewImage} onClose={() => setPreviewImage(null)} />
+          <ImageLightbox
+            src={previewImage.previewDataUrl}
+            name={previewImage.name}
+            onClose={() => setPreviewImage(null)}
+          />
         )}
       </>
     );

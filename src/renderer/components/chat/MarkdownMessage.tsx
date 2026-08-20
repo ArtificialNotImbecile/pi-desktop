@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ShikiCodeBlock } from "../code";
+import { MessageExternalLink, MessageFileReference, MessageImage, ReferenceResolution } from "./MessageReferences";
+import { classifyMessageLink, messageUrlTransform } from "./messageLinks";
 
 const REMARK_PLUGINS = [remarkGfm, remarkCodeBlockMeta];
 const STREAMING_CHUNK_TARGET = 1_200;
@@ -42,14 +44,16 @@ export const MarkdownMessage = memo(function MarkdownMessage(props: { content: s
 
   return (
     <div className="markdown-message" data-streaming-markdown={streaming ? "true" : undefined}>
-      {chunks.map((chunk, index) => (
-        <MarkdownRenderSegment
-          key={chunk.start}
-          content={chunk.content}
-          active={streaming && index === chunks.length - 1}
-          onCopyCode={onCopyCode}
-        />
-      ))}
+      {chunks.map((chunk, index) => {
+        const active = streaming && index === chunks.length - 1;
+        return (
+          // Frozen chunks resolve their file references straight away; only the
+          // chunk still being written holds off until its paths are complete.
+          <ReferenceResolution key={chunk.start} settled={!active}>
+            <MarkdownRenderSegment content={chunk.content} active={active} onCopyCode={onCopyCode} />
+          </ReferenceResolution>
+        );
+      })}
     </div>
   );
 });
@@ -117,7 +121,7 @@ const MarkdownChunk = memo(function MarkdownChunk(props: { content: string; onCo
   );
   recordMarkdownRender(content.length);
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components} urlTransform={messageUrlTransform}>
       {content}
     </ReactMarkdown>
   );
@@ -392,11 +396,25 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
       return <strong className="markdown-heading">{children}</strong>;
     },
     a({ children, href }) {
-      return (
-        <a href={href} target="_blank" rel="noreferrer">
-          {children}
-        </a>
-      );
+      const target = classifyMessageLink(href);
+      if (target.kind === "external") return <MessageExternalLink href={target.href}>{children}</MessageExternalLink>;
+      // An image destination reached through `[label](/abs/a.png)` was written
+      // as a link, so it stays a link -- the author asked to reference the file,
+      // not to display it.
+      if (target.kind === "local-file" || target.kind === "local-image") {
+        return <MessageFileReference path={target.path} line={target.line} label={children} />;
+      }
+      // Nothing safe to navigate to: keep the text, drop the affordance.
+      return target.href ? <a href={target.href}>{children}</a> : <span>{children}</span>;
+    },
+    img({ src, alt }) {
+      const target = classifyMessageLink(typeof src === "string" ? src : "");
+      if (target.kind === "local-image") return <MessageImage path={target.path} alt={alt ?? ""} />;
+      if (target.kind === "local-file") return <MessageFileReference path={target.path} label={alt || undefined} />;
+      // Remote images are not fetched: an answer must not be able to make the
+      // app call out to an arbitrary host just by being rendered.
+      if (target.kind === "external") return <MessageExternalLink href={target.href}>{alt || target.href}</MessageExternalLink>;
+      return <span>{alt}</span>;
     },
     pre({ children }) {
       const info = codeBlockInfos[preIndex];

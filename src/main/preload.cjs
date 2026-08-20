@@ -346,6 +346,18 @@ contextBridge.exposeInMainWorld("jasmine", {
   pickFolder(title) {
     return ipcRenderer.invoke("dialog:pickFolder", title);
   },
+  describeLocalFiles(paths) {
+    return ipcRenderer.invoke("files:describe", paths);
+  },
+  openLocalPath(filePath) {
+    return ipcRenderer.invoke("files:openDefault", filePath);
+  },
+  revealLocalPath(filePath) {
+    return ipcRenderer.invoke("files:reveal", filePath);
+  },
+  openExternalUrl(url) {
+    return ipcRenderer.invoke("shell:openExternal", url);
+  },
   windowAction(action) {
     return ipcRenderer.invoke("window:action", action);
   },
