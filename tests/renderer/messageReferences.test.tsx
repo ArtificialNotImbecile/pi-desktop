@@ -276,6 +276,21 @@ describe("web links in an answer", () => {
     expect(fake.calls.openExternalUrl).toEqual([destination]);
   });
 
+  test.each([
+    ["angle autolink", "<https://user:pass@example.test/file?access_token=hidden>"],
+    ["bare URL", "https://user:pass@example.test/file?access_token=hidden"]
+  ])("sanitizes credential-bearing %s text as well as its link chrome", async (_label, markdown) => {
+    const destination = "https://user:pass@example.test/file?access_token=hidden";
+    mount(markdown);
+
+    const link = await screen.findByRole("link", { name: "https://example.test/file" });
+    expect(link.getAttribute("href")).toBe("https://example.test/file");
+    expect(link.outerHTML).not.toContain("user:pass");
+    expect(link.outerHTML).not.toContain("access_token");
+    fireEvent.click(link);
+    expect(fake.calls.openExternalUrl).toEqual([destination]);
+  });
+
   test("preserves each web link label as its accessible name", async () => {
     mount("Open the [report](https://example.com/report) or [dashboard](https://example.com/dashboard).");
 
@@ -329,6 +344,20 @@ describe("linked images in an answer", () => {
     expect(document.querySelector("a")).toBeNull();
     fireEvent.click(button);
     expect(fake.calls.openLocalPath).toEqual(["/tmp/report.pdf"]);
+  });
+
+  test.each([
+    ["mixed label", "[![preview](/tmp/readme.txt) chart](https://example.com/report)", "preview chart"],
+    ["formatted mixed label", "[**![preview](https://images.example/chart.png) chart** details](https://example.com/report)", "preview chart details"]
+  ])("flattens images anywhere inside a %s into one outer control", async (_label, markdown, accessibleName) => {
+    mount(markdown);
+
+    const link = await screen.findByRole("link", { name: accessibleName });
+    expect(document.querySelectorAll("a")).toHaveLength(1);
+    expect(document.querySelector("button")).toBeNull();
+    expect(fake.calls.describeLocalFiles).toEqual([]);
+    fireEvent.click(link);
+    expect(fake.calls.openExternalUrl).toEqual(["https://example.com/report"]);
   });
 });
 

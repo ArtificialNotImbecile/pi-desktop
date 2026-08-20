@@ -10,6 +10,35 @@ import { classifyMessageLink, messageUrlTransform } from "./messageLinks";
 const REMARK_PLUGINS = [remarkGfm, remarkCodeBlockMeta];
 const STREAMING_CHUNK_TARGET = 1_200;
 
+type LinkLabelNode = {
+  type?: string;
+  value?: unknown;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: LinkLabelNode[];
+};
+
+/**
+ * A link label may mix images with text or formatting at any depth. Once an
+ * image is present, flatten the whole label to text (using image alt text) so
+ * react-markdown's interactive image replacement is never nested in the outer
+ * link control.
+ */
+function flattenedLinkedImageLabel(node: unknown): string | null {
+  let containsImage = false;
+  const read = (value: LinkLabelNode | null | undefined): string => {
+    if (!value) return "";
+    if (value.type === "text") return typeof value.value === "string" ? value.value : "";
+    if (value.type === "element" && value.tagName === "img") {
+      containsImage = true;
+      return typeof value.properties?.alt === "string" ? value.properties.alt : "";
+    }
+    return value.children?.map(read).join("") ?? "";
+  };
+  const text = read(node as LinkLabelNode | undefined).replace(/\s+/g, " ").trim();
+  return containsImage ? text : null;
+}
+
 declare global {
   interface Window {
     __JASMINE_HARNESS_ENABLED__?: boolean;
@@ -397,10 +426,7 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
     },
     a({ children, href, node }) {
       const target = classifyMessageLink(href);
-      const onlyChild = node?.children.length === 1 ? node.children[0] : undefined;
-      const linkedImageAlt = onlyChild?.type === "element" && onlyChild.tagName === "img"
-        ? (typeof onlyChild.properties.alt === "string" ? onlyChild.properties.alt : "")
-        : null;
+      const linkedImageAlt = flattenedLinkedImageLabel(node);
       // A Markdown image nested in a link normally reaches this component as an
       // already-interactive MessageImage/MessageExternalLink child. The outer
       // destination owns activation, so render its alt text as the one control

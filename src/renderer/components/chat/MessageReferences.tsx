@@ -37,6 +37,13 @@ export function MessageExternalLink(props: { href: string; children: ReactNode }
   const safeDisplayHref = /^https?:/i.test(props.href)
     ? sanitizedHttpUrl(props.href)
     : credentialSafeText(props.href);
+  const rawLinkText = typeof props.children === "string" ? props.children.trim() : "";
+  const destinationText = props.href.trim();
+  const isDestinationLabel = rawLinkText === destinationText
+    || (/^mailto:/i.test(destinationText) && rawLinkText === destinationText.replace(/^mailto:/i, ""));
+  const visibleChildren = isDestinationLabel
+    ? (safeDisplayHref || t("message.openLink"))
+    : (props.children || safeDisplayHref || t("message.openLink"));
   return (
     <a
       className="message-link"
@@ -52,7 +59,7 @@ export function MessageExternalLink(props: { href: string; children: ReactNode }
         });
       }}
     >
-      {props.children || safeDisplayHref}
+      {visibleChildren}
       <span className="message-link-mark" aria-hidden="true">↗</span>
       {actionError && <span className="message-link-error" aria-live="polite">{actionError}</span>}
     </a>
