@@ -8,6 +8,7 @@ import { DEFAULT_APPEARANCE } from "../shared/theme.js";
 import type { AppLanguage, SpotlightExecuteRequest, WorkingNavigationTarget } from "../shared/ipc.js";
 import type { JasmineDatabase } from "./db/database.js";
 import { attachWindowStateEvents } from "./ipc/window.js";
+import { guardWindowNavigation, registerLocalFileProtocol, registerLocalFileScheme } from "./services/localFiles.js";
 import { WorkingRegistry, type WorkingNotification } from "./services/workingRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,6 +52,10 @@ function offscreenWindowPosition(): { x: number; y: number } {
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
+
+// Chromium freezes its scheme registry once the app is ready, so the scheme
+// serving local images into chat has to be declared at module scope.
+registerLocalFileScheme();
 
 let legacyUserData: string | null = null;
 if (process.env.JASMINE_E2E_USER_DATA_DIR) {
@@ -121,6 +126,7 @@ function createWindow() {
     }
   });
   mainWindow = win;
+  guardWindowNavigation(win.webContents);
   attachWindowStateEvents(win);
   win.on("close", (event) => {
     if (isQuitting || !tray) return;
@@ -136,6 +142,7 @@ function createWindow() {
 
 if (singleInstanceLock) {
   app.whenReady().then(async () => {
+    registerLocalFileProtocol();
     app.on("activate", () => {
       if (!mainWindow || mainWindow.isDestroyed()) void startApplication();
       else showMainWindow();
@@ -296,7 +303,19 @@ async function warmDatabase(): Promise<void> {
 }
 
 function setupApplicationMenu(): void {
+  const isMac = process.platform === "darwin";
+  // On macOS the standard editing shortcuts are delivered *through* the
+  // application menu: with no Cut/Copy/Paste roles registered, Cmd+X/C/V/A are
+  // inert in every input in the app, and a paste event never reaches the
+  // renderer at all. Windows and Linux keep working without them because
+  // Chromium handles those keys itself, which is why this only ever showed up
+  // on macOS. Role-based items also carry the OS's own localized labels, so no
+  // menu copy is hard-coded here.
   const template: MenuItemConstructorOptions[] = [
+    // macOS always renders the template's first submenu in the application-menu
+    // slot, so this has to be a real app menu -- otherwise File lands there and
+    // the app has no Quit item.
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
     {
       label: "File",
       submenu: [
@@ -306,9 +325,11 @@ function setupApplicationMenu(): void {
           click: () => {
             void openProjectFolderFromMenu();
           }
-        }
+        },
+        ...(isMac ? [] : [{ type: "separator" as const }, { role: "quit" as const }])
       ]
-    }
+    },
+    { role: "editMenu" }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -499,6 +520,7 @@ function createSpotlightWindow(): BrowserWindow {
       ...(isE2eOffscreen ? { backgroundThrottling: false } : {})
     }
   });
+  guardWindowNavigation(win.webContents);
   if (!isE2eOffscreen) win.setAlwaysOnTop(true, "floating");
   if (!isE2eHarness) {
     win.on("blur", () => hideSpotlight());

@@ -725,6 +725,37 @@ export function seedMarkdownThreadMessages(userDataDir: string, threadId: string
   }
 }
 
+/**
+ * Seeds one settled assistant turn carrying exactly the given Markdown. Used
+ * where the point is what an answer's content renders as, rather than how the
+ * turn was produced.
+ */
+export function seedAssistantAnswer(userDataDir: string, threadId: string, messageId: string, content: string): void {
+  const dbPath = path.join(userDataDir, "data", "jasmine.sqlite");
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO chat_messages (
+        id, thread_id, role, content, attachments_json, created_at, elapsed_ms,
+        model_id, status, memory_used_json, skills_used_json, web_search_used_json, timeline_json
+      )
+      VALUES (?, ?, 'assistant', ?, '[]', ?, 10, 'deepseek-v4-flash', 'sent', '[]', '[]', '[]', ?)
+    `).run(
+      messageId,
+      threadId,
+      content,
+      new Date(Date.UTC(2026, 0, 1, 2, 0, 0)).toISOString(),
+      JSON.stringify([{ id: `${messageId}-output`, kind: "assistant_text", text: content }])
+    );
+    // Seeding bypasses the repository layer, so the denormalized counter on
+    // chat_threads has to be maintained here too.
+    db.prepare("UPDATE chat_threads SET updated_at = ?, message_count = message_count + 1 WHERE id = ?")
+      .run(new Date(Date.UTC(2026, 0, 1, 2, 0, 1)).toISOString(), threadId);
+  } finally {
+    db.close();
+  }
+}
+
 export function resolveElectronExecutable(): string {
   const dist = path.join(rootDir, "node_modules", "electron", "dist");
   // macOS ships the binary inside an .app bundle rather than beside dist/.

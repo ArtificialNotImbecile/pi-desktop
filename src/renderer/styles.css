@@ -4112,6 +4112,172 @@ body:has(.settings-panel) .message-jump-rail {
   text-decoration: underline;
 }
 
+/* References an assistant answer produced: web links, local files, local images.
+   Every colour is mixed against --surface rather than hard-coded, because the
+   theme's surface and ink are user-settable and a fixed palette would stop
+   sitting on the background it is drawn over. */
+
+.message-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.message-link:hover { text-decoration: underline; }
+
+.message-link-mark {
+  margin-left: 2px;
+  font-size: 0.85em;
+  opacity: 0.65;
+}
+
+.file-reference {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px 2px 3px;
+  border: 1px solid var(--file-line, var(--line));
+  border-radius: 7px;
+  background: var(--file-soft, var(--soft));
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.94em;
+  line-height: 20px;
+  text-align: left;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.file-reference:hover:not(:disabled) { border-color: var(--file-hue, var(--line-strong)); }
+
+.file-reference:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.file-reference-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--file-hue, var(--muted));
+  color: #ffffff;
+  font-family: var(--font-code);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+}
+
+.file-reference-body {
+  display: grid;
+  min-width: 0;
+}
+
+.file-reference-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only the standalone card form shows the directory; inline chips stay on one
+   line so they do not disturb the paragraph's rhythm. */
+.file-reference-path { display: none; }
+
+.file-reference-line {
+  color: var(--faint);
+  font-family: var(--font-code);
+  font-size: 0.9em;
+}
+
+.file-reference-state {
+  color: var(--faint);
+  font-size: 0.85em;
+}
+
+.file-reference[data-action-error="true"] .file-reference-state { color: var(--danger); }
+
+.message-link-error {
+  margin-left: 6px;
+  color: var(--danger);
+  font-size: 0.85em;
+}
+
+.file-reference:disabled {
+  border-style: dashed;
+  background: transparent;
+  cursor: default;
+}
+
+.file-reference[data-missing="true"] .file-reference-name { text-decoration: line-through; }
+.file-reference[data-missing="true"] .file-reference-badge { background: var(--faint); }
+
+/* A chip that is the whole paragraph was meant as a standalone reference, so it
+   earns the fuller card treatment without needing the model to say so. */
+.markdown-message p:has(> .file-reference:only-child) { display: flex; }
+
+.markdown-message p > .file-reference:only-child {
+  padding: 7px 12px 7px 7px;
+  line-height: 18px;
+}
+
+.markdown-message p > .file-reference:only-child .file-reference-path {
+  display: block;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 0.82em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.file-reference[data-category="document"] { --file-hue: #2f6fd0; --file-soft: color-mix(in srgb, #2f6fd0 8%, var(--surface)); --file-line: color-mix(in srgb, #2f6fd0 26%, var(--surface)); }
+.file-reference[data-category="spreadsheet"] { --file-hue: #1f8a4c; --file-soft: color-mix(in srgb, #1f8a4c 8%, var(--surface)); --file-line: color-mix(in srgb, #1f8a4c 26%, var(--surface)); }
+.file-reference[data-category="presentation"] { --file-hue: #c2591f; --file-soft: color-mix(in srgb, #c2591f 8%, var(--surface)); --file-line: color-mix(in srgb, #c2591f 26%, var(--surface)); }
+.file-reference[data-category="code"] { --file-hue: #7a4dc4; --file-soft: color-mix(in srgb, #7a4dc4 8%, var(--surface)); --file-line: color-mix(in srgb, #7a4dc4 26%, var(--surface)); }
+.file-reference[data-category="data"] { --file-hue: #0f7b8a; --file-soft: color-mix(in srgb, #0f7b8a 8%, var(--surface)); --file-line: color-mix(in srgb, #0f7b8a 26%, var(--surface)); }
+.file-reference[data-category="folder"] { --file-hue: #8a6d1f; --file-soft: color-mix(in srgb, #8a6d1f 8%, var(--surface)); --file-line: color-mix(in srgb, #8a6d1f 26%, var(--surface)); }
+
+.message-image {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.message-image:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.message-image img {
+  display: block;
+  max-width: 100%;
+  /* Bounded so one tall screenshot cannot push the rest of the answer out of
+     view; the lightbox is where the full image is read. */
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.message-image-caption {
+  display: block;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* Holds the line while the path is being resolved, so an image appearing does
+   not shift the text that follows it. */
+.message-image-placeholder {
+  display: block;
+  height: 20px;
+}
+
 .markdown-table-scroll {
   max-width: 100%;
   overflow-x: auto;

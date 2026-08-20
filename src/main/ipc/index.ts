@@ -5,6 +5,7 @@ import { registerAskUserQuestionIpc } from "./askUserQuestion.js";
 import { registerChatIpc } from "./chat.js";
 import type { IpcContext } from "./context.js";
 import { registerDialogIpc } from "./dialogs.js";
+import { registerFileIpc } from "./files.js";
 import { registerMemoryIpc } from "./memories.js";
 import { registerPluginIpc } from "./plugins.js";
 import { registerPermissionApprovalIpc } from "./permissionApproval.js";
@@ -37,6 +38,7 @@ export function registerIpc(context: IpcContext): void {
   registerTerminalIpc(context);
   registerRightPanelIpc(context);
   registerDialogIpc(context);
+  registerFileIpc();
   registerWindowIpc();
   registerWorkingIpc(context);
 }

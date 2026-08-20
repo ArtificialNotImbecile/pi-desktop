@@ -24,6 +24,7 @@ import type {
   ExecutablePickerKind,
   FileSearchRequest,
   JasmineApi,
+  LocalFileDescription,
   MessageListRequest,
   PickedPath,
   PermissionApprovalPrompt,
@@ -405,6 +406,18 @@ const api: JasmineApi = {
   },
   pickFolder(title?: string): Promise<PickedPath | null> {
     return ipcRenderer.invoke("dialog:pickFolder", title);
+  },
+  describeLocalFiles(paths: string[]): Promise<LocalFileDescription[]> {
+    return ipcRenderer.invoke("files:describe", paths);
+  },
+  openLocalPath(filePath: string): Promise<void> {
+    return ipcRenderer.invoke("files:openDefault", filePath);
+  },
+  revealLocalPath(filePath: string): Promise<void> {
+    return ipcRenderer.invoke("files:reveal", filePath);
+  },
+  openExternalUrl(url: string): Promise<void> {
+    return ipcRenderer.invoke("shell:openExternal", url);
   },
   windowAction(action: "minimize" | "maximize" | "close"): Promise<void> {
     return ipcRenderer.invoke("window:action", action);

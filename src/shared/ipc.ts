@@ -943,6 +943,31 @@ export type PickedPath = {
   previewDataUrl?: string;
 };
 
+/**
+ * Maximum paths accepted by one local-file metadata IPC request. The renderer
+ * splits larger restores against this same contract value.
+ */
+export const LOCAL_FILE_DESCRIBE_LIMIT = 200;
+
+/**
+ * What the chat renderer knows about a path an assistant answer referenced.
+ * Carries no file bytes: image content reaches the renderer over the
+ * `jasmine-file://` protocol so Chromium owns decoding and caching.
+ */
+export type LocalFileDescription = {
+  /** Exactly as written in the message, so the renderer can match it back. */
+  requestedPath: string;
+  /** Absolute and home-expanded; the form every action is performed against. */
+  path: string;
+  name: string;
+  exists: boolean;
+  kind: "file" | "directory" | "missing";
+  size?: number;
+  mediaType?: string;
+  /** True only when the file can actually be painted inline at its size. */
+  isImage?: boolean;
+};
+
 export type ClipboardImagePasteRequest = {
   name?: string;
   mimeType?: string;
@@ -1368,6 +1393,10 @@ export type JasmineApi = {
   savePastedImage(request: ClipboardImagePasteRequest): Promise<PickedPath>;
   pickClipboardImage(): Promise<PickedPath | null>;
   pickFolder(title?: string): Promise<PickedPath | null>;
+  describeLocalFiles(paths: string[]): Promise<LocalFileDescription[]>;
+  openLocalPath(path: string): Promise<void>;
+  revealLocalPath(path: string): Promise<void>;
+  openExternalUrl(url: string): Promise<void>;
   windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
   getWindowState(): Promise<WindowState>;
   onWindowStateChanged(callback: (state: WindowState) => void): () => void;
