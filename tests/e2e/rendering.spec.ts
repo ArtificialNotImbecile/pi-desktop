@@ -510,7 +510,7 @@ test.describe("Jasmine message rendering", () => {
       `${JSON.stringify({ computed: fontEvidence, platformFonts: platformFontEvidence }, null, 2)}\n`,
       "utf8"
     );
-    await expect(message.locator(".markdown-message a")).toHaveAttribute("href", "https://example.com");
+    await expect(message.locator(".markdown-message a")).toHaveAttribute("href", "https://example.com/");
     await expect(message.locator(".markdown-message li")).toHaveCount(2);
     await expect(message.locator(".markdown-message li code")).toContainText("inline code");
     await expect(message.locator(".markdown-message table")).toBeVisible();
