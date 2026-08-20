@@ -691,36 +691,77 @@ async function listSessionMetadata(sessionDir: string): Promise<Array<Record<str
   return results.sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
 }
 
+const SESSION_SCAN_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Summarizes one session by streaming it a chunk at a time. Listing is an
+ * ordinary sidebar action that runs over every session a profile owns, so it
+ * holds one line at a time rather than a whole transcript -- and never a second
+ * copy of it -- however long the history has grown.
+ */
 async function sessionMetadata(filePath: string): Promise<Record<string, unknown> | null> {
+  let handle;
   try {
-    const raw = await readFile(filePath, "utf8");
-    const lines = raw.split("\n").filter(Boolean);
-    const headerLine = lines[0] || "";
-    const header = parseJsonLine(headerLine);
-    if (!header || header.type !== "session" || typeof header.id !== "string") return null;
+    const fileStat = await stat(filePath);
+    handle = await open(filePath, "r");
+    const buffer = Buffer.allocUnsafe(SESSION_SCAN_CHUNK_BYTES);
+    const decoder = new TextDecoder("utf8");
+    let pending = "";
+    let position = 0;
+    let headerLine: string | null = null;
+    let header: Record<string, unknown> | null = null;
     let name: string | undefined;
     let turnCount = 0;
     let preview: string | undefined;
-    for (let index = 1; index < lines.length; index += 1) {
+
+    const consume = (line: string): boolean => {
+      if (headerLine === null) {
+        headerLine = line;
+        header = parseJsonLine(line);
+        // Anything that does not open with a session header is not a session.
+        return Boolean(header && header.type === "session" && typeof header.id === "string");
+      }
       // One malformed line must not discard a whole session; the file is
       // appended to while it is being read.
-      const value = parseJsonLine(lines[index]!);
-      if (!value) continue;
+      const value = parseJsonLine(line);
+      if (!value) return true;
       if (value.type === "session_info" && typeof value.name === "string") name = value.name;
-      if (value.type !== "message") continue;
+      if (value.type !== "message") return true;
       const message = value.message as Record<string, unknown> | undefined;
-      if (!message || message.role !== "user") continue;
+      if (!message || message.role !== "user") return true;
       turnCount += 1;
       if (preview === undefined) {
         const text = messageText(message.content);
         if (text) preview = text.slice(0, 120);
       }
+      return true;
+    };
+
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, SESSION_SCAN_CHUNK_BYTES, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      // Streaming decode so a multi-byte character split across a chunk
+      // boundary is not turned into replacement characters.
+      pending += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+      let newline = pending.indexOf("\n");
+      while (newline >= 0) {
+        const line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        if (line && !consume(line)) return null;
+        newline = pending.indexOf("\n");
+      }
     }
-    const fileStat = await stat(filePath);
+    pending += decoder.decode();
+    // A file still being appended to can end without its final newline.
+    if (pending && !consume(pending)) return null;
+    if (headerLine === null || !header) return null;
+
+    const parsed = header as Record<string, unknown>;
     return {
-      id: header.id,
-      cwd: typeof header.cwd === "string" ? header.cwd : "",
-      createdAt: typeof header.timestamp === "string" ? header.timestamp : fileStat.birthtime.toISOString(),
+      id: parsed.id,
+      cwd: typeof parsed.cwd === "string" ? parsed.cwd : "",
+      createdAt: typeof parsed.timestamp === "string" ? parsed.timestamp : fileStat.birthtime.toISOString(),
       updatedAt: fileStat.mtime.toISOString(),
       turnCount,
       sizeBytes: fileStat.size,
@@ -730,6 +771,8 @@ async function sessionMetadata(filePath: string): Promise<Record<string, unknown
     };
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
 }
 

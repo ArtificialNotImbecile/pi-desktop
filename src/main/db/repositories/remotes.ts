@@ -267,6 +267,24 @@ export function updateRemoteSessionCache(db: SqlDatabase, update: RemoteSessionC
   );
 }
 
+/**
+ * Drops discovered workspaces the host no longer has any session for. They only
+ * ever existed because a session pointed at that directory, so once the last one
+ * is gone the row is an empty entry nothing can fill. Workspaces the user added
+ * by hand are kept: those are a stated intention, not an inference.
+ */
+export function pruneDiscoveredRemoteWorkspaces(db: SqlDatabase, profileId: string, keepCwds: string[]): void {
+  const rows = db
+    .prepare("SELECT id, cwd FROM remote_workspaces WHERE profile_id = ? AND source = 'discovered'")
+    .all(profileId) as Array<{ id: string; cwd: string }>;
+  const keep = new Set(keepCwds);
+  const drop = db.prepare("DELETE FROM remote_workspaces WHERE id = ?");
+  for (const row of rows) {
+    if (keep.has(row.cwd)) continue;
+    drop.run(row.id);
+  }
+}
+
 export function listRemoteSessionCwds(db: SqlDatabase, profileId: string): string[] {
   const rows = db
     .prepare("SELECT DISTINCT cwd FROM remote_sessions WHERE profile_id = ? AND cwd <> '' ORDER BY cwd")

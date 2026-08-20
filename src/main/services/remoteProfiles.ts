@@ -116,18 +116,36 @@ export class RemoteProfileService {
     try {
       const report = await this.runtime.doctor(profile);
       const checkedAt = new Date().toISOString();
-      const runtimeMissing = report.checks.some((check) => check.id === "artifact" && check.status === "fail");
+      // doctor only checks that this machine has the artifact to send, never
+      // whether the host already has it unpacked. Without probing that, a host
+      // that is reachable but has no runtime would report Connected here and
+      // then flip to Runtime not installed on the first session refresh.
+      const installed = report.ok ? await this.runtime.requireRuntime(profile).catch(() => null) : null;
+      const runtimeMissing = report.checks.some((check) => check.id === "artifact" && check.status === "fail")
+        || (report.ok && !installed);
       this.publishStatus({
         profileId: profile.id,
-        state: report.ok ? "ready" : runtimeMissing ? "needsSetup" : "failed",
+        state: report.ok && installed ? "ready" : runtimeMissing ? "needsSetup" : "failed",
         message: report.ok ? null : firstFailure(report.checks),
+        errorCode: null,
+        remediation: null,
+        ...(installed ? { runtimeVersion: installed.runtimeVersion, piVersion: installed.piVersion } : {}),
         checkedAt,
         busy: false
       });
       return {
         profileId: profile.id,
-        ok: report.ok,
-        checks: report.checks.map((check) => ({ id: check.id, status: check.status, message: check.message })),
+        ok: report.ok && Boolean(installed),
+        checks: [
+          ...report.checks.map((check) => ({ id: check.id, status: check.status, message: check.message })),
+          ...(report.ok ? [{
+            id: "remote-runtime",
+            status: installed ? "pass" as const : "fail" as const,
+            message: installed
+              ? `Managed runtime ${installed.runtimeVersion} (Pi ${installed.piVersion}) is installed on this host.`
+              : "The managed runtime is not installed on this host yet."
+          }] : [])
+        ],
         checkedAt
       };
     } catch (error) {
@@ -260,9 +278,14 @@ export class RemoteProfileService {
       remoteSizeBytes: session.sizeBytes ?? null,
       headerFingerprint: session.headerFingerprint ?? null
     })));
-    for (const cwd of this.db.listRemoteSessionCwds(profile.id)) {
+    // Directories the host still has sessions in are workspaces; ones it no
+    // longer does lose the workspace that only existed because of them, unless
+    // the user added that directory by hand.
+    const cwds = this.db.listRemoteSessionCwds(profile.id);
+    for (const cwd of cwds) {
       this.db.upsertRemoteWorkspace({ profileId: profile.id, cwd, source: "discovered" });
     }
+    this.db.pruneDiscoveredRemoteWorkspaces(profile.id, cwds);
     this.publishStatus({
       profileId: profile.id,
       state: "ready",

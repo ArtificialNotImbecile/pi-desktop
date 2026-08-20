@@ -122,6 +122,42 @@ test("a session is located by its header id, not by a client-supplied path", asy
   }
 });
 
+test("listing summarizes a session without holding the whole transcript", async () => {
+  const fixture = await sessionFixture();
+  try {
+    // Records that straddle the scan's chunk boundary, and one line larger than
+    // a whole chunk, are exactly what a naive line reader gets wrong.
+    const filler = "x".repeat(200 * 1024);
+    const lines = [
+      JSON.stringify({ type: "session", id: "session-large", cwd: "/srv/large", timestamp: "2026-08-03T00:00:00.000Z" }),
+      JSON.stringify({ type: "message", id: "l1", parentId: null, timestamp: "2026-08-03T00:00:01.000Z", message: { role: "user", content: "první — a multi-byte preview" } }),
+      JSON.stringify({ type: "message", id: "l2", parentId: "l1", timestamp: "2026-08-03T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: filler }] } })
+    ];
+    for (let index = 0; index < 40; index += 1) {
+      lines.push(JSON.stringify({
+        type: "message",
+        id: `u${index}`,
+        parentId: "l2",
+        timestamp: "2026-08-03T00:00:03.000Z",
+        message: { role: "user", content: `turn ${index} ${"y".repeat(4096)}` }
+      }));
+    }
+    lines.push(JSON.stringify({ type: "session_info", id: "rename", parentId: null, timestamp: "2026-08-03T00:00:04.000Z", name: "Large history" }));
+    const content = `${lines.join("\n")}\n`;
+    await writeFile(path.join(fixture.sessionDir, "large.jsonl"), content, "utf8");
+
+    const sessions = await request(fixture, "sessions.list");
+    const large = sessions.find((session) => session.id === "session-large");
+    assert.equal(large.name, "Large history", "the last rename still wins after a multi-chunk scan");
+    assert.equal(large.turnCount, 41);
+    assert.equal(large.preview, "první — a multi-byte preview",
+      "a preview decoded across chunk boundaries keeps its characters intact");
+    assert.equal(large.sizeBytes, Buffer.byteLength(content, "utf8"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("reading a host's sessions never installs the runtime by itself", async () => {
   const { ManagedRemoteRuntime } = await import("../dist/runtime.js");
   const profile = {

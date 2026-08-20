@@ -99,6 +99,7 @@ import {
   listRemoteSessions as listRemoteSessionRows,
   listRemoteWorkspaces as listRemoteWorkspaceRows,
   markMissingRemoteSessions as markMissingRemoteSessionRows,
+  pruneDiscoveredRemoteWorkspaces as pruneDiscoveredRemoteWorkspaceRows,
   removeRemoteProfileData as removeRemoteProfileDataRows,
   removeRemoteWorkspace as removeRemoteWorkspaceRow,
   updateRemoteSessionCache as updateRemoteSessionCacheRow,
@@ -318,6 +319,10 @@ export class JasmineDatabase {
 
   updateRemoteSessionCache(update: RemoteSessionCacheUpdate): void {
     updateRemoteSessionCacheRow(this.db, update);
+  }
+
+  pruneDiscoveredRemoteWorkspaces(profileId: string, keepCwds: string[]): void {
+    pruneDiscoveredRemoteWorkspaceRows(this.db, profileId, keepCwds);
   }
 
   listRemoteSessionCwds(profileId: string): string[] {

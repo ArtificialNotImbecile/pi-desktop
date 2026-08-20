@@ -117,6 +117,16 @@ try {
   assert.equal(promoted.source, "manual", "a directory the user added by hand is no longer only a discovery");
   assert.equal(promoted.name, "App");
 
+  // A discovered workspace exists only because sessions pointed at it. Once the
+  // host has none left, the row is an empty entry nothing can fill.
+  const throwaway = remotes.upsertRemoteWorkspace(db, { profileId: PROFILE, cwd: "/srv/gone", source: "discovered" }, "2026-08-20T00:12:30.000Z");
+  assert.equal(remotes.getRemoteWorkspace(db, throwaway.id).cwd, "/srv/gone");
+  remotes.pruneDiscoveredRemoteWorkspaces(db, PROFILE, remotes.listRemoteSessionCwds(db, PROFILE));
+  assert.equal(remotes.getRemoteWorkspace(db, throwaway.id), null,
+    "a discovered directory the host no longer has sessions for stops being a workspace");
+  assert.equal(remotes.getRemoteWorkspace(db, promoted.id).id, promoted.id,
+    "a directory the user added by hand is a stated intention and survives");
+
   // The same directory on a different profile is a different workspace: two
   // profiles for one host own separate remote trees.
   const otherWorkspace = remotes.upsertRemoteWorkspace(db, { profileId: OTHER_PROFILE, cwd: "/srv/application", source: "manual" }, "2026-08-20T00:13:00.000Z");
