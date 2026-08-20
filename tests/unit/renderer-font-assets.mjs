@@ -66,7 +66,10 @@ async function readTextTree(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const contents = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) return readTextTree(entryPath);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "runtime") return "";
+      return readTextTree(entryPath);
+    }
     if (!/\.(?:cjs|js|mjs|ts|tsx)$/.test(entry.name)) return "";
     return readFile(entryPath, "utf8");
   }));

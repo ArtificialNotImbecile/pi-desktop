@@ -13,45 +13,41 @@ before it comes back in. It is a plan, not a schedule.
 
 ## Remote development over SSH
 
-An experimental remote SSH target shipped in earlier 0.3.x builds and has since been
-removed: it managed connections, rewrote the agent's read/write/edit/bash
-tools to run over `ssh`, and reported file-change coverage as unsupported. That was
-enough to demonstrate the idea and not enough to trust with real work, so the app no
-longer carries it. The `remote_connections` table is dropped on upgrade rather than
-migrated: Jasmine is pre-1.0 and in active development, so a stored host is cheaper
-to re-enter than to carry as dead schema.
+The earlier 0.3.x tool-proxy experiment remains removed. It rewrote individual
+read/write/edit/bash operations over SSH while the agent and session stayed local,
+which could not provide correct shell state, complete tool coverage, or trustworthy
+remote artifacts.
 
-A future `pi-remote-ssh` extension should target parity with VS Code Remote-SSH and
-Codex remote workspaces:
+The standalone [`@jasmine-ai/pi-remote`](../src/main/agent/extensions/piRemote/README.md)
+package now owns the CLI-first replacement. It uploads a hash-verified, versioned Pi
+runtime to a profile-private remote root, keeps remote Pi config and JSONL sessions
+separate from the remote user's normal `~/.pi`, and exposes both the native Pi TUI
+and a persistent headless RPC port. The remote host needs Linux x64/glibc 2.27,
+OpenSSH, `sh`, `tar`, `sha256sum`, and a writable home, but does not need Pi, Node, npm, or public
+Internet access.
 
-- **Connection management** — import from `~/.ssh/config` including `Include`, `Match`,
-  `ProxyJump`, and jump hosts; support agent forwarding, key and password auth,
-  and per-host defaults without ever storing secrets in the app database.
-- **One durable session per host** — connection multiplexing (`ControlMaster`)
-  instead of a new `ssh` process per tool call, with keepalive, backoff, and
-  transparent reconnect after sleep or network loss.
-- **Remote agent process** — run the coding agent on the remote machine rather than
-  proxying individual tools, so shell state, working directory, environment, and
-  tool latency behave like a local run.
-- **Full tool surface** — read, write, edit, bash, file search, and project scanning
-  over the remote filesystem, with POSIX path canonicalization and correct handling
-  of symlinks, permissions, and large files.
-- **Remote file-change artifacts** — real before/after evidence from the remote
-  filesystem, so the Artifacts panel reports actual coverage instead of
-  "unsupported".
-- **Permission scoping** — remote project roots enforced by the permission gate,
-  which already models a non-local `ssh` scope with an injectable canonical path
-  resolver.
-- **Remote terminal** — project terminals attached to the remote host, sharing the
-  connection with the agent.
-- **Port forwarding** — local and remote forwards for dev servers and debuggers.
-- **Honest UI** — connection state, latency, and failures visible in the composer and
-  settings, and every operation cancellable.
-- **Automated coverage** — an SSH server fixture in CI so connect, reconnect,
-  permission, and file-change paths are exercised without a human host.
+The CLI can explicitly synchronize local `models.json` and portable model defaults,
+imports credentials one provider at a time, and atomically activates a newly bundled
+content-addressed runtime on the next connection without moving profile sessions or
+configuration into the runtime directory.
 
-Windows/WSL and dev containers are natural follow-ons once the remote agent process
-and connection layer exist.
+The package also implements explicit `client-proxy` egress through an authenticated
+HTTP forward/CONNECT gateway and OpenSSH reverse forwarding. It is fail-closed for
+private/client-LAN destinations and is deliberately not described as transparent
+networking: UDP, arbitrary direct sockets, containers, background services, and
+sudo policy remain outside the v1 contract.
+
+The next desktop phase is intentionally still out of scope here. Jasmine main must
+consume the package's `RemoteRuntimeManager`/`RemoteSessionPort` factory, bind a chat
+to one remote profile/session, project remote file-change evidence and permission
+scope, connect project terminals, and expose connection/egress state honestly. That
+work begins only after the standalone package's Windows-to-Linux live matrix is
+green. The experimental upstream Pi client/protocol/server remains an exact-pinned
+compatibility target until it supplies a complete coding-agent service, extension
+UI, authentication, bootstrap, and capability negotiation.
+
+Windows/ARM64/musl remote hosts, dev containers, and cloud/mobile relays remain
+follow-ons rather than implicit promises.
 
 ## Chrome and browser control
 

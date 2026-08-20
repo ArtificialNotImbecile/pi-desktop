@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 /.tmp/
+src/main/agent/extensions/piRemote/runtime/**/*.tar.gz
 /.cursor/
 /design/
 /designs/

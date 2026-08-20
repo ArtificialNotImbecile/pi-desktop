@@ -1,0 +1,6 @@
+{
+  "defaultProvider": "remote-mock",
+  "defaultModel": "mock",
+  "defaultThinkingLevel": "off",
+  "quietStartup": true
+}

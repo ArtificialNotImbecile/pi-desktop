@@ -124,7 +124,7 @@ Jasmine also supports entering a key directly. Direct keys are stored as plain t
 
 ## Roadmap
 
-Remote development over SSH, Chrome browser control, and MCP servers are built and validated as standalone Pi extensions or packages before the desktop app consumes them. See the [roadmap](docs/roadmap.md) for what each one has to do first.
+Remote development over SSH now has a standalone CLI/package implementation in [`@jasmine-ai/pi-remote`](src/main/agent/extensions/piRemote/README.md); desktop consumption remains gated on its live Windows-to-Linux acceptance matrix. Chrome browser control and MCP servers follow the same standalone-first rule. See the [roadmap](docs/roadmap.md) for the current boundaries.
 
 ## Testing
 

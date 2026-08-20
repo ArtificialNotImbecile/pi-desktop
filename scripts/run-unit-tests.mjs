@@ -12,7 +12,8 @@ const requiredBuildArtifacts = [
   path.join("dist", "main", "main"),
   path.join("src", "main", "agent", "extensions", "contextCapture", "dist", "index.js"),
   path.join("src", "main", "agent", "extensions", "permissionGate", "dist", "index.js"),
-  path.join("src", "main", "agent", "extensions", "fileChanges", "dist", "index.js")
+  path.join("src", "main", "agent", "extensions", "fileChanges", "dist", "index.js"),
+  path.join("src", "main", "agent", "extensions", "piRemote", "dist", "index.js")
 ];
 const missingBuildArtifacts = requiredBuildArtifacts.filter((artifact) => !existsSync(path.join(rootDir, artifact)));
 
@@ -77,6 +78,16 @@ const tasks = [
         path.join("src", "main", "agent", "extensions", "fileChanges"),
         packageTestFiles(path.join("src", "main", "agent", "extensions", "fileChanges"))
           .map((testFile) => path.relative(path.join("src", "main", "agent", "extensions", "fileChanges"), testFile))
+      )
+    ]
+  },
+  {
+    name: "pi-remote",
+    steps: [
+      packageTestStep(
+        path.join("src", "main", "agent", "extensions", "piRemote"),
+        packageTestFiles(path.join("src", "main", "agent", "extensions", "piRemote"))
+          .map((testFile) => path.relative(path.join("src", "main", "agent", "extensions", "piRemote"), testFile))
       )
     ]
   }

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "platform": "linux",
+  "arch": "x64",
+  "libcMinimum": "2.27",
+  "runtimeVersion": "0.1.0",
+  "piVersion": "0.84.2",
+  "archive": "pi-remote-runtime-linux-x64-glibc.tar.gz",
+  "archiveSha256": "4f43154c2e88e0222534998dbf140cefedbd6df121595a7da85cca75ba07d26d",
+  "archiveUrl": "https://github.com/ArtificialNotImbecile/pi-desktop/releases/download/pi-remote-runtime-0.1.0/pi-remote-runtime-linux-x64-glibc.tar.gz",
+  "upstreamPiSha256": "906fbe787fd225c4ac624fe7ebd5b1d55a60e0f5c7ef51795d231564f9ee1c13"
+}
