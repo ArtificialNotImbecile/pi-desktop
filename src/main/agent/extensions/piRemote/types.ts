@@ -97,7 +97,16 @@ export interface RemoteSessionChunk {
   eof: boolean;
 }
 
-export interface ReadSessionOptions {
+/**
+ * Whether a read-only operation may install the managed runtime. Browsing a
+ * host's history should not silently upload one, so a client that only reads
+ * passes `install: false` and handles `runtime-not-installed` itself.
+ */
+export interface RuntimeUseOptions {
+  install?: boolean;
+}
+
+export interface ReadSessionOptions extends RuntimeUseOptions {
   /** Resume point. Must be a boundary the client got from a previous chunk. */
   fromOffset?: number;
   maxBytes?: number;
@@ -158,7 +167,8 @@ export interface OpenSessionOptions {
 export interface RemoteRuntimeManager {
   doctor(profile: RemoteProfile): Promise<DoctorReport>;
   ensureRuntime(profile: RemoteProfile): Promise<RuntimeInfo>;
-  listSessions(profile: RemoteProfile): Promise<RemoteSessionMetadata[]>;
+  requireRuntime(profile: RemoteProfile): Promise<RuntimeInfo>;
+  listSessions(profile: RemoteProfile, options?: RuntimeUseOptions): Promise<RemoteSessionMetadata[]>;
   readSession(profile: RemoteProfile, sessionId: string, options?: ReadSessionOptions): Promise<RemoteSessionChunk>;
   openTui(profile: RemoteProfile, options?: OpenTuiOptions): Promise<number>;
   openSession(profile: RemoteProfile, options?: OpenSessionOptions): Promise<RemoteSessionPort>;

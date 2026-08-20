@@ -205,6 +205,7 @@ try {
   let first = await transcript.syncSessionFile({
     transcriptPath,
     fromOffset: 0,
+    expectedFingerprint: null,
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -225,6 +226,7 @@ try {
   await assert.rejects(() => transcript.syncSessionFile({
     transcriptPath,
     fromOffset: total,
+    expectedFingerprint: "fp-a",
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -241,6 +243,7 @@ try {
   const resumed = await transcript.syncSessionFile({
     transcriptPath,
     fromOffset: 1,
+    expectedFingerprint: "fp-a",
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -260,6 +263,7 @@ try {
   await transcript.syncSessionFile({
     transcriptPath: tornPath,
     fromOffset: 999,
+    expectedFingerprint: "fp-a",
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -277,6 +281,7 @@ try {
   const rewritten = await transcript.syncSessionFile({
     transcriptPath: rewrittenPath,
     fromOffset: 0,
+    expectedFingerprint: null,
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -298,6 +303,7 @@ try {
   const recovered = await transcript.syncSessionFile({
     transcriptPath: staleCursorPath,
     fromOffset: headBytes,
+    expectedFingerprint: "fp-a",
     maxSyncBytes: 1024 * 1024,
     onTooLarge: tooLarge,
     readChunk: async (offset) => {
@@ -310,6 +316,48 @@ try {
   });
   assert.equal(recovered.restarted, true);
   assert.equal(await readFile(staleCursorPath, "utf8"), tailOne);
+
+  // The remote file can be replaced between the listing that decided to resume
+  // and the first resumed read, so that first chunk is checked against the
+  // fingerprint the local copy was built from rather than trusted.
+  const replacedPath = path.join(syncDir, "replaced.jsonl");
+  await writeFile(replacedPath, head, "utf8");
+  requested = [];
+  const replaced = await transcript.syncSessionFile({
+    transcriptPath: replacedPath,
+    fromOffset: headBytes,
+    expectedFingerprint: "fp-a",
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      requested.push(offset);
+      // The host is serving a different file now.
+      return chunk(tailTwo, offset, twoBytes, "fp-replaced", true);
+    }
+  });
+  assert.deepEqual(requested, [headBytes, 0], "the mismatch is caught on the first resumed chunk, not after it is written");
+  assert.equal(replaced.restarted, true);
+  assert.equal(await readFile(replacedPath, "utf8"), tailTwo,
+    "bytes from the replacement are never appended onto the previous file's prefix");
+
+  // Without a fingerprint there is nothing to check the first chunk against, so
+  // resuming is refused rather than done blind.
+  const unverifiablePath = path.join(syncDir, "unverifiable.jsonl");
+  await writeFile(unverifiablePath, head, "utf8");
+  requested = [];
+  const unverifiable = await transcript.syncSessionFile({
+    transcriptPath: unverifiablePath,
+    fromOffset: headBytes,
+    expectedFingerprint: null,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      requested.push(offset);
+      return chunk(tailOne, offset, oneBytes, "fp-a", true);
+    }
+  });
+  assert.deepEqual(requested, [0]);
+  assert.equal(unverifiable.restarted, true);
 
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),

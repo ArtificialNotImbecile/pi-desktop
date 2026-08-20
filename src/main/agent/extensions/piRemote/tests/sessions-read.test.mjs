@@ -122,6 +122,38 @@ test("a session is located by its header id, not by a client-supplied path", asy
   }
 });
 
+test("reading a host's sessions never installs the runtime by itself", async () => {
+  const { ManagedRemoteRuntime } = await import("../dist/runtime.js");
+  const profile = {
+    id: "00000000-0000-4000-8000-000000000002",
+    name: "fixture",
+    sshHost: "host",
+    network: { mode: "remote-direct", clientProxy: { noProxy: [], allowedPorts: [80, 443] } },
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString()
+  };
+  // A host with no runtime: every probe and lifecycle command fails the way an
+  // uninstalled remote root does.
+  const manager = new ManagedRemoteRuntime({
+    ssh: {
+      run: async () => ({ code: 1, stdout: "", stderr: "no runtime" }),
+      spawn() { throw new Error("browsing must not spawn an upload"); },
+      probe: async () => { throw new Error("browsing must not probe for an install"); }
+    }
+  });
+
+  for (const call of [
+    () => manager.listSessions(profile, { install: false }),
+    () => manager.readSession(profile, "session-any", { install: false })
+  ]) {
+    await assert.rejects(call, (error) => {
+      assert.equal(error.code, "runtime-not-installed");
+      assert.match(error.remediation, /Install the runtime/u);
+      return true;
+    });
+  }
+});
+
 async function sessionFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-sessions-"));
   const profileRoot = path.join(root, "profile");

@@ -80,6 +80,11 @@ export async function syncSessionFile(options: {
   transcriptPath: string;
   /** Zero starts over; any other value resumes from the local copy. */
   fromOffset: number;
+  /**
+   * Fingerprint the local copy was built from. Resuming without one is refused,
+   * because there would be nothing to check the first resumed chunk against.
+   */
+  expectedFingerprint: string | null;
   maxSyncBytes: number;
   readChunk(fromOffset: number): Promise<SessionChunkLike>;
   onTooLarge(fetchedBytes: number): Error;
@@ -96,11 +101,17 @@ export async function syncSessionFile(options: {
   let remoteSize: number | null = null;
 
   try {
-    if (options.fromOffset > 0) {
+    if (options.fromOffset > 0 && options.expectedFingerprint) {
       await copyFile(transcriptPath, staging);
       offset = await alignToRecordBoundary(staging);
+      // Carried into the loop so the first resumed chunk is checked too: the
+      // remote file can be replaced between the listing that decided to resume
+      // and this read, and appending its bytes to the old prefix would splice
+      // two different transcripts into one.
+      fingerprint = offset > 0 ? options.expectedFingerprint : null;
       restarted = offset === 0;
     } else {
+      restarted = options.fromOffset > 0;
       await writeFile(staging, "", "utf8");
     }
 

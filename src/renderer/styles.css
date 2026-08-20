@@ -10885,3 +10885,10 @@ button.memory-used-line > .ui-button-icon:last-child svg {
     grid-template-columns: 1fr;
   }
 }
+
+.remote-transcript-failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}

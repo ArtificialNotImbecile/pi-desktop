@@ -28,6 +28,7 @@ import {
   type RemoteSessionMetadata,
   type RemoteSessionChunk,
   type ReadSessionOptions,
+  type RuntimeUseOptions,
   type RuntimeInfo
 } from "./types.js";
 
@@ -104,6 +105,28 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     return this.runtimeInfo(profile, artifact);
   }
 
+  private resolveRuntime(profile: RemoteProfile, options: RuntimeUseOptions): Promise<RuntimeInfo> {
+    return options.install === false ? this.requireRuntime(profile) : this.ensureRuntime(profile);
+  }
+
+  /**
+   * Resolves the runtime already on the host and refuses rather than installing
+   * one. Reading a host's history must never turn into an ~83 MB upload the
+   * caller did not ask for; installing stays an explicit action.
+   */
+  async requireRuntime(profile: RemoteProfile): Promise<RuntimeInfo> {
+    const artifact = await this.readArtifact();
+    const existing = await this.runtimeInfo(profile, artifact).catch(() => null);
+    if (!existing) {
+      throw new PiRemoteError("runtime-not-installed", "The managed runtime is not installed on this host yet.", {
+        phase: "runtime",
+        remediation: "Install the runtime for this profile, then try again."
+      });
+    }
+    await this.activateRuntime(profile, artifact);
+    return existing;
+  }
+
   async openTui(profile: RemoteProfile, options: OpenTuiOptions = {}): Promise<number> {
     const info = await this.ensureRuntime(profile);
     const cwd = options.cwd ?? profile.defaultCwd;
@@ -170,8 +193,8 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     }
   }
 
-  async listSessions(profile: RemoteProfile): Promise<RemoteSessionMetadata[]> {
-    const info = await this.ensureRuntime(profile);
+  async listSessions(profile: RemoteProfile, options: RuntimeUseOptions = {}): Promise<RemoteSessionMetadata[]> {
+    const info = await this.resolveRuntime(profile, options);
     const { child, client } = await this.connectDaemon(profile, info);
     try {
       return await client.request("sessions.list") as RemoteSessionMetadata[];
@@ -182,7 +205,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
   }
 
   async readSession(profile: RemoteProfile, sessionId: string, options: ReadSessionOptions = {}): Promise<RemoteSessionChunk> {
-    const info = await this.ensureRuntime(profile);
+    const info = await this.resolveRuntime(profile, options);
     const { child, client } = await this.connectDaemon(profile, info);
     try {
       return await client.request("sessions.read", {

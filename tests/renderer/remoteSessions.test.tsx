@@ -389,6 +389,34 @@ describe("remote session reader", () => {
     fake.bridge.openRemoteSession = original;
   });
 
+  test("an open that fails reaches a terminal state that can be retried", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-unreachable", title: "migrate Postgres" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: {}
+    });
+    let attempts = 0;
+    fake.bridge.openRemoteSession = async (request) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("ssh is unreachable");
+      return transcript({ sessionId: request.sessionId, title: "migrate Postgres" });
+    };
+
+    render(withI18n(<PageHarness initialSessionId="session-unreachable" sessions={[row]} />));
+
+    // Without a terminal state the reader would sit on its loading line forever.
+    expect(await screen.findByText("This session could not be opened.")).toBeDefined();
+    expect(screen.queryByText("Opening the session")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("refactor the auth middleware")).toBeDefined();
+    expect(attempts).toBe(2);
+  });
+
   test("losing the connection reads as remote work continuing, not as a failure", async () => {
     fake = installFakeBridge();
     fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [] });

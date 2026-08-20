@@ -34,17 +34,21 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   const { t, language } = useI18n();
   const [transcript, setTranscript] = useState<RemoteSessionTranscript | null>(null);
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
+  const [failedSessionId, setFailedSessionId] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const requestRef = useRef(0);
 
   const activeSessionId = props.activeSessionId;
   useEffect(() => {
     if (!activeSessionId) {
       setTranscript(null);
+      setFailedSessionId(null);
       return;
     }
     let cancelled = false;
     const request = ++requestRef.current;
     setLoadingSessionId(activeSessionId);
+    setFailedSessionId(null);
     // The previous session's transcript goes as soon as another row is picked.
     // Keeping it would leave the reader showing one session under another row's
     // selection for as long as the next read takes.
@@ -53,20 +57,25 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       // A slower earlier open must not overwrite the session now selected.
       if (cancelled || request !== requestRef.current) return;
       setTranscript(result);
+      // A failed open resolves with nothing, so without this the reader would
+      // sit on "Opening the session" forever instead of offering a retry.
+      setFailedSessionId(result ? null : activeSessionId);
       setLoadingSessionId(null);
     });
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId, props.profile?.id]);
+  }, [activeSessionId, props.profile?.id, reloadToken]);
 
   async function refetch() {
     if (!activeSessionId) return;
     const request = ++requestRef.current;
     setLoadingSessionId(activeSessionId);
+    setFailedSessionId(null);
     const result = await props.onOpenSession(activeSessionId, { refetch: true });
     if (request !== requestRef.current) return;
     setTranscript(result);
+    setFailedSessionId(result ? null : activeSessionId);
     setLoadingSessionId(null);
   }
 
@@ -142,6 +151,11 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
               title={workspaceName}
               subtitle={t("remote.session.count", { count: props.sessions.length })}
             />
+          ) : failedSessionId === activeSessionId ? (
+            <div className="remote-transcript-failure">
+              <p className="remote-page-note danger">{t("remote.session.openFailed")}</p>
+              <Button onClick={() => setReloadToken((token) => token + 1)}>{t("remote.session.retry")}</Button>
+            </div>
           ) : !transcript || transcript.sessionId !== activeSessionId ? (
             // Belt and braces with the clear above: a transcript is only ever
             // drawn under the row it belongs to.

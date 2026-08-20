@@ -221,14 +221,30 @@ export class RemoteProfileService {
    * Asks the host what it has and reconciles it with what is stored. Sessions the
    * listing no longer reports keep their local copy and are marked gone; new
    * working directories become discovered workspaces.
+   *
+   * This runs from an ordinary tree expansion, so it never installs the managed
+   * runtime: a host without one reports that it needs setup and keeps whatever
+   * rows are already stored, leaving the ~83 MB upload to the explicit action.
    */
   async refreshSessions(profileId: string): Promise<RemoteSessionSummary[]> {
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     let sessions: RemoteSessionMetadata[];
     try {
-      sessions = await this.runtime.listSessions(profile);
+      sessions = await this.runtime.listSessions(profile, { install: false });
     } catch (error) {
+      if (error instanceof PiRemoteError && error.code === "runtime-not-installed") {
+        this.publishStatus({
+          profileId: profile.id,
+          state: "needsSetup",
+          message: error.message,
+          errorCode: error.code,
+          remediation: error.remediation ?? null,
+          checkedAt: new Date().toISOString(),
+          busy: false
+        });
+        return this.listSessions(profile.id);
+      }
       this.publishFailure(profile.id, error);
       throw error;
     }
@@ -288,7 +304,13 @@ export class RemoteProfileService {
     let fetchedBytes = 0;
     let refetched = plan.mode === "full" && record.cachedBytes > 0;
     if (plan.mode !== "cached") {
-      const result = await this.syncTranscript(profile, sessionId, transcriptPath, plan.mode === "append" ? plan.fromOffset : 0);
+      const result = await this.syncTranscript(
+        profile,
+        sessionId,
+        transcriptPath,
+        plan.mode === "append" ? plan.fromOffset : 0,
+        record.cachedFingerprint
+      );
       fetchedBytes = result.fetchedBytes;
       refetched = refetched || result.restarted;
     }
@@ -364,17 +386,20 @@ export class RemoteProfileService {
     profile: RemoteProfile,
     sessionId: string,
     transcriptPath: string,
-    fromOffset: number
+    fromOffset: number,
+    cachedFingerprint: string | null
   ): Promise<{ fetchedBytes: number; restarted: boolean }> {
     let result;
     try {
       result = await syncSessionFile({
         transcriptPath,
         fromOffset,
+        expectedFingerprint: cachedFingerprint,
         maxSyncBytes: MAX_SESSION_SYNC_BYTES,
         readChunk: (offset) => this.runtime.readSession(profile, sessionId, {
           fromOffset: offset,
-          maxBytes: SESSION_READ_CHUNK_BYTES
+          maxBytes: SESSION_READ_CHUNK_BYTES,
+          install: false
         }),
         onTooLarge: (fetchedBytes) => new PiRemoteError("session-too-large", "This remote session is too large to mirror locally.", {
           phase: "session",
