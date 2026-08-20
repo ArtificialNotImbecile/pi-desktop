@@ -10,7 +10,20 @@ export function registerAppSettingsIpc(context: IpcContext): void {
   });
 
   ipcMain.handle("appSettings:update", (_event, request: AppSettingsUpdateRequest): AppSettings => {
-    return context.getDatabase().updateAppSettings(appSettingsUpdateSchema.parse(request));
+    const parsed = appSettingsUpdateSchema.parse(request);
+    const rollbackShortcut = parsed.spotlightShortcut === undefined
+      ? null
+      : context.replaceSpotlightShortcut(parsed.spotlightShortcut);
+    try {
+      return context.getDatabase().updateAppSettings(parsed);
+    } catch (error) {
+      try {
+        rollbackShortcut?.();
+      } catch (rollbackError) {
+        console.error("Failed to restore the previous Spotlight shortcut:", rollbackError);
+      }
+      throw error;
+    }
   });
 }
 

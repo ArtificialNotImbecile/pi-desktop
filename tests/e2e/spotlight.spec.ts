@@ -17,6 +17,66 @@ type SpotlightHarness = {
 };
 
 test.describe("Spotlight quick launcher", () => {
+  test("uses a non-system default and restores a custom global shortcut after restart", async () => {
+    const harness = await launchJasmine("spotlight-shortcut");
+    let activeApp: ElectronApplication | null = harness.app;
+
+    try {
+      const platform = await harness.app.evaluate(() => process.platform);
+      const defaultShortcut = platform === "darwin" ? "Command+Shift+Space" : "Control+Shift+Space";
+      const initial = await harness.page.evaluate(async () => ({
+        settings: await window.jasmine.getAppSettings(),
+        status: await window.jasmine.getSpotlightShortcutStatus()
+      }));
+      expect(initial.settings.spotlightShortcut).toBe(defaultShortcut);
+      expect(initial.status).toEqual({
+        accelerator: defaultShortcut,
+        defaultAccelerator: defaultShortcut,
+        registered: true
+      });
+      if (platform === "win32") {
+        await expect.poll(() => harness.app.evaluate(() =>
+          Boolean((globalThis as Record<string, any>).__jasmineSpotlight?.isShortcutRegistered?.("Alt+Space"))
+        )).toBe(false);
+      }
+
+      const customShortcut = platform === "darwin"
+        ? "Command+Control+Alt+Shift+F12"
+        : "Control+Alt+Shift+F12";
+      const updated = await harness.page.evaluate(async (accelerator) => {
+        const settings = await window.jasmine.updateAppSettings({ spotlightShortcut: accelerator });
+        const status = await window.jasmine.getSpotlightShortcutStatus();
+        return { settings, status };
+      }, customShortcut);
+      expect(updated.settings.spotlightShortcut).toBe(customShortcut);
+      expect(updated.status).toEqual({
+        accelerator: customShortcut,
+        defaultAccelerator: defaultShortcut,
+        registered: true
+      });
+
+      await quitJasmine(harness.app);
+      await harness.app.close().catch(() => undefined);
+      activeApp = null;
+
+      const relaunched = await launchJasmine("spotlight-shortcut-restart", harness.userDataDir);
+      activeApp = relaunched.app;
+      const restored = await relaunched.page.evaluate(async () => ({
+        settings: await window.jasmine.getAppSettings(),
+        status: await window.jasmine.getSpotlightShortcutStatus()
+      }));
+      expect(restored.settings.spotlightShortcut).toBe(customShortcut);
+      expect(restored.status.accelerator).toBe(customShortcut);
+      expect(restored.status.registered).toBe(true);
+    } finally {
+      if (activeApp) {
+        await quitJasmine(activeApp);
+        await activeApp.close().catch(() => undefined);
+      }
+      await rm(harness.userDataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   test("searches, routes commands, dismisses, and reopens the main window from the tray", async () => {
     const harness = await launchJasmine("spotlight");
     const { app, page } = harness;
@@ -200,9 +260,9 @@ async function waitForSpotlightPage(app: ElectronApplication, timeoutMs: number)
   throw new Error(`Spotlight window did not appear. diag=${JSON.stringify(diag)}`);
 }
 
-async function launchJasmine(label: string): Promise<SpotlightHarness> {
-  const userDataDir = path.join(rootDir, ".tmp", "e2e", `${label}-${randomUUID()}`);
-  await rm(userDataDir, { recursive: true, force: true });
+async function launchJasmine(label: string, existingUserDataDir?: string): Promise<SpotlightHarness> {
+  const userDataDir = existingUserDataDir ?? path.join(rootDir, ".tmp", "e2e", `${label}-${randomUUID()}`);
+  if (!existingUserDataDir) await rm(userDataDir, { recursive: true, force: true });
   await mkdir(userDataDir, { recursive: true });
   const app = await electron.launch({
     executablePath: resolveElectronExecutable(),

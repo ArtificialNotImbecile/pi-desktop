@@ -100,6 +100,9 @@ describe("provider settings", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Entry subtitle" }), {
       target: { value: "Custom subtitle for this workspace." }
     });
+    const shortcut = screen.getByRole("textbox", { name: "Quick launcher keyboard shortcut" });
+    fireEvent.focus(shortcut);
+    fireEvent.keyDown(shortcut, { key: "j", code: "KeyJ", ctrlKey: true, shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
@@ -112,7 +115,8 @@ describe("provider settings", () => {
       brand: {
         mainTitle: "Custom helper",
         subtitle: "Custom subtitle for this workspace."
-      }
+      },
+      spotlightShortcut: "Control+Shift+J"
     });
   });
 

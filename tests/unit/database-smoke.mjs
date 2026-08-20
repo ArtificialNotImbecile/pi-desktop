@@ -25,6 +25,7 @@ try {
   const migrations = await import("../../dist/main/main/db/migrations.js");
   const schemas = await import("../../dist/main/shared/schemas.js");
   const appSettings = await import("../../dist/main/main/db/repositories/appSettings.js");
+  const shortcuts = await import("../../dist/main/shared/shortcuts.js");
   const workingTasks = await import("../../dist/main/main/db/repositories/workingTasks.js");
   const skillFiles = await import("../../dist/main/main/services/skillFiles.js");
   const skillManifests = await import("../../dist/main/main/services/skillManifests.js");
@@ -99,6 +100,7 @@ try {
       chrome_takeover_extension_id TEXT,
       working_notification_mode TEXT NOT NULL DEFAULT 'background',
       working_notification_include_details INTEGER NOT NULL DEFAULT 1,
+      spotlight_shortcut TEXT,
       permission_mode TEXT NOT NULL DEFAULT 'ask',
       file_change_tracking_mode TEXT NOT NULL DEFAULT 'managed-tools-only',
       skill_editor_path TEXT,
@@ -332,6 +334,7 @@ try {
     // columns must come out the other side without them.
     assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_enabled"), false);
     assert.equal(legacyAppSettingsColumns.includes("chrome_takeover_extension_id"), false);
+    assert.equal(legacyAppSettingsColumns.includes("spotlight_shortcut"), true);
     assert.equal(legacyDb.prepare("SELECT 1 AS exists_flag FROM schema_migrations WHERE version = 23").get().exists_flag, 1);
     const migratedBrand = legacyDb.prepare("SELECT brand_main_title, brand_subtitle FROM app_settings WHERE id = 'default'").get();
     assert.equal(migratedBrand.brand_main_title, "Talk to yourself.");
@@ -956,6 +959,7 @@ try {
     mode: "background",
     includeDetails: true
   });
+  assert.equal(appSettings.getAppSettings(db).spotlightShortcut, shortcuts.defaultSpotlightShortcut(process.platform));
   assert.equal(appSettings.getAppSettings(db).permissionMode, "ask");
   assert.equal(appSettings.getAppSettings(db).fileChangeTrackingMode, "managed-tools-only");
   assert.deepEqual(appSettings.getAppSettings(db).brand, {
@@ -982,8 +986,11 @@ try {
   });
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { language: "zh" }, timestamp);
   assert.equal(appSettings.getAppSettings(db).language, "zh");
+  appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { spotlightShortcut: "Control+Alt+J" }, timestamp);
+  assert.equal(appSettings.getAppSettings(db).spotlightShortcut, "Control+Alt+J");
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { workingNotifications: { mode: "never", includeDetails: false } }, timestamp);
   assert.deepEqual(appSettings.getAppSettings(db).workingNotifications, { mode: "never", includeDetails: false });
+  assert.equal(appSettings.getAppSettings(db).spotlightShortcut, "Control+Alt+J", "unrelated saves should preserve the custom shortcut");
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { permissionMode: "full-access" }, timestamp);
   appSettings.updateAppSettings(db, appSettings.getAppSettings(db), { fileChangeTrackingMode: "watcher" }, timestamp);
   assert.equal(appSettings.getAppSettings(db).fileChangeTrackingMode, "watcher");

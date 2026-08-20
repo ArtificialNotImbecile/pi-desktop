@@ -436,6 +436,7 @@ export type AppSettings = {
   brand: BrandSettings;
   language: AppLanguage;
   workingNotifications: WorkingNotificationSettings;
+  spotlightShortcut: string;
   permissionMode: PermissionMode;
   fileChangeTrackingMode: FileChangeTrackingMode;
   skillEditorPath?: string;
@@ -452,10 +453,17 @@ export type AppSettingsUpdateRequest = {
   brand?: Partial<Pick<BrandSettings, "logoDataUrl" | "mainTitle" | "subtitle">>;
   language?: AppLanguage;
   workingNotifications?: Partial<WorkingNotificationSettings>;
+  spotlightShortcut?: string;
   permissionMode?: PermissionMode;
   fileChangeTrackingMode?: FileChangeTrackingMode;
   skillEditorPath?: string;
   terminalShellPath?: string;
+};
+
+export type SpotlightShortcutStatus = {
+  accelerator: string;
+  defaultAccelerator: string;
+  registered: boolean;
 };
 
 export type TerminalShellInfo = {
@@ -1404,6 +1412,7 @@ export type JasmineApi = {
   spotlightExecute(request: SpotlightExecuteRequest): Promise<void>;
   spotlightConsumePending(): Promise<SpotlightExecuteRequest | null>;
   spotlightClose(): Promise<void>;
+  getSpotlightShortcutStatus(): Promise<SpotlightShortcutStatus>;
   onSpotlightReset(callback: () => void): () => void;
   onSpotlightCommand(callback: (payload: SpotlightExecuteRequest) => void): () => void;
 };

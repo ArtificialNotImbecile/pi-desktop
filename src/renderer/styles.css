@@ -7935,6 +7935,32 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   min-width: 0;
 }
 
+.general-shortcut-row.ui-settings-list-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.general-shortcut-row .ui-settings-list-actions {
+  grid-column: 2 / -1;
+  margin-top: 4px;
+}
+
+.shortcut-recorder {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.shortcut-recorder > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shortcut-recorder .ui-input {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
 .general-executable-row .ui-executable-picker {
   width: 100%;
 }

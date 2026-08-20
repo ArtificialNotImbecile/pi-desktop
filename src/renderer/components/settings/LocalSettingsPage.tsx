@@ -20,6 +20,7 @@ import type {
   SkillRecord,
   SkillSource,
   SkillUpdateRequest,
+  SpotlightShortcutStatus,
 } from "../../../shared/ipc";
 import type { SettingsSection as SettingsSectionKey } from "./ProviderSettingsPanel";
 import { PluginsSettingsPage } from "./PluginsSettingsPage";
@@ -34,8 +35,9 @@ import { APPEARANCE_THEMES } from "../../../shared/theme";
 import { getBridge } from "../../desktopApi";
 import DEFAULT_BRAND_LOGO_URL from "../../assets/jasmine-logo.png";
 import { Button, Select, Switch, TextArea, TextInput } from "../ui";
-import { BrainIcon, EditIcon, ImageIcon, RefreshIcon, TerminalIcon, WorkingIcon } from "../icons/Icons";
-import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
+import { BrainIcon, EditIcon, ImageIcon, KeyboardIcon, RefreshIcon, TerminalIcon, WorkingIcon } from "../icons/Icons";
+import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, StatePill } from "./SettingsLayout";
+import { ShortcutRecorder } from "./ShortcutRecorder";
 
 export function LocalSettingsPage(props: {
   section: Exclude<SettingsSectionKey, "providers">;
@@ -401,6 +403,8 @@ function GeneralSettingsPage(props: {
   const [terminalShellDraft, setTerminalShellDraft] = useState(props.settings.terminalShellPath ?? "");
   const [brandDraft, setBrandDraft] = useState(props.settings.brand);
   const [workingNotificationsDraft, setWorkingNotificationsDraft] = useState(props.settings.workingNotifications);
+  const [spotlightShortcutDraft, setSpotlightShortcutDraft] = useState(props.settings.spotlightShortcut);
+  const [spotlightShortcutStatus, setSpotlightShortcutStatus] = useState<SpotlightShortcutStatus | null>(null);
   const [fileChangeTrackingModeDraft, setFileChangeTrackingModeDraft] = useState<FileChangeTrackingMode>(props.settings.fileChangeTrackingMode);
   const [editorDiscovery, setEditorDiscovery] = useState<ExecutableDiscovery | null>(null);
   const [terminalDiscovery, setTerminalDiscovery] = useState<ExecutableDiscovery | null>(null);
@@ -422,6 +426,7 @@ function GeneralSettingsPage(props: {
     brandDraft.subtitle.trim() !== props.settings.brand.subtitle ||
     workingNotificationsDraft.mode !== props.settings.workingNotifications.mode ||
     workingNotificationsDraft.includeDetails !== props.settings.workingNotifications.includeDetails ||
+    spotlightShortcutDraft !== props.settings.spotlightShortcut ||
     fileChangeTrackingModeDraft !== props.settings.fileChangeTrackingMode;
   const brandTitleInvalid = !brandDraft.mainTitle.trim();
 
@@ -433,23 +438,26 @@ function GeneralSettingsPage(props: {
     setTerminalShellDraft(props.settings.terminalShellPath ?? "");
     setBrandDraft(props.settings.brand);
     setWorkingNotificationsDraft(props.settings.workingNotifications);
+    setSpotlightShortcutDraft(props.settings.spotlightShortcut);
     setFileChangeTrackingModeDraft(props.settings.fileChangeTrackingMode);
-  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle, props.settings.workingNotifications.mode, props.settings.workingNotifications.includeDetails, props.settings.fileChangeTrackingMode]);
+  }, [draftTouched, props.settings.toolModel.providerId, props.settings.toolModel.modelId, props.settings.toolModel.reasoningEffort, props.settings.language, props.settings.skillEditorPath, props.settings.terminalShellPath, props.settings.brand.logoDataUrl, props.settings.brand.mainTitle, props.settings.brand.subtitle, props.settings.workingNotifications.mode, props.settings.workingNotifications.includeDetails, props.settings.spotlightShortcut, props.settings.fileChangeTrackingMode]);
 
   useEffect(() => {
     setSaveState("idle");
-  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle, workingNotificationsDraft.mode, workingNotificationsDraft.includeDetails, fileChangeTrackingModeDraft]);
+  }, [draft.providerId, draft.modelId, draft.reasoningEffort, languageDraft, editorPathDraft, terminalShellDraft, brandDraft.logoDataUrl, brandDraft.mainTitle, brandDraft.subtitle, workingNotificationsDraft.mode, workingNotificationsDraft.includeDetails, spotlightShortcutDraft, fileChangeTrackingModeDraft]);
 
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
       getBridge().listExecutableDiscovery("editor"),
-      getBridge().listExecutableDiscovery("terminal")
+      getBridge().listExecutableDiscovery("terminal"),
+      getBridge().getSpotlightShortcutStatus().catch(() => null)
     ])
-      .then(([editor, terminal]) => {
+      .then(([editor, terminal, shortcutStatus]) => {
         if (cancelled) return;
         setEditorDiscovery(editor);
         setTerminalDiscovery(terminal);
+        if (shortcutStatus) setSpotlightShortcutStatus(shortcutStatus);
       })
       .catch(() => {
         if (cancelled) return;
@@ -486,6 +494,7 @@ function GeneralSettingsPage(props: {
         subtitle: brandDraft.subtitle.trim()
       },
       workingNotifications: workingNotificationsDraft,
+      spotlightShortcut: spotlightShortcutDraft,
       fileChangeTrackingMode: fileChangeTrackingModeDraft,
       skillEditorPath: editorPathDraft.trim(),
       terminalShellPath: terminalShellDraft.trim()
@@ -498,8 +507,10 @@ function GeneralSettingsPage(props: {
       setTerminalShellDraft(result.terminalShellPath ?? "");
       setBrandDraft(result.brand);
       setWorkingNotificationsDraft(result.workingNotifications);
+      setSpotlightShortcutDraft(result.spotlightShortcut);
       setFileChangeTrackingModeDraft(result.fileChangeTrackingMode);
       setDraftTouched(false);
+      void getBridge().getSpotlightShortcutStatus().then(setSpotlightShortcutStatus).catch(() => undefined);
     }
   }
 
@@ -579,6 +590,45 @@ function GeneralSettingsPage(props: {
                 <option value="en">{t("settings.general.language.en")}</option>
                 <option value="zh">{t("settings.general.language.zh")}</option>
               </Select>
+            }
+          />
+        </SettingsSection>
+        <SettingsSection className="general-settings-list-section" aria-label={t("settings.general.spotlightShortcut")}>
+          <SettingsListRow
+            className="general-shortcut-row"
+            icon={<KeyboardIcon />}
+            title={t("settings.general.spotlightShortcut")}
+            description={t("settings.general.spotlightShortcutDescription")}
+            status={
+              <StatePill tone={
+                spotlightShortcutDraft !== props.settings.spotlightShortcut
+                  ? "neutral"
+                  : spotlightShortcutStatus === null
+                    ? "neutral"
+                    : spotlightShortcutStatus.registered && spotlightShortcutStatus.accelerator === props.settings.spotlightShortcut
+                      ? "success"
+                      : "danger"
+              }>
+                {spotlightShortcutDraft !== props.settings.spotlightShortcut
+                  ? t("settings.general.spotlightShortcutUnsaved")
+                  : spotlightShortcutStatus === null
+                    ? t("settings.general.spotlightShortcutChecking")
+                    : spotlightShortcutStatus.registered && spotlightShortcutStatus.accelerator === props.settings.spotlightShortcut
+                      ? t("settings.general.spotlightShortcutActive")
+                      : t("settings.general.spotlightShortcutUnavailable")}
+              </StatePill>
+            }
+            actions={
+              <ShortcutRecorder
+                value={spotlightShortcutDraft}
+                defaultValue={spotlightShortcutStatus?.defaultAccelerator ?? props.settings.spotlightShortcut}
+                platform={getBridge().platform}
+                disabled={props.loading || props.saving}
+                onChange={(value) => {
+                  setDraftTouched(true);
+                  setSpotlightShortcutDraft(value);
+                }}
+              />
             }
           />
         </SettingsSection>
