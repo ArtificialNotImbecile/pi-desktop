@@ -23,12 +23,12 @@ const NAMED_KEYS: Record<string, string> = {
 
 type ShortcutKeyEvent = Pick<
   KeyboardEvent<HTMLInputElement>,
-  "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
+  "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
 >;
 
 export function shortcutFromKeyEvent(event: ShortcutKeyEvent, platform: NodeJS.Platform): string | null {
   if (MODIFIER_KEYS.has(event.key)) return null;
-  const key = normalizeKey(event.key);
+  const key = normalizeKey(event.key, event.code);
   if (!key) return null;
   const modifiers: string[] = [];
   if (platform === "darwin" && event.metaKey) modifiers.push("Command");
@@ -124,7 +124,9 @@ export function ShortcutRecorder(props: {
   );
 }
 
-function normalizeKey(key: string): string | null {
+function normalizeKey(key: string, code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
   if (NAMED_KEYS[key]) return NAMED_KEYS[key];
   if (/^F(?:[1-9]|1\d|2[0-4])$/.test(key)) return key;
   if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();

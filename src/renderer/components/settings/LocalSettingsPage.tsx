@@ -494,7 +494,9 @@ function GeneralSettingsPage(props: {
         subtitle: brandDraft.subtitle.trim()
       },
       workingNotifications: workingNotificationsDraft,
-      spotlightShortcut: spotlightShortcutDraft,
+      ...(spotlightShortcutDraft !== props.settings.spotlightShortcut
+        ? { spotlightShortcut: spotlightShortcutDraft }
+        : {}),
       fileChangeTrackingMode: fileChangeTrackingModeDraft,
       skillEditorPath: editorPathDraft.trim(),
       terminalShellPath: terminalShellDraft.trim()
