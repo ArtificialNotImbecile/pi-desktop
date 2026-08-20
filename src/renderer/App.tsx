@@ -241,7 +241,10 @@ function App(props: { initialAppSettings: AppSettings }) {
   });
 
   useEffect(() => {
-    if (navigation.route.name === "working") return;
+    // Routes that are not the chat surface own themselves. Without this the
+    // effect would replace a remote route with the active chat on the very next
+    // render, so a remote page could only flash before navigation left it.
+    if (navigation.route.name === "working" || isRemoteRouteName(navigation.route.name)) return;
     if (surfaces.settingsOpen) return;
     if (threads.activeThreadId && activeRightPanelMode) {
       navigation.replace({ name: "rightPanel", threadId: threads.activeThreadId, projectId: threads.activeThread?.projectId ?? null, panel: activeRightPanelMode });
@@ -1099,6 +1102,10 @@ function App(props: { initialAppSettings: AppSettings }) {
     if (rightPanelTabs.length === 0) return;
     setRightPanelCollapsed(true);
   }
+}
+
+function isRemoteRouteName(name: JasmineRoute["name"]): boolean {
+  return name === "remoteWorkspace" || name === "remoteSession";
 }
 
 /**

@@ -2,7 +2,7 @@
 // to the stored rows, and what opening a session actually has to download.
 // Both run against the compiled main output with no Electron and no SSH host.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -91,6 +91,18 @@ try {
   assert.equal(gone.cachedBytes, 4096, "the downloaded copy survives so it can still be read");
   assert.equal(remotes.getRemoteSession(db, PROFILE, "session-b").state, "remote");
 
+  // A session that vanishes before it was ever opened has nothing local behind
+  // it, so keeping the row would offer a read-only copy that does not exist.
+  remotes.upsertRemoteSessions(db, [
+    listing({}),
+    listing({ sessionId: "session-b", cwd: "/srv/etl" }),
+    listing({ sessionId: "session-never-opened", cwd: "/srv/etl" })
+  ], "2026-08-20T00:09:30.000Z");
+  assert.equal(remotes.getRemoteSession(db, PROFILE, "session-never-opened").state, "remote");
+  remotes.markMissingRemoteSessions(db, PROFILE, ["session-a", "session-b"], "2026-08-20T00:09:40.000Z");
+  assert.equal(remotes.getRemoteSession(db, PROFILE, "session-never-opened"), null,
+    "an uncached session the host dropped is removed rather than shown as a local copy");
+
   // Reappearing clears the flag rather than duplicating the row.
   remotes.upsertRemoteSessions(db, [listing({})], "2026-08-20T00:10:00.000Z");
   assert.equal(remotes.getRemoteSession(db, PROFILE, "session-a").state, "cached");
@@ -165,6 +177,139 @@ try {
   const previousBytes = Buffer.byteLength(`${lines[0]}\n${lines[1]}\n`, "utf8");
   const afterAppend = transcript.readTranscriptEntries(raw, previousBytes);
   assert.deepEqual(afterAppend.map((entry) => entry.appended), [false, true, true, true]);
+
+  // --- the incremental download is all-or-nothing ---------------------------
+  // A read that fails partway must not leave a longer file behind: the next open
+  // would resume from the stored offset and append the same range twice.
+  const syncDir = path.join(dir, "sync");
+  const transcriptPath = path.join(syncDir, "session.jsonl");
+  const chunk = (text, offset, size, fingerprint = "fp-a", eof = false) => ({
+    offset,
+    bytes: Buffer.byteLength(text, "utf8"),
+    size,
+    data: Buffer.from(text, "utf8").toString("base64"),
+    headerFingerprint: fingerprint,
+    eof
+  });
+  const head = "{\"type\":\"session\",\"id\":\"session-sync\"}\n";
+  const tailOne = "{\"type\":\"message\",\"id\":\"m1\"}\n";
+  const tailTwo = "{\"type\":\"message\",\"id\":\"m2\"}\n";
+  const headBytes = Buffer.byteLength(head, "utf8");
+  const oneBytes = Buffer.byteLength(tailOne, "utf8");
+  const twoBytes = Buffer.byteLength(tailTwo, "utf8");
+  const total = headBytes + oneBytes + twoBytes;
+  const tooLarge = () => Object.assign(new Error("too large"), { code: "session-too-large" });
+
+  // First download of a session that arrives in two chunks.
+  let requested = [];
+  let first = await transcript.syncSessionFile({
+    transcriptPath,
+    fromOffset: 0,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      requested.push(offset);
+      return offset === 0
+        ? chunk(head + tailOne, 0, total)
+        : chunk(tailTwo, offset, total, "fp-a", true);
+    }
+  });
+  assert.equal(first.offset, total);
+  assert.equal(first.fetchedBytes, total);
+  assert.equal(first.restarted, false);
+  assert.equal(await readFile(transcriptPath, "utf8"), head + tailOne + tailTwo);
+  assert.deepEqual(requested, [0, headBytes + oneBytes]);
+
+  // A later read fails: the published copy and its bytes must be untouched, and
+  // no staging file may survive.
+  await assert.rejects(() => transcript.syncSessionFile({
+    transcriptPath,
+    fromOffset: total,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      if (offset === total) return chunk("{\"type\":\"message\",\"id\":\"m3\"}\n", offset, total + 100);
+      throw new Error("ssh died mid-download");
+    }
+  }), /ssh died mid-download/u);
+  assert.equal(await readFile(transcriptPath, "utf8"), head + tailOne + tailTwo,
+    "a failed sync must not publish the bytes it did manage to read");
+  await assert.rejects(() => stat(`${transcriptPath}.partial`), (error) => error?.code === "ENOENT");
+
+  // Resuming reads from where the local copy ends, not from a stored number.
+  requested = [];
+  const resumed = await transcript.syncSessionFile({
+    transcriptPath,
+    fromOffset: 1,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      requested.push(offset);
+      return chunk(tailTwo, offset, total + twoBytes, "fp-a", true);
+    }
+  });
+  assert.deepEqual(requested, [total], "the resume point comes from the staged file size");
+  assert.equal(resumed.fetchedBytes, twoBytes);
+  assert.equal(await readFile(transcriptPath, "utf8"), head + tailOne + tailTwo + tailTwo);
+
+  // A half-written trailing record is cut back to the last whole line before
+  // anything is appended after it.
+  const tornPath = path.join(syncDir, "torn.jsonl");
+  await writeFile(tornPath, `${head}{"type":"message","id":"half`, "utf8");
+  requested = [];
+  await transcript.syncSessionFile({
+    transcriptPath: tornPath,
+    fromOffset: 999,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      requested.push(offset);
+      return chunk(tailOne, offset, headBytes + oneBytes, "fp-a", true);
+    }
+  });
+  assert.deepEqual(requested, [headBytes], "the torn record is dropped rather than resumed into");
+  assert.equal(await readFile(tornPath, "utf8"), head + tailOne);
+
+  // A remote file that was rewritten mid-download restarts instead of splicing
+  // two different transcripts together.
+  const rewrittenPath = path.join(syncDir, "rewritten.jsonl");
+  let served = 0;
+  const rewritten = await transcript.syncSessionFile({
+    transcriptPath: rewrittenPath,
+    fromOffset: 0,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      served += 1;
+      if (served === 1) return chunk(head, 0, total, "fp-a");
+      if (served === 2) return chunk("{\"type\":\"session\",\"id\":\"rewritten\"}\n", offset, twoBytes, "fp-b");
+      return chunk("{\"type\":\"session\",\"id\":\"rewritten\"}\n", 0, twoBytes, "fp-b", true);
+    }
+  });
+  assert.equal(rewritten.restarted, true);
+  assert.equal(rewritten.fingerprint, "fp-b");
+  assert.equal(await readFile(rewrittenPath, "utf8"), "{\"type\":\"session\",\"id\":\"rewritten\"}\n",
+    "the bytes from the previous file identity are discarded, not kept as a prefix");
+
+  // A cursor the host rejects falls back to a full download once.
+  const staleCursorPath = path.join(syncDir, "stale.jsonl");
+  await writeFile(staleCursorPath, head, "utf8");
+  let refused = false;
+  const recovered = await transcript.syncSessionFile({
+    transcriptPath: staleCursorPath,
+    fromOffset: headBytes,
+    maxSyncBytes: 1024 * 1024,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => {
+      if (offset > 0 && !refused) {
+        refused = true;
+        throw Object.assign(new Error("past end"), { code: "session-offset-past-end" });
+      }
+      return chunk(tailOne, offset, oneBytes, "fp-a", true);
+    }
+  });
+  assert.equal(recovered.restarted, true);
+  assert.equal(await readFile(staleCursorPath, "utf8"), tailOne);
 
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),

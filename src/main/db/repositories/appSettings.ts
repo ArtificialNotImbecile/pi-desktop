@@ -2,6 +2,7 @@ import type { AppLanguage, AppSettings, AppSettingsUpdateRequest, ReasoningEffor
 import type { PermissionMode } from "../../../shared/permissions.js";
 import { DEFAULT_BRAND_SETTINGS, isSupportedBrandLogoDataUrl } from "../../../shared/brand.js";
 import { DEFAULT_APPEARANCE } from "../../../shared/theme.js";
+import { normalizeSpotlightShortcut } from "../../../shared/shortcuts.js";
 import { isWindowsBashLauncherPath } from "../../utils/shellPaths.js";
 import type { SqlDatabase } from "./types.js";
 
@@ -21,6 +22,7 @@ type AppSettingsRow = {
   language: AppLanguage;
   working_notification_mode?: string | null;
   working_notification_include_details?: number | null;
+  spotlight_shortcut?: string | null;
   permission_mode?: string | null;
   file_change_tracking_mode?: string | null;
   skill_editor_path?: string | null;
@@ -48,12 +50,13 @@ export function ensureAppSettings(db: SqlDatabase, timestamp: string): void {
       language,
       working_notification_mode,
       working_notification_include_details,
+      spotlight_shortcut,
       permission_mode,
       file_change_tracking_mode,
       skill_editor_path,
       terminal_shell_path,
       updated_at
-    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 'background', 1, 'ask', 'managed-tools-only', NULL, NULL, ?)`
+    ) VALUES ('default', 'deepseek', 'deepseek-v4-flash', 'off', ?, ?, ?, ?, ?, NULL, ?, ?, 'en', 'background', 1, NULL, 'ask', 'managed-tools-only', NULL, NULL, ?)`
   ).run(
     DEFAULT_APPEARANCE.accent,
     DEFAULT_APPEARANCE.surface,
@@ -85,6 +88,7 @@ export function getAppSettings(db: SqlDatabase): AppSettings | null {
         language,
         working_notification_mode,
         working_notification_include_details,
+        spotlight_shortcut,
         permission_mode,
         file_change_tracking_mode,
         skill_editor_path,
@@ -119,6 +123,9 @@ export function updateAppSettings(
     language: normalizeLanguage(input.language, current.language),
     workingNotificationMode: normalizeWorkingNotificationMode(input.workingNotifications?.mode, current.workingNotifications.mode),
     workingNotificationIncludeDetails: input.workingNotifications?.includeDetails ?? current.workingNotifications.includeDetails,
+    spotlightShortcut: input.spotlightShortcut === undefined
+      ? current.spotlightShortcut
+      : normalizeSpotlightShortcut(input.spotlightShortcut, process.platform),
     permissionMode: normalizePermissionMode(input.permissionMode, current.permissionMode),
     fileChangeTrackingMode: normalizeFileChangeTrackingMode(input.fileChangeTrackingMode, current.fileChangeTrackingMode),
     skillEditorPath: normalizeOptionalPath(input.skillEditorPath, current.skillEditorPath),
@@ -141,6 +148,7 @@ export function updateAppSettings(
         language = ?,
         working_notification_mode = ?,
         working_notification_include_details = ?,
+        spotlight_shortcut = ?,
         permission_mode = ?,
         file_change_tracking_mode = ?,
         skill_editor_path = ?,
@@ -162,6 +170,7 @@ export function updateAppSettings(
     next.language,
     next.workingNotificationMode,
     next.workingNotificationIncludeDetails ? 1 : 0,
+    next.spotlightShortcut,
     next.permissionMode,
     next.fileChangeTrackingMode,
     next.skillEditorPath ?? null,
@@ -197,6 +206,7 @@ function mapAppSettings(row: AppSettingsRow): AppSettings {
       mode: normalizeWorkingNotificationMode(row.working_notification_mode, "background"),
       includeDetails: row.working_notification_include_details !== 0
     },
+    spotlightShortcut: normalizeSpotlightShortcut(row.spotlight_shortcut, process.platform),
     permissionMode: normalizePermissionMode(row.permission_mode, "ask"),
     fileChangeTrackingMode: normalizeFileChangeTrackingMode(row.file_change_tracking_mode, "managed-tools-only"),
     skillEditorPath: normalizeOptionalPath(row.skill_editor_path, undefined),

@@ -62,6 +62,7 @@ type ModeledBridgeApi = Pick<
   | "installAppUpdate"
   | "openAppUpdateDownloadPage"
   | "onAppUpdateStateChanged"
+  | "getSpotlightShortcutStatus"
   | "listExecutableDiscovery"
   | "getThreadDraft"
   | "updateThreadDraft"
@@ -416,6 +417,13 @@ export function createFakeBridge(): FakeBridge {
     onAppUpdateStateChanged(callback: (state: AppUpdateState) => void) {
       appUpdateListeners.add(callback);
       return () => appUpdateListeners.delete(callback);
+    },
+    getSpotlightShortcutStatus() {
+      return Promise.resolve({
+        accelerator: "Control+Shift+Space",
+        defaultAccelerator: "Control+Shift+Space",
+        registered: true
+      });
     },
     listExecutableDiscovery(kind) {
       return Promise.resolve({ kind, candidates: [] });

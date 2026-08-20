@@ -213,6 +213,42 @@ describe("remote tree", () => {
   });
 });
 
+describe("remote profile actions", () => {
+  test("a stop that did not stop anything is reported as a failure", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({ profiles: [DIRECT], statuses: [] });
+    // The service catches a failed stop and resolves with a failed status rather
+    // than rejecting, so the returned state is the only honest signal.
+    fake.bridge.stopRemoteProfile = async () => ({
+      ...status("failed"),
+      message: "The remote daemon did not answer."
+    });
+
+    const errors: string[] = [];
+    const toasts: string[] = [];
+    let stopped: boolean | null = null;
+
+    function Harness() {
+      const remotes = useRemotes({
+        onError: (message) => errors.push(message),
+        onToast: (message) => toasts.push(message)
+      });
+      return (
+        <button type="button" onClick={() => void remotes.stopProfile(DIRECT.id).then((result) => { stopped = result; })}>
+          {"stop"}
+        </button>
+      );
+    }
+
+    render(withI18n(<Harness />));
+    fireEvent.click(screen.getByRole("button", { name: "stop" }));
+
+    await waitFor(() => expect(stopped).toBe(false));
+    expect(errors).toEqual(["The remote daemon did not answer."]);
+    expect(toasts).toEqual([]);
+  });
+});
+
 /** Mounts the reader with a selection the test drives, as the route does. */
 function PageHarness(props: { initialSessionId: string | null; sessions: RemoteSessionSummary[] }) {
   const remotes = useRemotes({ onError: () => {}, onToast: () => {} });
@@ -324,6 +360,33 @@ describe("remote session reader", () => {
       sessionId: "session-cached",
       refetch: true
     }));
+  });
+
+  test("selecting another session stops showing the previous one", async () => {
+    fake = installFakeBridge();
+    const cached = session({ sessionId: "session-cached", title: "fix CI cache", state: "cached", cachedBytes: 4096 });
+    const slow = session({ sessionId: "session-slow", title: "migrate Postgres" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [cached, slow] },
+      transcripts: { "session-cached": transcript({ sessionId: "session-cached", title: "fix CI cache" }) }
+    });
+    // The second session never answers, which is what a slow link looks like.
+    const original = fake.bridge.openRemoteSession;
+    fake.bridge.openRemoteSession = (request) => request.sessionId === "session-slow"
+      ? new Promise(() => {})
+      : original(request);
+
+    render(withI18n(<PageHarness initialSessionId="session-cached" sessions={[cached, slow]} />));
+    expect(await screen.findByText("refactor the auth middleware")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open session migrate Postgres" }));
+
+    await waitFor(() => expect(screen.queryByText("refactor the auth middleware")).toBeNull());
+    expect(screen.getByText("Opening the session")).toBeDefined();
+    fake.bridge.openRemoteSession = original;
   });
 
   test("losing the connection reads as remote work continuing, not as a failure", async () => {

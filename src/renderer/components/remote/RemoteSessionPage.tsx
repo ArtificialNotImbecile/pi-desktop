@@ -45,6 +45,10 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     let cancelled = false;
     const request = ++requestRef.current;
     setLoadingSessionId(activeSessionId);
+    // The previous session's transcript goes as soon as another row is picked.
+    // Keeping it would leave the reader showing one session under another row's
+    // selection for as long as the next read takes.
+    setTranscript(null);
     void props.onOpenSession(activeSessionId).then((result) => {
       // A slower earlier open must not overwrite the session now selected.
       if (cancelled || request !== requestRef.current) return;
@@ -138,9 +142,11 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
               title={workspaceName}
               subtitle={t("remote.session.count", { count: props.sessions.length })}
             />
-          ) : loadingSessionId === activeSessionId && !transcript ? (
+          ) : !transcript || transcript.sessionId !== activeSessionId ? (
+            // Belt and braces with the clear above: a transcript is only ever
+            // drawn under the row it belongs to.
             <p className="remote-transcript-status"><LoadingDots /> {t("remote.session.loading")}</p>
-          ) : transcript ? (
+          ) : (
             <>
               <div className="remote-transcript-header">
                 <h3>{transcript.title}</h3>
@@ -170,7 +176,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
                 </article>
               ))}
             </>
-          ) : null}
+          )}
         </div>
       </div>
     </div>

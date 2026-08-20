@@ -227,18 +227,26 @@ export function upsertRemoteSessions(db: SqlDatabase, sessions: RemoteSessionUps
 }
 
 /**
- * Flags sessions the latest listing no longer reported. The rows survive because
- * a downloaded transcript is still readable after the remote file is gone.
+ * Reconciles rows the latest listing no longer reported. A row with a downloaded
+ * transcript is kept and flagged, because that copy is still readable after the
+ * remote file is gone. A row that was never opened has no content of its own, so
+ * it is deleted rather than left claiming a local copy that does not exist.
  */
 export function markMissingRemoteSessions(db: SqlDatabase, profileId: string, presentSessionIds: string[], timestamp: string): void {
   const present = new Set(presentSessionIds);
   const rows = db
-    .prepare("SELECT session_id, missing_since FROM remote_sessions WHERE profile_id = ?")
-    .all(profileId) as Array<{ session_id: string; missing_since: string | null }>;
-  const statement = db.prepare("UPDATE remote_sessions SET missing_since = ? WHERE profile_id = ? AND session_id = ?");
+    .prepare("SELECT session_id, missing_since, cached_bytes, transcript_path FROM remote_sessions WHERE profile_id = ?")
+    .all(profileId) as Array<{ session_id: string; missing_since: string | null; cached_bytes: number; transcript_path: string | null }>;
+  const flag = db.prepare("UPDATE remote_sessions SET missing_since = ? WHERE profile_id = ? AND session_id = ?");
+  const drop = db.prepare("DELETE FROM remote_sessions WHERE profile_id = ? AND session_id = ?");
   for (const row of rows) {
-    if (present.has(row.session_id) || row.missing_since) continue;
-    statement.run(timestamp, profileId, row.session_id);
+    if (present.has(row.session_id)) continue;
+    if (Number(row.cached_bytes ?? 0) <= 0 || !row.transcript_path) {
+      drop.run(profileId, row.session_id);
+      continue;
+    }
+    if (row.missing_since) continue;
+    flag.run(timestamp, profileId, row.session_id);
   }
 }
 

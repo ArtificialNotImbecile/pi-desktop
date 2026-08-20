@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from "electron";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type {
   RemoteDirectoryEntry,
@@ -24,7 +24,8 @@ import {
   normalizeRemotePath,
   parentRemotePath,
   readTranscriptEntries,
-  resolveSessionSyncPlan
+  resolveSessionSyncPlan,
+  syncSessionFile
 } from "./remoteTranscript.js";
 // Imported module by module rather than through the package barrel: the barrel
 // also exports the upstream compatibility baseline, whose only purpose is
@@ -365,68 +366,39 @@ export class RemoteProfileService {
     transcriptPath: string,
     fromOffset: number
   ): Promise<{ fetchedBytes: number; restarted: boolean }> {
-    await mkdir(path.dirname(transcriptPath), { recursive: true });
-    let offset = fromOffset;
-    let fetchedBytes = 0;
-    let restarted = false;
-    let fingerprint: string | null = null;
-    let remoteSize: number | null = null;
-
-    if (offset === 0) await writeFile(transcriptPath, "", "utf8");
-
-    for (;;) {
-      let chunk;
-      try {
-        chunk = await this.runtime.readSession(profile, sessionId, { fromOffset: offset, maxBytes: SESSION_READ_CHUNK_BYTES });
-      } catch (error) {
-        // A cursor the host will not accept means the remote file was replaced
-        // or truncated. Start over once rather than fail the open.
-        if (offset > 0 && error instanceof PiRemoteError && error.code === "session-offset-past-end") {
-          offset = 0;
-          restarted = true;
-          fetchedBytes = 0;
-          await writeFile(transcriptPath, "", "utf8");
-          continue;
-        }
-        this.publishFailure(profile.id, error);
-        throw error;
-      }
-      if (fingerprint && chunk.headerFingerprint !== fingerprint) {
-        // The file changed identity mid-download; the partial copy is unusable.
-        offset = 0;
-        restarted = true;
-        fetchedBytes = 0;
-        fingerprint = null;
-        await writeFile(transcriptPath, "", "utf8");
-        continue;
-      }
-      fingerprint = chunk.headerFingerprint;
-      remoteSize = chunk.size;
-      if (chunk.bytes > 0) {
-        await appendFile(transcriptPath, Buffer.from(chunk.data, "base64"));
-        offset += chunk.bytes;
-        fetchedBytes += chunk.bytes;
-      }
-      if (chunk.eof || chunk.bytes === 0) break;
-      if (fetchedBytes > MAX_SESSION_SYNC_BYTES) {
-        throw new PiRemoteError("session-too-large", "This remote session is too large to mirror locally.", {
+    let result;
+    try {
+      result = await syncSessionFile({
+        transcriptPath,
+        fromOffset,
+        maxSyncBytes: MAX_SESSION_SYNC_BYTES,
+        readChunk: (offset) => this.runtime.readSession(profile, sessionId, {
+          fromOffset: offset,
+          maxBytes: SESSION_READ_CHUNK_BYTES
+        }),
+        onTooLarge: (fetchedBytes) => new PiRemoteError("session-too-large", "This remote session is too large to mirror locally.", {
           phase: "session",
           remediation: "Open it in the remote terminal instead.",
           safeDetails: { fetchedBytes }
-        });
-      }
+        })
+      });
+    } catch (error) {
+      this.publishFailure(profile.id, error);
+      throw error;
     }
 
+    // Written only after the staged copy has replaced the published one, so the
+    // stored offset never describes bytes that are not on disk.
     this.db.updateRemoteSessionCache({
       profileId: profile.id,
       sessionId,
-      cachedBytes: offset,
-      cachedFingerprint: fingerprint,
+      cachedBytes: result.offset,
+      cachedFingerprint: result.fingerprint,
       transcriptPath,
       syncedAt: new Date().toISOString(),
-      remoteSizeBytes: remoteSize
+      remoteSizeBytes: result.remoteSize
     });
-    return { fetchedBytes, restarted };
+    return { fetchedBytes: result.fetchedBytes, restarted: result.restarted };
   }
 
   private toTranscript(

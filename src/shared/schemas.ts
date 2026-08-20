@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isGlobalShortcutAccelerator } from "./shortcuts.js";
 import { MAX_BRAND_LOGO_DATA_URL_LENGTH, MAX_BRAND_SUBTITLE_LENGTH, MAX_BRAND_TITLE_LENGTH, isSupportedBrandLogoDataUrl } from "./brand.js";
 import { LOCAL_FILE_DESCRIBE_LIMIT } from "./ipc.js";
 import { permissionModeSchema } from "./permissionSchemas.js";
@@ -433,6 +434,9 @@ export const appSettingsUpdateSchema = z.object({
     mode: z.enum(["background", "always", "never"]).optional(),
     includeDetails: z.boolean().optional()
   }).optional(),
+  spotlightShortcut: z.string().trim().min(1).max(80)
+    .refine(isGlobalShortcutAccelerator, "Use a shortcut with a modifier and one key.")
+    .optional(),
   permissionMode: permissionModeSchema.optional(),
   fileChangeTrackingMode: z.enum(["managed-tools-only", "watcher"]).optional(),
   skillEditorPath: z.string().trim().max(1000).optional(),

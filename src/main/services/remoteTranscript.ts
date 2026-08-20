@@ -1,3 +1,5 @@
+import { appendFile, copyFile, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { RemoteTranscriptEntry, RemoteTranscriptEntryKind } from "../../shared/ipc.js";
 
 /**
@@ -38,6 +40,136 @@ export function resolveSessionSyncPlan(facts: SessionCacheFacts, options: { refe
   }
   if (facts.remoteSizeBytes !== null && facts.remoteSizeBytes === facts.cachedBytes) return { mode: "cached" };
   return { mode: "append", fromOffset: facts.cachedBytes };
+}
+
+/** The shape of one byte range, independent of how it was transported. */
+export type SessionChunkLike = {
+  offset: number;
+  bytes: number;
+  size: number;
+  data: string;
+  headerFingerprint: string;
+  eof: boolean;
+};
+
+export type SessionSyncResult = {
+  /** Total bytes of the local copy after the sync. */
+  offset: number;
+  /** Bytes this sync had to download. */
+  fetchedBytes: number;
+  /** True when the download had to start over instead of resuming. */
+  restarted: boolean;
+  fingerprint: string | null;
+  remoteSize: number | null;
+};
+
+/** How far back a torn trailing record is searched for before giving up on the copy. */
+const RECORD_ALIGN_WINDOW_BYTES = 1024 * 1024;
+
+/**
+ * Brings a local copy of a remote session file up to date.
+ *
+ * Every byte lands in a staging file that replaces the published copy only once
+ * the whole range has arrived, so a read that fails halfway leaves the previous
+ * copy exactly as it was. The resume point is taken from the staged bytes rather
+ * than from a stored offset, which is what keeps a database that lags the file
+ * from causing a duplicated range, and a torn trailing record is cut back to a
+ * whole line before anything is appended after it.
+ */
+export async function syncSessionFile(options: {
+  transcriptPath: string;
+  /** Zero starts over; any other value resumes from the local copy. */
+  fromOffset: number;
+  maxSyncBytes: number;
+  readChunk(fromOffset: number): Promise<SessionChunkLike>;
+  onTooLarge(fetchedBytes: number): Error;
+}): Promise<SessionSyncResult> {
+  const { transcriptPath } = options;
+  await mkdir(path.dirname(transcriptPath), { recursive: true });
+  const staging = `${transcriptPath}.partial`;
+  await rm(staging, { force: true });
+
+  let offset = 0;
+  let fetchedBytes = 0;
+  let restarted = false;
+  let fingerprint: string | null = null;
+  let remoteSize: number | null = null;
+
+  try {
+    if (options.fromOffset > 0) {
+      await copyFile(transcriptPath, staging);
+      offset = await alignToRecordBoundary(staging);
+      restarted = offset === 0;
+    } else {
+      await writeFile(staging, "", "utf8");
+    }
+
+    for (;;) {
+      let chunk: SessionChunkLike;
+      try {
+        chunk = await options.readChunk(offset);
+      } catch (error) {
+        // A cursor the host will not accept means the remote file was replaced
+        // or truncated. Start over once rather than fail the open.
+        if (offset > 0 && (error as { code?: string })?.code === "session-offset-past-end") {
+          offset = 0;
+          restarted = true;
+          fetchedBytes = 0;
+          await writeFile(staging, "", "utf8");
+          continue;
+        }
+        throw error;
+      }
+      if (fingerprint && chunk.headerFingerprint !== fingerprint) {
+        // The file changed identity mid-download; the partial copy is unusable.
+        offset = 0;
+        restarted = true;
+        fetchedBytes = 0;
+        fingerprint = null;
+        await writeFile(staging, "", "utf8");
+        continue;
+      }
+      fingerprint = chunk.headerFingerprint;
+      remoteSize = chunk.size;
+      if (chunk.bytes > 0) {
+        await appendFile(staging, Buffer.from(chunk.data, "base64"));
+        offset += chunk.bytes;
+        fetchedBytes += chunk.bytes;
+      }
+      if (chunk.eof || chunk.bytes === 0) break;
+      if (fetchedBytes > options.maxSyncBytes) throw options.onTooLarge(fetchedBytes);
+    }
+
+    await rename(staging, transcriptPath);
+  } catch (error) {
+    await rm(staging, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  return { offset, fetchedBytes, restarted, fingerprint, remoteSize };
+}
+
+/**
+ * Cuts a staged copy back to its last complete line and returns the new size.
+ * Resuming mid-record would leave that record broken forever, since every later
+ * byte is appended after it.
+ */
+export async function alignToRecordBoundary(filePath: string): Promise<number> {
+  const info = await stat(filePath).catch(() => null);
+  if (!info || info.size === 0) return 0;
+  const handle = await open(filePath, "r+");
+  try {
+    const window = Math.min(info.size, RECORD_ALIGN_WINDOW_BYTES);
+    const buffer = Buffer.allocUnsafe(window);
+    const { bytesRead } = await handle.read(buffer, 0, window, info.size - window);
+    const lastNewline = buffer.subarray(0, bytesRead).lastIndexOf(0x0a);
+    // A whole window with no record boundary is not a prefix worth resuming.
+    const aligned = lastNewline < 0 ? 0 : info.size - bytesRead + lastNewline + 1;
+    if (aligned !== info.size) await handle.truncate(aligned);
+    return aligned;
+  } finally {
+    await handle.close();
+  }
 }
 
 /**

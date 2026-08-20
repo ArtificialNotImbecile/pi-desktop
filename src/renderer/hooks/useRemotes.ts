@@ -150,8 +150,12 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   const installRuntime = useCallback(async (profileId: string): Promise<boolean> => {
     try {
       const status = await getBridge().installRemoteRuntime({ profileId });
-      if (status.state === "ready") onToastRef.current("Remote runtime installed");
-      return status.state === "ready";
+      if (status.state !== "ready") {
+        onErrorRef.current(status.message ?? "Failed to install the remote runtime.");
+        return false;
+      }
+      onToastRef.current("Remote runtime installed");
+      return true;
     } catch (caught) {
       onErrorRef.current(errorMessage(caught, "Failed to install the remote runtime."));
       return false;
@@ -160,7 +164,13 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
 
   const stopProfile = useCallback(async (profileId: string): Promise<boolean> => {
     try {
-      await getBridge().stopRemoteProfile({ profileId });
+      // A failed stop resolves with a failed status rather than rejecting, so
+      // the returned state decides whether anything actually stopped.
+      const status = await getBridge().stopRemoteProfile({ profileId });
+      if (status.state !== "disconnected") {
+        onErrorRef.current(status.message ?? "Failed to stop the remote runtime.");
+        return false;
+      }
       onToastRef.current("Remote runtime stopped");
       return true;
     } catch (caught) {

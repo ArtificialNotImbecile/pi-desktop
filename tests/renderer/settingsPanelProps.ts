@@ -27,6 +27,7 @@ export const fakeAppSettings: AppSettings = {
   brand: { logoDataUrl: null, mainTitle: "Jasmine", subtitle: "Test", updatedAt: TIMESTAMP },
   language: "en",
   workingNotifications: { mode: "background", includeDetails: true },
+  spotlightShortcut: "Control+Shift+Space",
   permissionMode: "ask",
   fileChangeTrackingMode: "managed-tools-only"
 };

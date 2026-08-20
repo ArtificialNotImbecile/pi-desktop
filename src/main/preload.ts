@@ -505,6 +505,9 @@ const api: JasmineApi = {
   spotlightClose() {
     return ipcRenderer.invoke("spotlight:close");
   },
+  getSpotlightShortcutStatus() {
+    return ipcRenderer.invoke("spotlight:getShortcutStatus");
+  },
   onSpotlightReset(callback: () => void) {
     const listener = () => callback();
     ipcRenderer.on("spotlight:reset", listener);

@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import type { AppSettings, AppSettingsUpdateRequest } from "../../shared/ipc";
 import { DEFAULT_BRAND_SETTINGS, isSupportedBrandLogoDataUrl, normalizeLegacyBrandSettings } from "../../shared/brand";
 import { DEFAULT_APPEARANCE } from "../../shared/theme";
+import { defaultSpotlightShortcut, normalizeSpotlightShortcut } from "../../shared/shortcuts";
 import { getBridge } from "../desktopApi";
 import { errorMessage } from "../utils/errors";
 
 export const APP_SETTINGS_STARTUP_CACHE_KEY = "jasmine.appSettings.startup";
+const rendererPlatform = typeof window !== "undefined" && window.jasmine?.platform
+  ? window.jasmine.platform
+  : "win32";
 
 export const defaultAppSettings: AppSettings = {
   toolModel: {
@@ -27,6 +31,7 @@ export const defaultAppSettings: AppSettings = {
     mode: "background",
     includeDetails: true
   },
+  spotlightShortcut: defaultSpotlightShortcut(rendererPlatform),
   permissionMode: "ask",
   fileChangeTrackingMode: "managed-tools-only"
 };
@@ -110,7 +115,8 @@ export function readStartupSettingsCache(): AppSettings | null {
     const settings = parsed as AppSettings;
     return {
       ...settings,
-      brand: normalizeLegacyBrandSettings(settings.brand)
+      brand: normalizeLegacyBrandSettings(settings.brand),
+      spotlightShortcut: normalizeSpotlightShortcut(parsed.spotlightShortcut, rendererPlatform)
     };
   } catch {
     return null;
