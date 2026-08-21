@@ -326,6 +326,16 @@ test("daemon proxy handshake failures remain retryable for detached monitoring",
   );
 });
 
+test("remote stop transport failures remain retryable for detached cancellation", async () => {
+  const manager = new ManagedRemoteRuntime({ ssh: { async run() { return { code: 255, stdout: "", stderr: "connection lost" }; } } });
+  const profile = { id: "00000000-0000-4000-8000-000000000001", name: "fixture", sshHost: "host", defaultCwd: "/work", network: { mode: "remote-direct", clientProxy: { noProxy: [], allowedPorts: [443] } }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+
+  await assert.rejects(
+    () => manager.stop(profile),
+    (error) => error?.code === "remote-stop-failed" && error.retryable === true
+  );
+});
+
 test("file download waits for stdout to drain after the SSH child exits", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-download-"));
   const target = path.join(root, "download.bin");

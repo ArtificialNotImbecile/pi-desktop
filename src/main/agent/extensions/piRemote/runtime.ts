@@ -293,6 +293,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     const result = await this.ssh.run(profile, command);
     if (result.code !== 0) throw new PiRemoteError("remote-stop-failed", "Failed to stop the managed remote runtime.", {
       phase: "runtime",
+      retryable: true,
       safeDetails: { exitCode: result.code, diagnostic: redactDiagnostic(result.stderr).slice(0, 400) }
     });
   }

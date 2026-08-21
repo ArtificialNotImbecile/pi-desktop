@@ -685,6 +685,8 @@ try {
     "new sessions must wait for startup recovery to reserve any daemon-owned operation");
   assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?await this\.startupRecovery/u,
     "existing-session prompts must wait for startup recovery to reserve any daemon-owned operation");
+  assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.startupRecovery/u,
+    "profile removal must not race a startup recovery that can still reserve it");
 
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";

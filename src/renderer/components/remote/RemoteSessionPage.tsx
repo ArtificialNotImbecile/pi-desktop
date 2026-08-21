@@ -48,6 +48,11 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [optimisticPrompt, setOptimisticPrompt] = useState<{ sessionId: string | null; text: string } | null>(null);
+  const [pendingStartSessionId, setPendingStartSessionId] = useState<string | null>(null);
+  const [pendingExistingSession, setPendingExistingSession] = useState<{
+    sessionId: string;
+    sessionsAtSubmit: RemoteSessionSummary[];
+  } | null>(null);
   const requestRef = useRef(0);
   const promptRequestRef = useRef(0);
   const activeSessionRef = useRef(props.activeSessionId);
@@ -63,6 +68,8 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     setStarting(false);
     setSendingSessionId(null);
     setStopping(false);
+    setPendingStartSessionId(null);
+    setPendingExistingSession(null);
     return () => { promptRequestRef.current += 1; };
   }, [props.profile?.id, props.cwd]);
 
@@ -96,6 +103,23 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     };
   }, [activeSessionId, props.profile?.id, reloadToken]);
 
+  useEffect(() => {
+    if (!pendingStartSessionId || !props.sessions.some((session) => session.sessionId === pendingStartSessionId)) return;
+    setPendingStartSessionId(null);
+    props.onSelectSession(pendingStartSessionId);
+  }, [pendingStartSessionId, props.sessions]);
+
+  useEffect(() => {
+    if (!pendingExistingSession || sessionOperation) return;
+    if (props.sessions === pendingExistingSession.sessionsAtSubmit) return;
+    if (activeSessionId !== pendingExistingSession.sessionId) {
+      setPendingExistingSession(null);
+      return;
+    }
+    setPendingExistingSession(null);
+    void refetch();
+  }, [pendingExistingSession, props.sessions, sessionOperation, activeSessionId]);
+
   async function refetch() {
     if (!activeSessionId) return;
     const request = ++requestRef.current;
@@ -118,6 +142,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
 
   async function sendPrompt() {
     const sessionId = activeSessionRef.current;
+    const sessionsAtSubmit = props.sessions;
     const text = draft.trim();
     if (!text || operationRunning || !drafting && !sessionId) return;
     const request = ++promptRequestRef.current;
@@ -139,7 +164,13 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       setDrafting(false);
       props.onSelectSession(started.session.sessionId);
     }
-    if (drafting && pending) setDrafting(false);
+    if (drafting && pending) {
+      setDrafting(false);
+      setPendingStartSessionId(isSubmissionPending(started) ? started.sessionId : null);
+    }
+    if (!drafting && pending && sessionId) {
+      setPendingExistingSession({ sessionId, sessionsAtSubmit });
+    }
     if (!submission) setDraft(text);
     setOptimisticPrompt(null);
     setStarting(false);

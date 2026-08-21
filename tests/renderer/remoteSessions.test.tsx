@@ -539,6 +539,90 @@ describe("remote session reader", () => {
     expect(await screen.findByDisplayValue("retry after opening fails")).toBeDefined();
   });
 
+  test("a pending first prompt automatically appears and opens when the operation settles", async () => {
+    fake = installFakeBridge();
+    const created = session({ sessionId: "pending-created", title: "settled remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [{ ...WORKSPACE, sessionCount: 0 }],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [] }
+    });
+    fake.bridge.startRemoteSession = async (request) => {
+      fake.calls.startRemoteSession.push(request);
+      return { pending: true, sessionId: created.sessionId };
+    };
+
+    const view = render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    fireEvent.click(within(view.container.querySelector(".remote-page-header") as HTMLElement).getByRole("button", { name: "New session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "finish after reconnect" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Remote prompt" })).toBeNull());
+
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: created.sessionId, cwd: WORKSPACE.cwd, state: "reconnecting" }
+    });
+    fake.setRemoteState({
+      refreshed: { [DIRECT.id]: [created] },
+      workspaces: [{ ...WORKSPACE, sessionCount: 1 }],
+      transcripts: { [created.sessionId]: transcript({ sessionId: created.sessionId, title: created.title }) }
+    });
+    await fake.emitRemoteStatus(status("ready"));
+
+    expect(await screen.findByText("refactor the auth middleware")).toBeDefined();
+    expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
+    expect(fake.calls.openRemoteSession.at(-1)).toEqual({ profileId: DIRECT.id, sessionId: created.sessionId });
+  });
+
+  test("a pending existing-session prompt refreshes its transcript when the operation settles", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "pending-existing", title: "remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { [row.sessionId]: transcript({ sessionId: row.sessionId, title: row.title }) }
+    });
+    fake.bridge.promptRemoteSession = async (request) => {
+      fake.calls.promptRemoteSession.push(request);
+      return { pending: true, sessionId: row.sessionId };
+    };
+
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} />));
+    await screen.findByText("refactor the auth middleware");
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "finish this turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: row.sessionId, cwd: WORKSPACE.cwd, state: "reconnecting" }
+    });
+    fake.setRemoteState({
+      refreshed: { [DIRECT.id]: [row] },
+      transcripts: {
+        [row.sessionId]: transcript({
+          sessionId: row.sessionId,
+          title: row.title,
+          entries: [
+            { id: "e1", kind: "user", timestamp: null, text: "finish this turn", toolName: null, appended: true },
+            { id: "e2", kind: "assistant", timestamp: null, text: "completed after reconnect", toolName: null, appended: true }
+          ]
+        })
+      }
+    });
+    await fake.emitRemoteStatus(status("ready"));
+
+    expect(await screen.findByText("completed after reconnect")).toBeDefined();
+    expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
+    expect(fake.calls.openRemoteSession).toContainEqual({
+      profileId: DIRECT.id,
+      sessionId: row.sessionId,
+      refetch: true
+    });
+  });
+
   test("an empty workspace creates a real session and can run its first prompt", async () => {
     fake = installFakeBridge();
     fake.setRemoteState({

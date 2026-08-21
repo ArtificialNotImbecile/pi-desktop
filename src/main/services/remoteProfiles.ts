@@ -137,8 +137,9 @@ export class RemoteProfileService {
    * Removes local connection details and the local transcript copies. Remote
    * sessions, credentials, and the installed runtime are left alone -- the UI
    * says so, and this is what makes that promise true.
-   */
+  */
   async removeProfile(profileId: string): Promise<void> {
+    await this.startupRecovery;
     if (this.activeOperations.has(profileId)) {
       throw new PiRemoteError(
         "remote-profile-busy",

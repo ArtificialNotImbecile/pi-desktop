@@ -5,7 +5,10 @@ separate outcomes. Only a failure before acceptance restores a draft; a later
 sync failure cannot invite a duplicate turn. Detached client-proxy work keeps
 its reverse tunnel until settlement. Service startup discovers daemon-owned
 work without waiting for navigation, reacquires the stable egress lease after
-an app restart, and retains it through transient daemon-proxy failures.
+an app restart, and retains it through transient daemon-proxy or Stop failures.
+The operation-completed status edge drives one session/workspace refresh; a
+pending new session opens when its row appears, while a pending existing turn
+refetches the transcript already on screen.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

@@ -37,6 +37,8 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   // Refresh is time-boxed per profile so expanding the same tree repeatedly does
   // not re-run an SSH round trip that just happened.
   const lastRefreshRef = useRef<Record<string, number>>({});
+  const statusesRef = useRef<Record<string, RemoteProfileStatus>>({});
+  const submissionStateRef = useRef(new Map<string, "awaiting" | "pending" | "completed-before-result" | "synchronized" | "failed">());
   const onErrorRef = useRef(options.onError);
   const onToastRef = useRef(options.onToast);
   onErrorRef.current = options.onError;
@@ -51,20 +53,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       ]);
       setProfiles(nextProfiles);
       setWorkspaces(nextWorkspaces);
-      setStatuses(Object.fromEntries(nextStatuses.map((status) => [status.profileId, status])));
+      const statusMap = Object.fromEntries(nextStatuses.map((status) => [status.profileId, status]));
+      statusesRef.current = statusMap;
+      setStatuses(statusMap);
     } catch (caught) {
       onErrorRef.current(errorMessage(caught, "Failed to load remote profiles."));
     } finally {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    void loadProfiles();
-    return getBridge().onRemoteStatusChanged((status) => {
-      setStatuses((current) => ({ ...current, [status.profileId]: status }));
-    });
-  }, [loadProfiles]);
 
   const loadSessions = useCallback(async (profileId: string) => {
     try {
@@ -242,12 +239,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     cwd: string,
     text: string
   ): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null> => {
+    submissionStateRef.current.set(profileId, "awaiting");
     try {
       const result = await getBridge().startRemoteSession({ profileId, cwd, text });
       if ("pending" in result) {
+        recordSubmissionResult(profileId, true);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
         return result;
       }
+      recordSubmissionResult(profileId, false);
       lastRefreshRef.current[profileId] = Date.now();
       setSessions((current) => ({
         ...current,
@@ -263,22 +263,65 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       onToastRef.current("Remote session created");
       return result;
     } catch (caught) {
+      submissionStateRef.current.set(profileId, "failed");
       onErrorRef.current(errorMessage(caught, "Failed to create the remote session."));
       return null;
     }
-  }, []);
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    void loadProfiles();
+    return getBridge().onRemoteStatusChanged((status) => {
+      const previous = statusesRef.current[status.profileId];
+      statusesRef.current = { ...statusesRef.current, [status.profileId]: status };
+      setStatuses(statusesRef.current);
+      if (previous?.sessionOperation && !status.sessionOperation) {
+        const submissionState = submissionStateRef.current.get(status.profileId);
+        if (submissionState === "pending") {
+          submissionStateRef.current.delete(status.profileId);
+          // Only pending submissions need this completion-driven refresh;
+          // synchronized requests already return and install the same data.
+          void refreshSessions(status.profileId, { force: true });
+        } else if (submissionState === "awaiting") {
+          // The event can outrun the invoke response. Let that response decide
+          // whether this completed operation still needs reconciliation.
+          submissionStateRef.current.set(status.profileId, "completed-before-result");
+        } else {
+          submissionStateRef.current.delete(status.profileId);
+        }
+      }
+    });
+  }, [loadProfiles, refreshSessions]);
+
+  function recordSubmissionResult(profileId: string, pending: boolean) {
+    const current = submissionStateRef.current.get(profileId);
+    if (pending) {
+      if (current === "completed-before-result") {
+        submissionStateRef.current.delete(profileId);
+        void refreshSessions(profileId, { force: true });
+      } else {
+        submissionStateRef.current.set(profileId, "pending");
+      }
+      return;
+    }
+    if (current === "completed-before-result") submissionStateRef.current.delete(profileId);
+    else submissionStateRef.current.set(profileId, "synchronized");
+  }
 
   const promptSession = useCallback(async (
     profileId: string,
     sessionId: string,
     text: string
   ): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null> => {
+    submissionStateRef.current.set(profileId, "awaiting");
     try {
       const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text });
       if ("pending" in transcript) {
+        recordSubmissionResult(profileId, true);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
         return transcript;
       }
+      recordSubmissionResult(profileId, false);
       lastRefreshRef.current[profileId] = Date.now();
       try {
         await Promise.all([
@@ -292,10 +335,11 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       }
       return transcript;
     } catch (caught) {
+      submissionStateRef.current.set(profileId, "failed");
       onErrorRef.current(errorMessage(caught, "The remote prompt failed."));
       return null;
     }
-  }, [loadSessions]);
+  }, [loadSessions, refreshSessions]);
 
   const abortSession = useCallback(async (profileId: string, sessionId?: string): Promise<boolean> => {
     try {
