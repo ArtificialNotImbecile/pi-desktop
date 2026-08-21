@@ -764,7 +764,8 @@ function fakeRemoteStatus(profileId: string, state: RemoteProfileStatus["state"]
     runtimeVersion: state === "ready" ? "0.1.0" : null,
     piVersion: state === "ready" ? "0.84.2" : null,
     checkedAt: "2026-08-20T00:00:00.000Z",
-    busy: false
+    busy: false,
+    sessionOperation: null
   };
 }
 

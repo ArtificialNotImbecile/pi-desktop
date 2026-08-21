@@ -105,7 +105,8 @@ function status(state: RemoteProfileStatus["state"]): RemoteProfileStatus {
     runtimeVersion: null,
     piVersion: null,
     checkedAt: "2026-08-19T10:00:00.000Z",
-    busy: false
+    busy: false,
+    sessionOperation: null
   };
 }
 
@@ -416,6 +417,39 @@ describe("remote session reader", () => {
     expect(screen.getAllByRole("button", { name: "New session" })[0]).toHaveProperty("disabled", false);
     await act(async () => { resolveStart(started); });
     expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
+  test("a detached remote prompt remains discoverable and stoppable after returning to its workspace", async () => {
+    const onAbortSession = vi.fn(async () => true);
+    render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={{
+          ...status("ready"),
+          sessionOperation: {
+            sessionId: "detached-session",
+            cwd: WORKSPACE.cwd,
+            state: "reconnecting"
+          }
+        }}
+        sessions={[]}
+        activeSessionId={null}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={() => {}}
+        onOpenSession={async () => null}
+        onBeginSession={() => {}}
+        onStartSession={async () => null}
+        onPromptSession={async () => null}
+        onAbortSession={onAbortSession}
+      />
+    ));
+
+    expect(screen.getByText("Reconnecting to remote work")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(onAbortSession).toHaveBeenCalledWith("detached-session"));
   });
 
   test("an empty workspace creates a real session and can run its first prompt", async () => {

@@ -30,7 +30,9 @@ export class DaemonClient {
   private disconnectedState = false;
   runtimeInfo?: RuntimeInfo;
 
-  constructor(private readonly target: string | ControlTransport) {}
+  constructor(private readonly target: string | ControlTransport, afterSeq = 0) {
+    this.lastSeq = afterSeq;
+  }
 
   async connect(): Promise<RuntimeInfo> {
     if ((this.socket && !this.socket.destroyed || this.transport) && this.runtimeInfo) return this.runtimeInfo;
@@ -339,7 +341,10 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     });
     for (const pending of this.rpcPending.values()) pending.reject(error);
     this.rpcPending.clear();
-    const event: RemoteSessionEvent = { seq: ++this.lastSeq, type: "transport.disconnected" };
+    // This synthetic client event is not part of the daemon's replay sequence.
+    // Keep eventCursor on the last daemon event so a replacement connection
+    // cannot skip the first event the daemon publishes after the disconnect.
+    const event: RemoteSessionEvent = { seq: this.lastSeq + 1, type: "transport.disconnected" };
     for (const listener of this.listeners) {
       try { listener(event); } catch { /* observers are isolated */ }
     }

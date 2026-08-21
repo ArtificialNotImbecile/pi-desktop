@@ -1320,6 +1320,12 @@ export type RemoteProfileSummary = {
  */
 export type RemoteConnectionState = "unknown" | "checking" | "ready" | "needsSetup" | "disconnected" | "failed";
 
+export type RemoteSessionOperationStatus = {
+  sessionId: string | null;
+  cwd: string;
+  state: "running" | "reconnecting" | "stopping";
+};
+
 export type RemoteProfileStatus = {
   profileId: string;
   state: RemoteConnectionState;
@@ -1330,6 +1336,7 @@ export type RemoteProfileStatus = {
   piVersion: string | null;
   checkedAt: string | null;
   busy: boolean;
+  sessionOperation: RemoteSessionOperationStatus | null;
 };
 
 export type RemoteDoctorCheckStatus = "pass" | "fail" | "warning" | "unknown";

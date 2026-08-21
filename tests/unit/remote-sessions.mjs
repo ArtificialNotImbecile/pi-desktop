@@ -594,11 +594,24 @@ try {
   ], "a prompt waits for settlement before closing the managed port without aborting remote work");
 
   const timeoutCalls = [];
+  let timeoutOpenCount = 0;
   const keepAlive = setTimeout(() => {}, 100);
   try {
-    await assert.rejects(remoteRun.promptManagedRemoteSession({
-      async openSession() {
-        timeoutCalls.push(["open"]);
+    await remoteRun.promptManagedRemoteSession({
+      async openSession(_profile, options) {
+        timeoutOpenCount += 1;
+        timeoutCalls.push(["open", options]);
+        if (timeoutOpenCount === 2) {
+          return {
+            eventCursor: 1,
+            subscribe(listener) {
+              queueMicrotask(() => listener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
+              return () => { timeoutCalls.push(["unsubscribe-reconnected"]); };
+            },
+            async detach() { timeoutCalls.push(["detach-reconnected"]); },
+            async close(options) { timeoutCalls.push(["close-reconnected", options]); }
+          };
+        }
         return {
           eventCursor: 0,
           subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
@@ -607,12 +620,19 @@ try {
           async close() { timeoutCalls.push(["close"]); }
         };
       }
-    }, {}, "slow-session", "long task", () => {}, 5), (error) => error?.code === "prompt-timeout");
+    }, {}, "slow-session", "long task", () => {}, 5);
   } finally {
     clearTimeout(keepAlive);
   }
-  assert.deepEqual(timeoutCalls, [["open"], ["prompt"], ["unsubscribe"], ["detach"]],
-    "a local timeout detaches its transport and never stops the remote Pi process");
+  assert.deepEqual(timeoutCalls, [
+    ["open", { sessionId: "slow-session" }],
+    ["prompt"],
+    ["unsubscribe"],
+    ["detach"],
+    ["open", { sessionId: "slow-session", afterSeq: 0 }],
+    ["unsubscribe-reconnected"],
+    ["close-reconnected", { abort: false }]
+  ], "a local timeout detaches, reattaches after the last sequence, and only stops after settlement");
 
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear

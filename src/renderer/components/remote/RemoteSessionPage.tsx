@@ -51,6 +51,8 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   const promptRequestRef = useRef(0);
   const activeSessionRef = useRef(props.activeSessionId);
   activeSessionRef.current = props.activeSessionId;
+  const sessionOperation = props.status?.sessionOperation?.cwd === props.cwd ? props.status.sessionOperation : null;
+  const operationRunning = starting || Boolean(sendingSessionId) || Boolean(sessionOperation);
 
   useEffect(() => {
     promptRequestRef.current += 1;
@@ -106,7 +108,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   }
 
   function beginSession() {
-    if (starting || sendingSessionId) return;
+    if (operationRunning) return;
     setDrafting(true);
     setTranscript(null);
     setFailedSessionId(null);
@@ -116,7 +118,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   async function sendPrompt() {
     const sessionId = activeSessionRef.current;
     const text = draft.trim();
-    if (!text || starting || sendingSessionId || !drafting && !sessionId) return;
+    if (!text || operationRunning || !drafting && !sessionId) return;
     const request = ++promptRequestRef.current;
     setDraft("");
     setOptimisticPrompt({ sessionId: drafting ? null : sessionId, text });
@@ -139,9 +141,9 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   }
 
   async function stopPrompt() {
-    if (!starting && !sendingSessionId || stopping) return;
+    if (!operationRunning || stopping) return;
     setStopping(true);
-    const stopped = await props.onAbortSession(starting ? undefined : sendingSessionId!);
+    const stopped = await props.onAbortSession(starting ? undefined : sendingSessionId ?? sessionOperation?.sessionId ?? undefined);
     if (!stopped) setStopping(false);
   }
 
@@ -162,9 +164,17 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
           <p title={props.cwd}>{props.profile.name} · {props.cwd}</p>
         </div>
         <div className="remote-page-header-actions">
-          <Button variant="primary" disabled={drafting || starting || Boolean(sendingSessionId)} leftIcon={<PlusIcon />} onClick={beginSession}>
+          <Button variant="primary" disabled={drafting || operationRunning} leftIcon={<PlusIcon />} onClick={beginSession}>
             {t("remote.session.new")}
           </Button>
+          {sessionOperation && !starting && !sendingSessionId && !activeSessionId && !drafting ? (
+            <>
+              <span className="remote-transcript-status"><LoadingDots /> {sessionOperation.state === "reconnecting" ? t("remote.session.reconnecting") : t("remote.session.running")}</span>
+              <Button variant="danger" loading={stopping || sessionOperation.state === "stopping"} disabled={stopping} leftIcon={<StopIcon />} onClick={() => void stopPrompt()}>
+                {t("remote.session.stop")}
+              </Button>
+            </>
+          ) : null}
           <StatusPill tone={statusPillTone(props.status)}>{t(statusLabelKey(props.status))}</StatusPill>
           <Button
             variant="ghost"
@@ -237,7 +247,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
               icon={<ServerIcon />}
               title={workspaceName}
               subtitle={t("remote.session.count", { count: props.sessions.length })}
-              action={<Button variant="primary" disabled={drafting || starting || Boolean(sendingSessionId)} leftIcon={<PlusIcon />} onClick={beginSession}>{t("remote.session.new")}</Button>}
+              action={<Button variant="primary" disabled={drafting || operationRunning} leftIcon={<PlusIcon />} onClick={beginSession}>{t("remote.session.new")}</Button>}
             />
           ) : failedSessionId === activeSessionId ? (
             <div className="remote-transcript-failure">
@@ -292,7 +302,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
         <div className="remote-composer">
           <TextArea
             value={draft}
-            disabled={starting || Boolean(sendingSessionId)}
+            disabled={operationRunning}
             aria-label={t("remote.session.prompt")}
             placeholder={t("remote.session.promptPlaceholder")}
             rows={3}
@@ -305,10 +315,10 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
             }}
           />
           <div className="remote-composer-actions">
-            {starting || sendingSessionId ? (
+            {operationRunning ? (
               <>
-                <span className="remote-transcript-status"><LoadingDots /> {t("remote.session.running")}</span>
-                <Button variant="danger" loading={stopping} disabled={stopping} leftIcon={<StopIcon />} onClick={() => void stopPrompt()}>
+                <span className="remote-transcript-status"><LoadingDots /> {sessionOperation?.state === "reconnecting" ? t("remote.session.reconnecting") : t("remote.session.running")}</span>
+                <Button variant="danger" loading={stopping || sessionOperation?.state === "stopping"} disabled={stopping} leftIcon={<StopIcon />} onClick={() => void stopPrompt()}>
                   {t("remote.session.stop")}
                 </Button>
               </>

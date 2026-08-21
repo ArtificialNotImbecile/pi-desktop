@@ -18,29 +18,29 @@ export async function startManagedRemoteSession(
   callbacks: {
     onPort?(port: RemoteSessionPort): void | Promise<void>;
     onSessionId?(sessionId: string, port: RemoteSessionPort): void | Promise<void>;
+    onReconnect?(error: unknown): void | Promise<void>;
     timeoutMs?: number;
   } = {}
 ): Promise<string> {
-  let port: RemoteSessionPort | undefined;
-  let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
-  let failure: unknown;
+  const state: { port?: RemoteSessionPort } = {};
   try {
-    port = await runtime.openSession(profile, { cwd });
-    await callbacks.onPort?.(port);
-    const sessionId = await port.createSession(cwd);
-    await callbacks.onSessionId?.(sessionId, port);
-    settled = waitForRemotePromptSettled(port, callbacks.timeoutMs);
-    await port.prompt(text);
-    await settled.promise;
+    state.port = await runtime.openSession(profile, { cwd });
+    await callbacks.onPort?.(state.port);
+    const sessionId = await state.port.createSession(cwd);
+    await callbacks.onSessionId?.(sessionId, state.port);
+    await settleAcrossReconnects({
+      runtime,
+      profile,
+      sessionId,
+      state,
+      timeoutMs: callbacks.timeoutMs,
+      send: () => state.port!.prompt(text),
+      onPort: callbacks.onPort,
+      onReconnect: callbacks.onReconnect
+    });
     return sessionId;
-  } catch (error) {
-    failure = error;
-    throw error;
   } finally {
-    settled?.cancel();
-    await settled?.promise.catch(() => {});
-    if (shouldDetach(failure)) await port?.detach().catch(() => {});
-    else await port?.close({ abort: false }).catch(() => {});
+    await state.port?.close({ abort: false }).catch(() => {});
   }
 }
 
@@ -50,31 +50,101 @@ export async function promptManagedRemoteSession(
   sessionId: string,
   text: string,
   onPort: (port: RemoteSessionPort) => void | Promise<void> = () => {},
-  timeoutMs = REMOTE_PROMPT_TIMEOUT_MS
+  timeoutMs = REMOTE_PROMPT_TIMEOUT_MS,
+  onReconnect: (error: unknown) => void | Promise<void> = () => {}
 ): Promise<void> {
-  let port: RemoteSessionPort | undefined;
-  let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
-  let failure: unknown;
+  const state: { port?: RemoteSessionPort } = {};
   try {
-    port = await runtime.openSession(profile, { sessionId });
-    await onPort(port);
-    settled = waitForRemotePromptSettled(port, timeoutMs);
-    await port.prompt(text);
-    await settled.promise;
-  } catch (error) {
-    failure = error;
-    throw error;
+    state.port = await runtime.openSession(profile, { sessionId });
+    await onPort(state.port);
+    await settleAcrossReconnects({
+      runtime,
+      profile,
+      sessionId,
+      state,
+      timeoutMs,
+      send: () => state.port!.prompt(text),
+      onPort,
+      onReconnect
+    });
   } finally {
-    settled?.cancel();
-    await settled?.promise.catch(() => {});
-    if (shouldDetach(failure)) await port?.detach().catch(() => {});
-    else await port?.close({ abort: false }).catch(() => {});
+    await state.port?.close({ abort: false }).catch(() => {});
   }
 }
 
-function shouldDetach(error: unknown): boolean {
-  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+async function settleAcrossReconnects(options: {
+  runtime: SessionRuntime;
+  profile: RemoteProfile;
+  sessionId: string;
+  state: { port?: RemoteSessionPort };
+  timeoutMs?: number;
+  send(): Promise<void>;
+  onPort?(port: RemoteSessionPort): void | Promise<void>;
+  onReconnect?(error: unknown): void | Promise<void>;
+}): Promise<void> {
+  let send: (() => Promise<void>) | undefined = options.send;
+  let cutoff = options.state.port?.eventCursor ?? 0;
+  let reconnectAttempt = 0;
+  while (true) {
+    const port = options.state.port;
+    if (!port) throw new PiRemoteError("daemon-disconnected", "Remote daemon transport is unavailable.", { phase: "protocol", retryable: true });
+    const settled = waitForRemotePromptSettled(port, options.timeoutMs, cutoff);
+    try {
+      if (send) {
+        const start = send;
+        send = undefined;
+        await start();
+      }
+      await settled.promise;
+      return;
+    } catch (error) {
+      if (!shouldReconnect(error)) throw error;
+      cutoff = port.eventCursor;
+      await options.onReconnect?.(error);
+      await port.detach().catch(() => {});
+      options.state.port = undefined;
+      while (!options.state.port) {
+        try {
+          const replacement = await options.runtime.openSession(options.profile, {
+            sessionId: options.sessionId,
+            afterSeq: cutoff
+          });
+          try {
+            await options.onPort?.(replacement);
+            options.state.port = replacement;
+            reconnectAttempt = 0;
+          } catch (replacementError) {
+            await replacement.detach().catch(() => {});
+            throw replacementError;
+          }
+        } catch (reconnectError) {
+          if (!isRetryable(reconnectError)) throw reconnectError;
+          reconnectAttempt += 1;
+          await reconnectDelay(reconnectAttempt);
+        }
+      }
+    } finally {
+      settled.cancel();
+      await settled.promise.catch(() => {});
+    }
+  }
+}
+
+function shouldReconnect(error: unknown): boolean {
+  const code = errorCode(error);
   return code === "prompt-timeout" || code === "daemon-disconnected";
+}
+
+function isRetryable(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function errorCode(error: unknown): string {
+  return error && typeof error === "object" && "code" in error ? String(error.code) : "";
+}
+
+async function reconnectDelay(attempt: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 500 * 2 ** Math.min(attempt, 5))));
 }
 
 /**
@@ -85,9 +155,9 @@ function shouldDetach(error: unknown): boolean {
  */
 export function waitForRemotePromptSettled(
   port: Pick<RemoteSessionPort, "eventCursor" | "subscribe">,
-  timeoutMs = REMOTE_PROMPT_TIMEOUT_MS
+  timeoutMs = REMOTE_PROMPT_TIMEOUT_MS,
+  cutoff = port.eventCursor
 ): { promise: Promise<void>; cancel(): void } {
-  const cutoff = port.eventCursor;
   let cancel = () => {};
   const promise = new Promise<void>((resolve, reject) => {
     let done = false;

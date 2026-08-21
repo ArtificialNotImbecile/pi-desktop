@@ -7,6 +7,7 @@ test("daemon client correlates framed requests and replays sequenced events over
   const clientToServer = new PassThrough();
   const serverToClient = new PassThrough();
   const decoder = new JsonFrameDecoder();
+  let helloAfterSeq;
   const runtimeInfo = {
     controlVersion: 1,
     runtimeVersion: "0.1.1",
@@ -23,6 +24,7 @@ test("daemon client correlates framed requests and replays sequenced events over
   clientToServer.on("data", (chunk) => {
     for (const message of decoder.push(chunk)) {
       if (message.type === "hello") {
+        helloAfterSeq = message.afterSeq;
         fragmentedWrite(serverToClient, encodeJsonFrame({ type: "hello_ok", info: runtimeInfo, seq: 4 }));
         fragmentedWrite(serverToClient, encodeJsonFrame({ type: "event", event: { seq: 5, type: "replayed", data: { detached: true } } }));
       } else if (message.type === "request") {
@@ -30,8 +32,9 @@ test("daemon client correlates framed requests and replays sequenced events over
       }
     }
   });
-  const client = new DaemonClient({ readable: serverToClient, writable: clientToServer, close() { serverToClient.end(); clientToServer.end(); } });
+  const client = new DaemonClient({ readable: serverToClient, writable: clientToServer, close() { serverToClient.end(); clientToServer.end(); } }, 4);
   assert.deepEqual(await client.connect(), runtimeInfo);
+  assert.equal(helloAfterSeq, 4, "a replacement client resumes after the last event its predecessor observed");
   assert.deepEqual(await client.request("runtime.info"), { method: "runtime.info" });
   const events = [];
   client.subscribe((event) => events.push(event));
@@ -195,7 +198,7 @@ test("Pi RPC session replacements retain their client-proxy launch descriptor", 
 test("Pi RPC port rejects inner commands when the daemon transport disconnects", async () => {
   const disconnectListeners = new Set();
   const fakeClient = {
-    subscribe() { return () => {}; },
+    subscribe(listener) { listener({ seq: 7, type: "rpc.message", data: { type: "agent_start" } }); return () => {}; },
     subscribeDisconnect(listener) { disconnectListeners.add(listener); return () => disconnectListeners.delete(listener); },
     async request() { return { accepted: true }; },
     close() {}
@@ -208,6 +211,7 @@ test("Pi RPC port rejects inner commands when the daemon transport disconnects",
   for (const listener of disconnectListeners) listener(new Error("fixture disconnect"));
   await assert.rejects(pending, (error) => error?.code === "daemon-disconnected" && error.retryable === true);
   assert.equal(events.at(-1)?.type, "transport.disconnected");
+  assert.equal(port.eventCursor, 7, "the synthetic disconnect must not advance the daemon replay cursor");
 });
 
 test("Pi RPC port consumes its inner result when control send disconnects", async () => {

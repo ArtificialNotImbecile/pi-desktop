@@ -164,6 +164,8 @@ export interface OpenTuiOptions {
 export interface OpenSessionOptions {
   cwd?: string;
   sessionId?: string;
+  /** Replays only daemon events newer than the last event this client observed. */
+  afterSeq?: number;
 }
 
 export interface RemoteRuntimeManager {

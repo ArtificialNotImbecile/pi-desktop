@@ -168,7 +168,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     const egress = await this.startEgress(profile, info);
     let connection: Awaited<ReturnType<ManagedRemoteRuntime["connectDaemon"]>>;
     try {
-      connection = await this.connectDaemon(profile, info);
+      connection = await this.connectDaemon(profile, info, options.afterSeq);
     } catch (error) {
       await egress?.close();
       throw error;
@@ -225,7 +225,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     }
   }
 
-  private async connectDaemon(profile: RemoteProfile, info: RuntimeInfo): Promise<{
+  private async connectDaemon(profile: RemoteProfile, info: RuntimeInfo, afterSeq = 0): Promise<{
     child: ChildProcessWithoutNullStreams;
     client: DaemonClient;
     remoteInfo: RuntimeInfo;
@@ -240,7 +240,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
       writable: child.stdin,
       close: () => child.kill()
     };
-    const client = new DaemonClient(transport);
+    const client = new DaemonClient(transport, afterSeq);
     const remoteInfo = await client.connect().catch((error) => {
       child.kill();
       throw new PiRemoteError("daemon-proxy-failed", "Failed to establish the remote daemon protocol.", {

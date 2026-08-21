@@ -55,8 +55,10 @@ const MAX_SESSION_SYNC_BYTES = 64 * 1024 * 1024;
 
 type ActiveRemoteOperation = {
   sessionId: string | null;
+  cwd: string;
   port: RemoteSessionPort | null;
   abortRequested: boolean;
+  state: "running" | "reconnecting" | "stopping";
 };
 
 export class RemoteProfileService {
@@ -231,7 +233,7 @@ export class RemoteProfileService {
     try {
       const active = this.activeOperations.get(profile.id);
       if (active?.port) await active.port.close({ abort: true }).catch(() => {});
-      this.activeOperations.delete(profile.id);
+      if (active) this.releaseOperation(profile.id, active);
       await this.runtime.stop(profile);
       return this.publishStatus({ profileId: profile.id, state: "disconnected", message: null, busy: false });
     } catch (error) {
@@ -357,7 +359,7 @@ export class RemoteProfileService {
   async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult> {
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
-    const operation = this.reserveOperation(profile.id, null);
+    const operation = this.reserveOperation(profile.id, null, normalizedCwd);
     try {
       operation.sessionId = await startManagedRemoteSession(
         this.runtime,
@@ -367,6 +369,7 @@ export class RemoteProfileService {
         {
           onPort: async (port) => {
             operation.port = port;
+            this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
               await port.abort().catch(() => {});
               throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
@@ -374,10 +377,15 @@ export class RemoteProfileService {
           },
           onSessionId: async (sessionId, port) => {
             operation.sessionId = sessionId;
+            this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
               await port.abort().catch(() => {});
               throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
             }
+          },
+          onReconnect: () => {
+            operation.port = null;
+            this.updateOperationStatus(profile.id, operation, "reconnecting");
           }
         }
       );
@@ -401,7 +409,9 @@ export class RemoteProfileService {
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
   async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript> {
     const profile = await this.store.get(profileId);
-    const operation = this.reserveOperation(profile.id, sessionId);
+    const record = this.db.getRemoteSession(profile.id, sessionId);
+    if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
+    const operation = this.reserveOperation(profile.id, sessionId, record.cwd);
     try {
       await promptManagedRemoteSession(
         this.runtime,
@@ -410,10 +420,16 @@ export class RemoteProfileService {
         text,
         async (port) => {
           operation.port = port;
+          this.updateOperationStatus(profile.id, operation, "running");
           if (operation.abortRequested) {
             await port.abort().catch(() => {});
             throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
           }
+        },
+        undefined,
+        () => {
+          operation.port = null;
+          this.updateOperationStatus(profile.id, operation, "reconnecting");
         }
       );
       operation.port = null;
@@ -429,6 +445,7 @@ export class RemoteProfileService {
     const operation = this.activeOperations.get(profileId);
     if (!operation || sessionId && operation.sessionId !== sessionId) return false;
     operation.abortRequested = true;
+    this.updateOperationStatus(profileId, operation, "stopping");
     if (operation.port) await operation.port.abort();
     return true;
   }
@@ -636,7 +653,7 @@ export class RemoteProfileService {
     return next;
   }
 
-  private reserveOperation(profileId: string, sessionId: string | null): ActiveRemoteOperation {
+  private reserveOperation(profileId: string, sessionId: string | null, cwd: string): ActiveRemoteOperation {
     if (this.activeOperations.has(profileId)) {
       throw new PiRemoteError(
         "remote-profile-busy",
@@ -644,13 +661,22 @@ export class RemoteProfileService {
         { phase: "session", retryable: true, remediation: "Wait for it to finish or stop it before starting another session." }
       );
     }
-    const operation: ActiveRemoteOperation = { sessionId, port: null, abortRequested: false };
+    const operation: ActiveRemoteOperation = { sessionId, cwd, port: null, abortRequested: false, state: "running" };
     this.activeOperations.set(profileId, operation);
+    this.publishStatus({ profileId, sessionOperation: operationStatus(operation) });
     return operation;
   }
 
   private releaseOperation(profileId: string, operation: ActiveRemoteOperation): void {
-    if (this.activeOperations.get(profileId) === operation) this.activeOperations.delete(profileId);
+    if (this.activeOperations.get(profileId) !== operation) return;
+    this.activeOperations.delete(profileId);
+    this.publishStatus({ profileId, sessionOperation: null });
+  }
+
+  private updateOperationStatus(profileId: string, operation: ActiveRemoteOperation, state: ActiveRemoteOperation["state"]): void {
+    if (this.activeOperations.get(profileId) !== operation) return;
+    operation.state = state;
+    this.publishStatus({ profileId, sessionOperation: operationStatus(operation) });
   }
 }
 
@@ -691,8 +717,13 @@ function emptyStatus(profileId: string): RemoteProfileStatus {
     runtimeVersion: null,
     piVersion: null,
     checkedAt: null,
-    busy: false
+    busy: false,
+    sessionOperation: null
   };
+}
+
+function operationStatus(operation: ActiveRemoteOperation): NonNullable<RemoteProfileStatus["sessionOperation"]> {
+  return { sessionId: operation.sessionId, cwd: operation.cwd, state: operation.state };
 }
 
 function firstFailure(checks: Array<{ status: string; message: string }>): string | null {
