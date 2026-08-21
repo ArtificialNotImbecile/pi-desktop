@@ -725,8 +725,12 @@ try {
     "session refresh must carry the daemon active-RPC snapshot used for restart recovery");
   assert.match(remoteProfileServiceSource, /recoverActiveOperation\(profile, runtimeInfo\)/u);
   const stopProfileBody = /async stopProfile[\s\S]*?(?=\n  listStatuses)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
-  assert.match(stopProfileBody, /await active\.done/u,
+  assert.match(stopProfileBody, /await this\.awaitStopConfirmation\(active\)/u,
     "profile stop must wait until the active prompt handler has released its reservation");
+  assert.doesNotMatch(stopProfileBody, /await active\.done/u,
+    "a detached monitor that retries an unreachable host must not park profile Stop forever");
+  assert.match(remoteProfileServiceSource, /private async awaitStopConfirmation[\s\S]*?Promise\.race\(\[\s*operation\.done/u,
+    "the stop wait must race the operation against a bounded timer");
   assert.match(stopProfileBody, /cancelledStartupRecovery\.add\(profileId\)/u,
     "explicit Stop must cancel persistent startup recovery for its profile");
   assert.doesNotMatch(stopProfileBody, /await this\.awaitProfileStartupRecovery/u,

@@ -14,6 +14,9 @@ gate, while removal cancels it before waiting. This recovery loop exists only
 after an offline startup; ordinary connected Direct profiles do not poll.
 Explicit Stop supersedes and cancels that gate, so it never waits for an offline
 recovery loop before issuing its own bounded stop command.
+Stop's wait on the aborted operation is itself bounded: a detached monitor
+retrying an unreachable host cannot park the request forever, and the timeout
+reports an unconfirmed stop while the background retry continues.
 If that stop command fails, recovery is reattached after the previous probe
 finishes so a still-running client-proxy task is not abandoned. Send rechecks
 the per-profile gate after that handoff; removal cancels a queued resume.

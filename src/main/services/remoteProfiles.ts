@@ -55,6 +55,8 @@ const SESSION_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_SESSION_SYNC_BYTES = 64 * 1024 * 1024;
 const DETACHED_OPERATION_POLL_MS = 5_000;
 const STARTUP_RECOVERY_ATTEMPTS = 3;
+/** Bounds one full detached stop cycle (SSH command cap plus reconciliation). */
+const STOP_CONFIRMATION_TIMEOUT_MS = 90_000;
 
 type ActiveRemoteOperation = {
   sessionId: string | null;
@@ -278,7 +280,7 @@ export class RemoteProfileService {
       if (active) {
         const stopped = await this.abortSession(profile.id, active.sessionId ?? undefined);
         if (!stopped) throw new PiRemoteError("remote-stop-failed", "The active remote session could not be stopped.", { phase: "session", retryable: true });
-        await active.done;
+        await this.awaitStopConfirmation(active);
       }
       await this.runtime.stop(profile);
       return this.publishStatus({ profileId: profile.id, state: "disconnected", message: null, busy: false });
@@ -831,6 +833,35 @@ export class RemoteProfileService {
     if (this.activeOperations.get(profileId) !== operation) return;
     operation.state = state;
     this.publishStatus({ profileId, sessionOperation: operationStatus(operation) });
+  }
+
+  /**
+   * Stop serializes with the operation it aborts, but a detached monitor
+   * retries an unreachable host forever. Past this bound Stop reports that it
+   * could not be confirmed while the monitor keeps retrying in the background,
+   * so one offline host can never park the stop request indefinitely.
+   */
+  private async awaitStopConfirmation(operation: ActiveRemoteOperation): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        operation.done,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new PiRemoteError(
+            "remote-stop-timeout",
+            "The remote stop could not be confirmed because the host has not answered.",
+            {
+              phase: "runtime",
+              retryable: true,
+              remediation: "The stop keeps retrying in the background and completes when the host is reachable again."
+            }
+          )), STOP_CONFIRMATION_TIMEOUT_MS);
+          timer.unref();
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private recoverActiveOperation(profile: RemoteProfile, runtimeInfo: RuntimeInfo): void {
