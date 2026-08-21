@@ -347,6 +347,7 @@ function SubmissionTrackingHarness() {
     <>
       <button onClick={() => void remotes.startSession(DIRECT.id, "/srv/first", "first")}>First submission</button>
       <button onClick={() => void remotes.startSession(DIRECT.id, "/srv/second", "second")}>Concurrent submission</button>
+      <span>{remotes.statuses[DIRECT.id]?.sessionOperation?.state ?? "no operation"}</span>
       {(remotes.sessions[DIRECT.id] ?? []).map((row) => <span key={row.sessionId}>{row.title}</span>)}
     </>
   );
@@ -645,6 +646,38 @@ describe("remote session reader", () => {
     await fake.emitRemoteStatus(status("ready"));
 
     expect(await screen.findByText("first accepted work")).toBeDefined();
+    expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
+  });
+
+  test("a stale profile snapshot cannot overwrite an operation event received during the load", async () => {
+    fake = installFakeBridge();
+    const created = session({ sessionId: "snapshot-pending", title: "snapshot-safe work" });
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [status("ready")], sessions: { [DIRECT.id]: [] } });
+    let releaseStatuses!: () => void;
+    const staleStatuses = [status("ready")];
+    fake.bridge.listRemoteProfileStatuses = () => new Promise((resolve) => {
+      releaseStatuses = () => resolve(staleStatuses);
+    });
+    fake.bridge.startRemoteSession = async (request) => {
+      fake.calls.startRemoteSession.push(request);
+      return { pending: true, sessionId: created.sessionId };
+    };
+    render(withI18n(<SubmissionTrackingHarness />));
+
+    fireEvent.click(screen.getByRole("button", { name: "First submission" }));
+    await waitFor(() => expect(fake.calls.startRemoteSession).toHaveLength(1));
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: created.sessionId, cwd: "/srv/first", state: "reconnecting" }
+    });
+    expect(screen.getByText("reconnecting")).toBeDefined();
+
+    await act(async () => { releaseStatuses(); });
+    expect(screen.getByText("reconnecting")).toBeDefined();
+
+    fake.setRemoteState({ refreshed: { [DIRECT.id]: [created] } });
+    await fake.emitRemoteStatus(status("ready"));
+    expect(await screen.findByText("snapshot-safe work")).toBeDefined();
     expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
   });
 

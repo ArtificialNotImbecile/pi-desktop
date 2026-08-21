@@ -38,6 +38,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   // not re-run an SSH round trip that just happened.
   const lastRefreshRef = useRef<Record<string, number>>({});
   const statusesRef = useRef<Record<string, RemoteProfileStatus>>({});
+  const statusEventVersionsRef = useRef(new Map<string, number>());
   const submissionStateRef = useRef(new Map<string, "awaiting" | "pending" | "completed-before-result" | "synchronized" | "failed">());
   const onErrorRef = useRef(options.onError);
   const onToastRef = useRef(options.onToast);
@@ -45,6 +46,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   onToastRef.current = options.onToast;
 
   const loadProfiles = useCallback(async () => {
+    const eventVersionsAtStart = new Map(statusEventVersionsRef.current);
     try {
       const [nextProfiles, nextWorkspaces, nextStatuses] = await Promise.all([
         getBridge().listRemoteProfiles(),
@@ -54,6 +56,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       setProfiles(nextProfiles);
       setWorkspaces(nextWorkspaces);
       const statusMap = Object.fromEntries(nextStatuses.map((status) => [status.profileId, status]));
+      // IPC snapshots are taken before they reach the renderer. Preserve only
+      // per-profile events that arrived during this load, rather than letting
+      // the older snapshot erase a running operation or merging every stale
+      // status already held from an earlier load.
+      for (const [profileId, current] of Object.entries(statusesRef.current)) {
+        const before = eventVersionsAtStart.get(profileId) ?? 0;
+        const after = statusEventVersionsRef.current.get(profileId) ?? 0;
+        if (after > before) statusMap[profileId] = current;
+      }
       statusesRef.current = statusMap;
       setStatuses(statusMap);
     } catch (caught) {
@@ -273,6 +284,10 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     void loadProfiles();
     return getBridge().onRemoteStatusChanged((status) => {
       const previous = statusesRef.current[status.profileId];
+      statusEventVersionsRef.current.set(
+        status.profileId,
+        (statusEventVersionsRef.current.get(status.profileId) ?? 0) + 1
+      );
       statusesRef.current = { ...statusesRef.current, [status.profileId]: status };
       setStatuses(statusesRef.current);
       if (previous?.sessionOperation && !status.sessionOperation) {

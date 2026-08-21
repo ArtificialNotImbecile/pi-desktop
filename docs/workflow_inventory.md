@@ -15,6 +15,8 @@ work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a
 pending new session opens when its row appears, while a pending existing turn
 refetches the transcript already on screen.
+Per-profile event versions keep a newer operation status from being overwritten
+by an older profile-list snapshot that was already in flight.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |
