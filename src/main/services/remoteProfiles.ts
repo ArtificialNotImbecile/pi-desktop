@@ -79,6 +79,7 @@ export class RemoteProfileService {
   private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
   private readonly cancelledStartupRecovery = new Set<string>();
   private readonly recoveryResumeRequested = new Set<string>();
+  private readonly startupRecoveryWaiters = new Map<string, Set<() => void>>();
   private readonly startupRecoveryByProfile = new Map<string, Promise<void>>();
   private readonly transcriptRoot: string;
   private readonly startupRecovery: Promise<void>;
@@ -146,6 +147,7 @@ export class RemoteProfileService {
   async removeProfile(profileId: string): Promise<void> {
     this.recoveryResumeRequested.delete(profileId);
     this.cancelledStartupRecovery.add(profileId);
+    this.cancelStartupRecoveryWaiters(profileId);
     let removed = false;
     try {
       // Cancellation makes an offline client-proxy recovery leave its gate;
@@ -262,6 +264,7 @@ export class RemoteProfileService {
     // offline client-proxy gate; any in-flight probe checks this cancellation
     // before it can reserve the recovered operation.
     this.cancelledStartupRecovery.add(profileId);
+    this.cancelStartupRecoveryWaiters(profileId);
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {
@@ -402,7 +405,9 @@ export class RemoteProfileService {
 
   /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
   async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
-    await this.awaitProfileStartupRecovery(profileId);
+    if (!await this.awaitProfileStartupRecovery(profileId, true)) {
+      throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
+    }
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
     const operation = this.reserveOperation(profile.id, null, normalizedCwd);
@@ -472,7 +477,9 @@ export class RemoteProfileService {
 
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
   async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
-    await this.awaitProfileStartupRecovery(profileId);
+    if (!await this.awaitProfileStartupRecovery(profileId, true)) {
+      throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
+    }
     const profile = await this.store.get(profileId);
     const record = this.db.getRemoteSession(profile.id, sessionId);
     if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
@@ -527,7 +534,22 @@ export class RemoteProfileService {
   /** Explicit cancellation is the only renderer action that aborts active remote work. */
   async abortSession(profileId: string, sessionId?: string): Promise<boolean> {
     const operation = this.activeOperations.get(profileId);
-    if (!operation || sessionId && operation.sessionId !== sessionId) return false;
+    if (!operation) {
+      const waiters = this.startupRecoveryWaiters.get(profileId);
+      if (!waiters?.size) return false;
+      this.cancelledStartupRecovery.add(profileId);
+      this.recoveryResumeRequested.add(profileId);
+      const previous = this.startupRecoveryByProfile.get(profileId);
+      try {
+        const profile = await this.store.get(profileId);
+        void this.resumeProfileStartupRecovery(profile, previous);
+      } catch {
+        this.recoveryResumeRequested.delete(profileId);
+      }
+      this.cancelStartupRecoveryWaiters(profileId);
+      return true;
+    }
+    if (sessionId && operation.sessionId !== sessionId) return false;
     operation.abortRequested = true;
     this.updateOperationStatus(profileId, operation, "stopping");
     if (operation.phase === "attached" && operation.port) {
@@ -861,17 +883,40 @@ export class RemoteProfileService {
     this.scheduleProfileStartupRecovery(currentProfile);
   }
 
-  private async awaitProfileStartupRecovery(profileId: string): Promise<void> {
+  private cancelStartupRecoveryWaiters(profileId: string): boolean {
+    const waiters = this.startupRecoveryWaiters.get(profileId);
+    if (!waiters?.size) return false;
+    this.startupRecoveryWaiters.delete(profileId);
+    for (const cancel of waiters) cancel();
+    return true;
+  }
+
+  private async awaitProfileStartupRecovery(profileId: string, cancellable = false): Promise<boolean> {
     // The first promise only discovers and schedules profiles from local JSON.
     // An operation waits for its own SSH probe, never for an unrelated host.
     await this.startupRecovery;
     while (true) {
       const recovery = this.startupRecoveryByProfile.get(profileId);
-      if (!recovery) return;
-      await recovery;
+      if (!recovery) return true;
+      if (!cancellable) {
+        await recovery;
+      } else {
+        let cancel = () => {};
+        const cancelled = new Promise<"cancelled">((resolve) => {
+          cancel = () => resolve("cancelled");
+          const waiters = this.startupRecoveryWaiters.get(profileId) ?? new Set<() => void>();
+          waiters.add(cancel);
+          this.startupRecoveryWaiters.set(profileId, waiters);
+        });
+        const outcome = await Promise.race([recovery.then(() => "recovered" as const), cancelled]);
+        const waiters = this.startupRecoveryWaiters.get(profileId);
+        waiters?.delete(cancel);
+        if (!waiters?.size) this.startupRecoveryWaiters.delete(profileId);
+        if (outcome === "cancelled") return false;
+      }
       // A failed Stop can replace the recovery as the previous promise settles.
       // Re-read the map so Send cannot slip between those two generations.
-      if (this.startupRecoveryByProfile.get(profileId) === recovery) return;
+      if (this.startupRecoveryByProfile.get(profileId) === recovery) return true;
     }
   }
 

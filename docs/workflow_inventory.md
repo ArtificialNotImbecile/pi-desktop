@@ -17,6 +17,8 @@ recovery loop before issuing its own bounded stop command.
 If that stop command fails, recovery is reattached after the previous probe
 finishes so a still-running client-proxy task is not abandoned. Send rechecks
 the per-profile gate after that handoff; removal cancels a queued resume.
+Composer Stop also cancels a Send waiting on that gate immediately, restores
+the draft, and then resumes background recovery after the old probe exits.
 The bounded startup gate is per profile, so an offline saved host never delays
 work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a

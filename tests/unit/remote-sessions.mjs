@@ -707,6 +707,8 @@ try {
     "the abort handler must never release an opening or attached operation owned by its request");
   assert.match(abortSessionBody, /operation\.phase === "detached"[\s\S]*monitorDetachedOperation/u,
     "a detached Stop hands ownership to the daemon monitor");
+  assert.match(abortSessionBody, /startupRecoveryWaiters[\s\S]*cancelStartupRecoveryWaiters/u,
+    "composer Stop must cancel a prompt waiting on startup recovery");
   assert.doesNotMatch(abortSessionBody, /operation\.port = null/u,
     "an abort transport failure must retain the port's detached egress release handle");
   assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
@@ -724,10 +726,12 @@ try {
     "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
   assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,
     "daemon-owned work must be discovered when the service starts, without waiting for navigation");
-  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
+  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?awaitProfileStartupRecovery\(profileId, true\)/u,
     "new sessions must wait for their profile's startup recovery");
-  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
+  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?awaitProfileStartupRecovery\(profileId, true\)/u,
     "existing-session prompts must wait for their profile's startup recovery");
+  assert.equal(remoteProfileServiceSource.match(/awaitProfileStartupRecovery\(profileId, true\)/gu)?.length, 2,
+    "both new and existing submissions need a cancellable recovery gate");
   assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
     "profile removal must not race a startup recovery that can still reserve it");
   assert.doesNotMatch(remoteProfileServiceSource, /await Promise\.all\(profiles\.map/u,
