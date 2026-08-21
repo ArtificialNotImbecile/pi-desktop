@@ -12,6 +12,8 @@ recovery in the background with capped backoff until the host answers or the
 profile is removed. That background promise remains the same profile's Send
 gate, while removal cancels it before waiting; direct profiles do not acquire a
 hidden polling loop.
+Explicit Stop supersedes and cancels that gate, so it never waits for an offline
+recovery loop before issuing its own bounded stop command.
 The bounded startup gate is per profile, so an offline saved host never delays
 work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a

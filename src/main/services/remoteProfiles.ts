@@ -254,9 +254,12 @@ export class RemoteProfileService {
   /**
    * Ends the remote daemon and any session it owns. Distinct from losing the
    * connection, which leaves remote work running.
-   */
+  */
   async stopProfile(profileId: string): Promise<RemoteProfileStatus> {
-    await this.awaitProfileStartupRecovery(profileId);
+    // Explicit Stop supersedes startup recovery. Do not wait for an unbounded
+    // offline client-proxy gate; any in-flight probe checks this cancellation
+    // before it can reserve the recovered operation.
+    this.cancelledStartupRecovery.add(profileId);
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {

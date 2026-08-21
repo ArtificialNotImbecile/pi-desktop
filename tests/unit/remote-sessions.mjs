@@ -694,6 +694,10 @@ try {
   const stopProfileBody = /async stopProfile[\s\S]*?(?=\n  listStatuses)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
   assert.match(stopProfileBody, /await active\.done/u,
     "profile stop must wait until the active prompt handler has released its reservation");
+  assert.match(stopProfileBody, /cancelledStartupRecovery\.add\(profileId\)/u,
+    "explicit Stop must cancel persistent startup recovery for its profile");
+  assert.doesNotMatch(stopProfileBody, /await this\.awaitProfileStartupRecovery/u,
+    "explicit Stop must not wait for an unbounded offline recovery gate");
   const abortSessionBody = /async abortSession[\s\S]*?(?=\n  async openSession)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
   assert.doesNotMatch(abortSessionBody, /releaseOperation/u,
     "the abort handler must never release an opening or attached operation owned by its request");
