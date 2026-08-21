@@ -18,23 +18,29 @@ export async function startManagedRemoteSession(
   callbacks: {
     onPort?(port: RemoteSessionPort): void | Promise<void>;
     onSessionId?(sessionId: string, port: RemoteSessionPort): void | Promise<void>;
+    timeoutMs?: number;
   } = {}
 ): Promise<string> {
   let port: RemoteSessionPort | undefined;
   let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
+  let failure: unknown;
   try {
     port = await runtime.openSession(profile, { cwd });
     await callbacks.onPort?.(port);
     const sessionId = await port.createSession(cwd);
     await callbacks.onSessionId?.(sessionId, port);
-    settled = waitForRemotePromptSettled(port);
+    settled = waitForRemotePromptSettled(port, callbacks.timeoutMs);
     await port.prompt(text);
     await settled.promise;
     return sessionId;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     settled?.cancel();
     await settled?.promise.catch(() => {});
-    await port?.close({ abort: false }).catch(() => {});
+    if (shouldDetach(failure)) await port?.detach().catch(() => {});
+    else await port?.close({ abort: false }).catch(() => {});
   }
 }
 
@@ -43,21 +49,32 @@ export async function promptManagedRemoteSession(
   profile: RemoteProfile,
   sessionId: string,
   text: string,
-  onPort: (port: RemoteSessionPort) => void | Promise<void> = () => {}
+  onPort: (port: RemoteSessionPort) => void | Promise<void> = () => {},
+  timeoutMs = REMOTE_PROMPT_TIMEOUT_MS
 ): Promise<void> {
   let port: RemoteSessionPort | undefined;
   let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
+  let failure: unknown;
   try {
     port = await runtime.openSession(profile, { sessionId });
     await onPort(port);
-    settled = waitForRemotePromptSettled(port);
+    settled = waitForRemotePromptSettled(port, timeoutMs);
     await port.prompt(text);
     await settled.promise;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     settled?.cancel();
     await settled?.promise.catch(() => {});
-    await port?.close({ abort: false }).catch(() => {});
+    if (shouldDetach(failure)) await port?.detach().catch(() => {});
+    else await port?.close({ abort: false }).catch(() => {});
   }
+}
+
+function shouldDetach(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  return code === "prompt-timeout" || code === "daemon-disconnected";
 }
 
 /**

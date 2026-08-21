@@ -148,6 +148,8 @@ export interface RemoteSessionPort {
   clone(): Promise<unknown>;
   bash(command: string): Promise<unknown>;
   respondToExtensionUi(id: string, value: unknown): Promise<void>;
+  /** Drops only the client transport; the remote RPC process keeps running. */
+  detach(): Promise<void>;
   close(options?: { abort?: boolean }): Promise<void>;
 }
 

@@ -665,9 +665,9 @@ function profileSummary(profile: RemoteProfile): Pick<RemoteProfile, "id" | "nam
 }
 
 function wrapPortResources(port: PiRpcSessionPort, egress: EgressSession | undefined, child: ChildProcessWithoutNullStreams): RemoteSessionPort {
-  const originalClose = port.close.bind(port);
-  port.close = async (options) => {
-    try { await originalClose(options); }
+  const originalDetach = port.detach.bind(port);
+  port.detach = async () => {
+    try { await originalDetach(); }
     finally {
       child.kill();
       await egress?.close();

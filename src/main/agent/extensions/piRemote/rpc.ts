@@ -274,6 +274,10 @@ export class PiRpcSessionPort implements RemoteSessionPort {
   async close(options: { abort?: boolean } = {}): Promise<void> {
     if (options.abort) await this.abort().catch(() => {});
     await this.client.request("rpc.stop", { abort: options.abort ?? false }).catch(() => {});
+    await this.detach();
+  }
+
+  async detach(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.unsubscribeDisconnect?.();

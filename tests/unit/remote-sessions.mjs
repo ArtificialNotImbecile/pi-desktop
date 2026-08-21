@@ -593,6 +593,27 @@ try {
     ["close", { abort: false }]
   ], "a prompt waits for settlement before closing the managed port without aborting remote work");
 
+  const timeoutCalls = [];
+  const keepAlive = setTimeout(() => {}, 100);
+  try {
+    await assert.rejects(remoteRun.promptManagedRemoteSession({
+      async openSession() {
+        timeoutCalls.push(["open"]);
+        return {
+          eventCursor: 0,
+          subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
+          async prompt() { timeoutCalls.push(["prompt"]); },
+          async detach() { timeoutCalls.push(["detach"]); },
+          async close() { timeoutCalls.push(["close"]); }
+        };
+      }
+    }, {}, "slow-session", "long task", () => {}, 5), (error) => error?.code === "prompt-timeout");
+  } finally {
+    clearTimeout(keepAlive);
+  }
+  assert.deepEqual(timeoutCalls, [["open"], ["prompt"], ["unsubscribe"], ["detach"]],
+    "a local timeout detaches its transport and never stops the remote Pi process");
+
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear
   // to probe itself repeatedly whenever the tree or route refreshed.

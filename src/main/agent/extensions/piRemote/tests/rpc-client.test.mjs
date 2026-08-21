@@ -250,6 +250,30 @@ test("Pi RPC port preserves replay until its public subscriber attaches", () => 
   assert.deepEqual(events, [replay]);
 });
 
+test("Pi RPC detach drops only the client transport while close requests a remote stop", async () => {
+  const calls = [];
+  const fakeClient = {
+    subscribe() { return () => { calls.push("unsubscribe"); }; },
+    subscribeDisconnect() { return () => { calls.push("unsubscribe-disconnect"); }; },
+    async request(method, params) { calls.push([method, params]); return {}; },
+    close() { calls.push("client-close"); }
+  };
+  const detached = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
+  await detached.detach();
+  assert.deepEqual(calls, ["unsubscribe", "unsubscribe-disconnect", "client-close"],
+    "detach must not send rpc.stop");
+
+  calls.length = 0;
+  const closed = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
+  await closed.close({ abort: false });
+  assert.deepEqual(calls, [
+    ["rpc.stop", { abort: false }],
+    "unsubscribe",
+    "unsubscribe-disconnect",
+    "client-close"
+  ]);
+});
+
 function fragmentedWrite(stream, frame) {
   const buffer = Buffer.from(frame);
   for (let index = 0; index < buffer.length; index += 3) stream.write(buffer.subarray(index, index + 3));
