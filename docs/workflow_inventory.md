@@ -27,6 +27,8 @@ retains the original port until its client-proxy resources are released.
 The dispatched boundary keeps a lost daemon acknowledgement from becoming a
 duplicate retry, while a changed daemon id reports that detached work vanished
 instead of presenting a host restart as normal settlement.
+Recovery reloads profile edits before every SSH retry, and a missing RPC under
+the same daemon id is also an explicit unconfirmed failure rather than success.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

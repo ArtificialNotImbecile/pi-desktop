@@ -728,8 +728,12 @@ try {
     "both new and existing sessions must treat a lost delivery acknowledgement as pending");
   assert.match(detachedMonitorBody, /operation\.daemonId && info\.daemonId !== operation\.daemonId/u,
     "a detached prompt must fail explicitly when its daemon epoch changes");
-  assert.match(remoteProfileServiceSource, /await this\.retryStartupRecovery\(profile\)/u,
+  assert.match(detachedMonitorBody, /if \(!active\)[\s\S]*remote-rpc-vanished/u,
+    "a missing RPC in the same daemon epoch must not be presented as normal settlement");
+  assert.match(remoteProfileServiceSource, /await this\.retryStartupRecovery\(profile\.id\)/u,
     "client-proxy recovery must remain inside its profile gate until the host answers");
+  assert.match(remoteProfileServiceSource, /currentProfile = await this\.store\.get\(profileId\)/u,
+    "persistent recovery must reload profile edits before each SSH retry");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery\.add\(profileId\)[\s\S]*await this\.awaitProfileStartupRecovery\(profileId\)/u,
     "profile removal must cancel an offline recovery before waiting for its gate");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,

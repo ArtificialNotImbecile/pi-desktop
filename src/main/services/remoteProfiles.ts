@@ -836,11 +836,16 @@ export class RemoteProfileService {
   }
 
   private async recoverProfileOnStartup(profile: RemoteProfile): Promise<void> {
+    let currentProfile = profile;
     for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
       if (this.cancelledStartupRecovery.has(profile.id)) return;
+      if (attempt > 0) {
+        try { currentProfile = await this.store.get(profile.id); }
+        catch { return; }
+      }
       try {
-        const info = await this.runtime.inspectRuntime(profile, { install: false });
-        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(profile, info);
+        const info = await this.runtime.inspectRuntime(currentProfile, { install: false });
+        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(currentProfile, info);
         return;
       } catch (error) {
         if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
@@ -849,7 +854,7 @@ export class RemoteProfileService {
           // Only client-proxy work depends on this app staying online after
           // the bounded startup gate. Direct profiles remain daemon-owned and
           // are rediscovered by their next explicit session refresh.
-          if (profile.network.mode === "client-proxy") await this.retryStartupRecovery(profile);
+          if (currentProfile.network.mode === "client-proxy") await this.retryStartupRecovery(profile.id);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
@@ -857,14 +862,18 @@ export class RemoteProfileService {
     }
   }
 
-  private async retryStartupRecovery(profile: RemoteProfile): Promise<void> {
+  private async retryStartupRecovery(profileId: string): Promise<void> {
     let delayMs = 2_000;
-    while (!this.cancelledStartupRecovery.has(profile.id)) {
+    while (!this.cancelledStartupRecovery.has(profileId)) {
       await delayUnref(delayMs);
-      if (this.cancelledStartupRecovery.has(profile.id)) return;
+      if (this.cancelledStartupRecovery.has(profileId)) return;
+      let currentProfile: RemoteProfile;
+      try { currentProfile = await this.store.get(profileId); }
+      catch { return; }
+      if (currentProfile.network.mode !== "client-proxy") return;
       try {
-        const info = await this.runtime.inspectRuntime(profile, { install: false });
-        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(profile, info);
+        const info = await this.runtime.inspectRuntime(currentProfile, { install: false });
+        if (!this.cancelledStartupRecovery.has(profileId)) this.recoverActiveOperation(currentProfile, info);
         return;
       } catch (error) {
         if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
@@ -919,8 +928,15 @@ export class RemoteProfileService {
               { phase: "session", remediation: "Open the remote session history to verify what was saved before retrying." }
             );
           }
-          if (!active?.busy) {
-            if (active) await this.runtime.stop(profile);
+          if (!active) {
+            throw new PiRemoteError(
+              "remote-rpc-vanished",
+              "The remote Pi process disappeared while this prompt was detached, so its completion cannot be confirmed.",
+              { phase: "session", remediation: "Open the remote session history to verify what was saved before retrying." }
+            );
+          }
+          if (!active.busy) {
+            await this.runtime.stop(profile);
             await this.refreshSessions(profile.id);
             return;
           }
