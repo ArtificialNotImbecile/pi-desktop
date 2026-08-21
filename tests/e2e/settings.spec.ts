@@ -295,6 +295,15 @@ test.describe("Jasmine settings", () => {
     await expect(page.locator(".settings-detail")).toContainText("Remote sessions, credentials, and the installed runtime are left untouched.");
     await page.getByRole("button", { name: "Close settings" }).click();
 
+    // This route sits under the shell's draggable title-bar strip. A real
+    // pointer click (rather than dispatchEvent/force) proves the new-session
+    // control is above that strip and opens the local draft before any SSH
+    // session is created.
+    await remoteSection.locator(".remote-workspace-item", { hasText: "application" }).click();
+    await expect(page.locator(".remote-page")).toBeVisible();
+    await page.locator(".remote-page-header").getByRole("button", { name: "New session" }).click();
+    await expect(page.getByRole("textbox", { name: "Remote prompt" })).toBeVisible();
+
     const userDataDir = harness.userDataDir;
     const profilesPath = path.join(userDataDir, "pi-remote", "profiles.json");
     const stored = JSON.parse(await readFile(profilesPath, "utf8")) as {

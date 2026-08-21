@@ -9,7 +9,7 @@ test("daemon client correlates framed requests and replays sequenced events over
   const decoder = new JsonFrameDecoder();
   const runtimeInfo = {
     controlVersion: 1,
-    runtimeVersion: "0.1.0",
+    runtimeVersion: "0.1.2",
     piVersion: "0.84.2",
     nodeVersion: "bun-compiled",
     platform: "linux",
@@ -95,7 +95,7 @@ test("daemon client rejects pending requests and closes transport on an oversize
           type: "hello_ok",
           seq: 0,
           info: {
-            controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+            controlVersion: 1, runtimeVersion: "0.1.2", piVersion: "0.84.2", nodeVersion: "bun-compiled",
             platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
             remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
           }
@@ -146,11 +146,12 @@ test("Pi RPC port keeps the upstream wire private and resolves inner command res
     },
     close() {}
   };
-  const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl", "prompt-image"]);
+  const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl", "prompt-image"], undefined, "daemon-fixture");
   assert.deepEqual(await port.bash("pwd"), { accepted: "bash" });
   assert.deepEqual(await port.compact("focus"), { accepted: "compact" });
   assert.equal(requests.filter((entry) => entry.method === "rpc.send").length, 2);
   assert.equal(port.capabilities.includes("prompt-image"), true);
+  assert.equal(port.daemonId, "daemon-fixture");
 
   fakeClient.request = async (method, params) => {
     if (method === "rpc.send") {
@@ -195,19 +196,24 @@ test("Pi RPC session replacements retain their client-proxy launch descriptor", 
 test("Pi RPC port rejects inner commands when the daemon transport disconnects", async () => {
   const disconnectListeners = new Set();
   const fakeClient = {
-    subscribe() { return () => {}; },
+    subscribe(listener) { listener({ seq: 7, type: "rpc.message", data: { type: "agent_start" } }); return () => {}; },
     subscribeDisconnect(listener) { disconnectListeners.add(listener); return () => disconnectListeners.delete(listener); },
-    async request() { return { accepted: true }; },
+    async request(_method, _params, onWritten) { onWritten?.(); return { accepted: true }; },
     close() {}
   };
   const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
   const events = [];
+  let accepted = false;
+  let dispatched = false;
   port.subscribe((event) => events.push(event));
-  const pending = port.bash("sleep 180");
+  const pending = port.prompt("sleep 180", [], () => { accepted = true; }, () => { dispatched = true; });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatched, true, "dispatch is recorded after the control frame enters the writable transport");
+  assert.equal(accepted, true, "daemon delivery is acknowledged before Pi's inner response");
   for (const listener of disconnectListeners) listener(new Error("fixture disconnect"));
   await assert.rejects(pending, (error) => error?.code === "daemon-disconnected" && error.retryable === true);
   assert.equal(events.at(-1)?.type, "transport.disconnected");
+  assert.equal(port.eventCursor, 7, "the synthetic disconnect must not advance the daemon replay cursor");
 });
 
 test("Pi RPC port consumes its inner result when control send disconnects", async () => {
@@ -248,6 +254,30 @@ test("Pi RPC port preserves replay until its public subscriber attaches", () => 
   const events = [];
   port.subscribe((event) => events.push(event));
   assert.deepEqual(events, [replay]);
+});
+
+test("Pi RPC detach drops only the client transport while close requests a remote stop", async () => {
+  const calls = [];
+  const fakeClient = {
+    subscribe() { return () => { calls.push("unsubscribe"); }; },
+    subscribeDisconnect() { return () => { calls.push("unsubscribe-disconnect"); }; },
+    async request(method, params) { calls.push([method, params]); return {}; },
+    close() { calls.push("client-close"); }
+  };
+  const detached = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
+  await detached.detach();
+  assert.deepEqual(calls, ["unsubscribe", "unsubscribe-disconnect", "client-close"],
+    "detach must not send rpc.stop");
+
+  calls.length = 0;
+  const closed = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
+  await closed.close({ abort: false });
+  assert.deepEqual(calls, [
+    ["rpc.stop", { abort: false }],
+    "unsubscribe",
+    "unsubscribe-disconnect",
+    "client-close"
+  ]);
 });
 
 function fragmentedWrite(stream, frame) {

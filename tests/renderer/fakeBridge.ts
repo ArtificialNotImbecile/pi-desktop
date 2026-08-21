@@ -4,7 +4,10 @@ import type {
   AppUpdateState,
   RemoteProfileStatus,
   RemoteProfileSummary,
+  RemoteSessionAbortRequest,
+  RemoteSessionStartRequest,
   RemoteSessionOpenRequest,
+  RemoteSessionPromptRequest,
   RemoteSessionSummary,
   RemoteSessionTranscript,
   RemoteWorkspace,
@@ -76,6 +79,9 @@ type ModeledBridgeApi = Pick<
   | "listRemoteSessions"
   | "refreshRemoteSessions"
   | "openRemoteSession"
+  | "startRemoteSession"
+  | "promptRemoteSession"
+  | "abortRemoteSession"
   | "onRemoteStatusChanged"
   | "createRemoteProfile"
   | "updateRemoteProfile"
@@ -147,6 +153,9 @@ export type FakeBridge = {
     listRemoteSessions: string[];
     refreshRemoteSessions: string[];
     openRemoteSession: RemoteSessionOpenRequest[];
+    startRemoteSession: RemoteSessionStartRequest[];
+    promptRemoteSession: RemoteSessionPromptRequest[];
+    abortRemoteSession: RemoteSessionAbortRequest[];
   };
   /** Replaces the remote state the bridge answers with. */
   setRemoteState(state: Partial<FakeRemoteState>): void;
@@ -213,7 +222,10 @@ export function createFakeBridge(): FakeBridge {
     openExternalUrl: [],
     listRemoteSessions: [],
     refreshRemoteSessions: [],
-    openRemoteSession: []
+    openRemoteSession: [],
+    startRemoteSession: [],
+    promptRemoteSession: [],
+    abortRemoteSession: []
   };
 
   const localFiles = new Map<string, LocalFileDescription>();
@@ -457,6 +469,65 @@ export function createFakeBridge(): FakeBridge {
       if (!transcript) return Promise.reject(new Error(`No fake transcript for ${request.sessionId}`));
       return Promise.resolve(transcript);
     },
+    startRemoteSession(request) {
+      calls.startRemoteSession.push(request);
+      const sessionId = `remote-created-${calls.startRemoteSession.length}`;
+      const created: RemoteSessionSummary = {
+        profileId: request.profileId,
+        sessionId,
+        cwd: request.cwd,
+        title: request.text,
+        name: null,
+        preview: request.text,
+        turnCount: 1,
+        remoteCreatedAt: "2026-08-21T00:00:00.000Z",
+        remoteUpdatedAt: "2026-08-21T00:00:00.000Z",
+        remoteSizeBytes: 1024,
+        cachedBytes: 1024,
+        state: "cached",
+        listedAt: "2026-08-21T00:00:00.000Z"
+      };
+      remote.sessions[request.profileId] = [created, ...(remote.sessions[request.profileId] ?? [])];
+      const transcript: RemoteSessionTranscript = {
+        profileId: request.profileId,
+        sessionId,
+        title: request.text,
+        cwd: request.cwd,
+        state: "cached",
+        entries: [
+          { id: "start-prompt", kind: "user", timestamp: null, text: request.text, toolName: null, appended: true },
+          { id: "start-reply", kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, appended: true }
+        ],
+        omittedEntryCount: 0,
+        cachedBytes: 1024,
+        remoteSizeBytes: 1024,
+        fetchedBytes: 1024,
+        refetched: false,
+        syncedAt: "2026-08-21T00:00:00.000Z"
+      };
+      remote.transcripts[sessionId] = transcript;
+      return Promise.resolve({ session: created, transcript });
+    },
+    promptRemoteSession(request) {
+      calls.promptRemoteSession.push(request);
+      const current = remote.transcripts[request.sessionId];
+      if (!current) return Promise.reject(new Error(`No fake transcript for ${request.sessionId}`));
+      const completed: RemoteSessionTranscript = {
+        ...current,
+        entries: [
+          ...current.entries,
+          { id: `prompt-${calls.promptRemoteSession.length}`, kind: "user", timestamp: null, text: request.text, toolName: null, appended: true },
+          { id: `reply-${calls.promptRemoteSession.length}`, kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, appended: true }
+        ],
+        syncedAt: "2026-08-21T00:00:01.000Z"
+      };
+      remote.transcripts[request.sessionId] = completed;
+      return Promise.resolve(completed);
+    },
+    abortRemoteSession(request) {
+      calls.abortRemoteSession.push(request);
+      return Promise.resolve(true);
+    },
     onRemoteStatusChanged(callback) {
       remoteStatusListeners.add(callback);
       return () => remoteStatusListeners.delete(callback);
@@ -693,7 +764,8 @@ function fakeRemoteStatus(profileId: string, state: RemoteProfileStatus["state"]
     runtimeVersion: state === "ready" ? "0.1.0" : null,
     piVersion: state === "ready" ? "0.84.2" : null,
     checkedAt: "2026-08-20T00:00:00.000Z",
-    busy: false
+    busy: false,
+    sessionOperation: null
   };
 }
 

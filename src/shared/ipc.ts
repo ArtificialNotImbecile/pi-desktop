@@ -1320,6 +1320,12 @@ export type RemoteProfileSummary = {
  */
 export type RemoteConnectionState = "unknown" | "checking" | "ready" | "needsSetup" | "disconnected" | "failed";
 
+export type RemoteSessionOperationStatus = {
+  sessionId: string | null;
+  cwd: string;
+  state: "running" | "reconnecting" | "stopping";
+};
+
 export type RemoteProfileStatus = {
   profileId: string;
   state: RemoteConnectionState;
@@ -1330,6 +1336,7 @@ export type RemoteProfileStatus = {
   piVersion: string | null;
   checkedAt: string | null;
   busy: boolean;
+  sessionOperation: RemoteSessionOperationStatus | null;
 };
 
 export type RemoteDoctorCheckStatus = "pass" | "fail" | "warning" | "unknown";
@@ -1494,6 +1501,38 @@ export type RemoteSessionOpenRequest = {
   refetch?: boolean;
 };
 
+export type RemoteSessionStartRequest = {
+  profileId: string;
+  cwd: string;
+  text: string;
+};
+
+export type RemoteSessionStartResult = {
+  session: RemoteSessionSummary;
+  transcript: RemoteSessionTranscript;
+};
+
+/**
+ * The prompt reached the managed Pi process, but Jasmine could not yet mirror
+ * the resulting session. This is deliberately distinct from a rejected IPC
+ * request: retrying an accepted prompt could run the same work twice.
+ */
+export type RemoteSessionSubmissionPending = {
+  pending: true;
+  sessionId: string | null;
+};
+
+export type RemoteSessionPromptRequest = {
+  profileId: string;
+  sessionId: string;
+  text: string;
+};
+
+export type RemoteSessionAbortRequest = {
+  profileId: string;
+  sessionId?: string;
+};
+
 export type RemoteDirectoryListRequest = {
   profileId: string;
   path?: string;
@@ -1533,6 +1572,9 @@ export type JasmineApi = {
   listRemoteSessions(request: RemoteSessionListRequest): Promise<RemoteSessionSummary[]>;
   refreshRemoteSessions(request: RemoteProfileIdRequest): Promise<RemoteSessionSummary[]>;
   openRemoteSession(request: RemoteSessionOpenRequest): Promise<RemoteSessionTranscript>;
+  startRemoteSession(request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending>;
+  promptRemoteSession(request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending>;
+  abortRemoteSession(request: RemoteSessionAbortRequest): Promise<boolean>;
   onRemoteStatusChanged(callback: (status: RemoteProfileStatus) => void): () => void;
   getWorkingSnapshot(): Promise<WorkingSnapshot>;
   markWorkingRead(requestId: string): Promise<WorkingSnapshot>;

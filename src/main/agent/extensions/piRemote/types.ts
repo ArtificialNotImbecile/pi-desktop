@@ -1,5 +1,5 @@
 export const CONTROL_PROTOCOL_VERSION = 1;
-export const RUNTIME_VERSION = "0.1.0";
+export const RUNTIME_VERSION = "0.1.2";
 export const RUNTIME_PI_VERSION = "0.84.2";
 export const RUNTIME_NODE_VERSION = "bun-1.3.14-compiled";
 export const DEFAULT_REMOTE_ROOT = "${XDG_DATA_HOME:-$HOME/.local/share}/pi-remote";
@@ -60,6 +60,13 @@ export interface RuntimeInfo {
   remoteRoot: string;
   profileRoot: string;
   sessionRoot: string;
+  daemonId: string | null;
+  activeRpc: {
+    cwd: string;
+    sessionId: string | null;
+    busy: boolean;
+    startedAt: string;
+  } | null;
 }
 
 export interface RemoteSessionMetadata {
@@ -130,13 +137,14 @@ export interface RemoteSessionEvent {
 
 export interface RemoteSessionPort {
   readonly capabilities: readonly string[];
+  readonly daemonId: string | null;
   readonly sessionId?: string;
   readonly eventCursor: number;
   subscribe(listener: (event: RemoteSessionEvent) => void): () => void;
   listSessions(): Promise<RemoteSessionMetadata[]>;
   createSession(cwd: string): Promise<string>;
   openSession(sessionId: string): Promise<void>;
-  prompt(text: string, images?: RemoteImageInput[]): Promise<void>;
+  prompt(text: string, images?: RemoteImageInput[], onAccepted?: () => void, onDispatched?: () => void): Promise<void>;
   steer(text: string, images?: RemoteImageInput[]): Promise<void>;
   followUp(text: string, images?: RemoteImageInput[]): Promise<void>;
   abort(): Promise<void>;
@@ -148,6 +156,10 @@ export interface RemoteSessionPort {
   clone(): Promise<unknown>;
   bash(command: string): Promise<unknown>;
   respondToExtensionUi(id: string, value: unknown): Promise<void>;
+  /** Drops only the client transport; the remote RPC process keeps running. */
+  detach(): Promise<void>;
+  /** Releases local resources deliberately retained for detached remote work. */
+  releaseDetachedResources(): Promise<void>;
   close(options?: { abort?: boolean }): Promise<void>;
 }
 

@@ -18,7 +18,7 @@ const upstreamArchive = process.env.PI_REMOTE_PI_ARCHIVE
   : path.join(repoRoot, ".tmp", "pi-remote-upstream", "pi-linux-x64.tar.gz");
 const UPSTREAM_PI_SHA256 = "906fbe787fd225c4ac624fe7ebd5b1d55a60e0f5c7ef51795d231564f9ee1c13";
 const PI_VERSION = "0.84.2";
-const RUNTIME_VERSION = "0.1.0";
+const RUNTIME_VERSION = "0.1.2";
 const GLIBC_MINIMUM = "2.27";
 const toolCache = path.join(repoRoot, ".tmp", "pi-remote-tools");
 const FD_ARCHIVE = "fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz";

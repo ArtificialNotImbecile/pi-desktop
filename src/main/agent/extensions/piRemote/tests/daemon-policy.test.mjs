@@ -45,7 +45,7 @@ test("daemon status rejects a live PID whose process identity does not match", a
   const paths = { statusPath: path.join(root, "status.json"), socketPath: path.join(root, "daemon.sock") };
   try {
     await mkdir(root, { recursive: true });
-    await writeFile(paths.statusPath, JSON.stringify({ pid: process.pid, processIdentity: "not-this-process", runtimeVersion: "0.1.0" }));
+    await writeFile(paths.statusPath, JSON.stringify({ pid: process.pid, processIdentity: "not-this-process", runtimeVersion: "0.1.2" }));
     assert.deepEqual(await daemonStatus(paths), { running: false });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -131,6 +131,9 @@ test("daemon cancels RPC startup and releases its mode lease when the requesting
 
 test("daemon clears speculative busy after rejected prompt, steer, and follow-up commands", async () => {
   const daemon = new RemoteHostDaemon({ profileId: "00000000-0000-4000-8000-000000000001", paths: {}, artifactSha256: "a".repeat(64) });
+  const idleInfo = daemon.runtimeInfo();
+  assert.equal(typeof idleInfo.daemonId, "string");
+  assert.equal(idleInfo.activeRpc, null);
   const socket = fakeSocket();
   const processFixture = new EventEmitter();
   processFixture.stdin = new EventEmitter();
@@ -143,9 +146,16 @@ test("daemon clears speculative busy after rejected prompt, steer, and follow-up
     agentActive: false,
     pendingTurnCommandIds: new Set(),
     stdoutBuffer: "",
-    stderrTail: ""
+    stderrTail: "",
+    startedAt: "2026-08-21T00:00:00.000Z"
   };
   daemon.rpc = state;
+  assert.deepEqual(daemon.runtimeInfo().activeRpc, {
+    cwd: "/workspace",
+    sessionId: null,
+    busy: false,
+    startedAt: "2026-08-21T00:00:00.000Z"
+  });
   for (const type of ["prompt", "steer", "follow_up"]) {
     const id = `${type}-id`;
     await daemon.sendRpc({ command: { id, type, message: "fixture" } }, socket);

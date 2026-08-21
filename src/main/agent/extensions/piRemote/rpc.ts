@@ -93,13 +93,16 @@ export class DaemonClient {
     return () => this.disconnectListeners.delete(listener);
   }
 
-  async request(method: string, params?: unknown): Promise<unknown> {
+  async request(method: string, params?: unknown, onWritten?: () => void): Promise<unknown> {
     const writable = this.transport?.writable ?? this.socket;
     if (this.disconnectedState || !writable || this.socket?.destroyed) throw new PiRemoteError("daemon-disconnected", "Remote daemon is not connected.", { phase: "protocol", retryable: true });
     const id = randomUUID();
     const result = new Promise<unknown>((resolve, reject) => this.pending.set(id, { resolve, reject }));
     const message: RequestMessage = { type: "request", id, method, ...(params === undefined ? {} : { params }) };
-    try { writable.write(encodeJsonFrame(message)); }
+    try {
+      writable.write(encodeJsonFrame(message));
+      try { onWritten?.(); } catch { /* observers cannot revoke a written frame */ }
+    }
     catch (error) { this.rejectConnection(this.transportError(error)); }
     return result;
   }
@@ -191,6 +194,7 @@ export interface ControlTransport {
 
 export class PiRpcSessionPort implements RemoteSessionPort {
   readonly capabilities: readonly string[];
+  readonly daemonId: string | null;
   sessionId?: string;
   private readonly listeners = new Set<(event: RemoteSessionEvent) => void>();
   private readonly bufferedEvents: RemoteSessionEvent[] = [];
@@ -204,9 +208,11 @@ export class PiRpcSessionPort implements RemoteSessionPort {
   constructor(
     private readonly client: DaemonClient,
     capabilities: readonly string[],
-    private readonly proxy?: { url: string; noProxy: string[] }
+    private readonly proxy?: { url: string; noProxy: string[] },
+    daemonId: string | null = null
   ) {
     this.capabilities = [...capabilities];
+    this.daemonId = daemonId;
     this.unsubscribe = client.subscribe((event) => this.receive(event));
     this.unsubscribeDisconnect = client.subscribeDisconnect((error) => this.disconnected(error));
   }
@@ -247,8 +253,8 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     this.sessionId = session.id;
   }
 
-  prompt(text: string, images: RemoteImageInput[] = []): Promise<void> {
-    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }).then(() => undefined);
+  prompt(text: string, images: RemoteImageInput[] = [], onAccepted?: () => void, onDispatched?: () => void): Promise<void> {
+    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }, onAccepted, onDispatched).then(() => undefined);
   }
 
   steer(text: string, images: RemoteImageInput[] = []): Promise<void> {
@@ -274,6 +280,10 @@ export class PiRpcSessionPort implements RemoteSessionPort {
   async close(options: { abort?: boolean } = {}): Promise<void> {
     if (options.abort) await this.abort().catch(() => {});
     await this.client.request("rpc.stop", { abort: options.abort ?? false }).catch(() => {});
+    await this.detach();
+  }
+
+  async detach(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.unsubscribeDisconnect?.();
@@ -281,12 +291,22 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     this.client.close();
   }
 
-  private async rpc(command: Record<string, unknown>): Promise<unknown> {
+  async releaseDetachedResources(): Promise<void> {
+    // A bare RPC port owns only its daemon client, which detach() already
+    // releases. ManagedRemoteRuntime decorates this method with the SSH and
+    // client-proxy resources that must outlive a detached control connection.
+  }
+
+  private async rpc(command: Record<string, unknown>, onAccepted?: () => void, onDispatched?: () => void): Promise<unknown> {
     const id = typeof command.id === "string" ? command.id : randomUUID();
     const message = { ...command, id };
     const result = new Promise<unknown>((resolve, reject) => this.rpcPending.set(id, { resolve, reject }));
     try {
-      await this.client.request("rpc.send", { command: message });
+      await this.client.request("rpc.send", { command: message }, onDispatched);
+      // rpc.send resolves after the daemon has written the command into Pi's
+      // stdin. The later inner RPC response may be lost with the transport, but
+      // at this point retrying the prompt is already unsafe.
+      try { onAccepted?.(); } catch { /* observers cannot revoke daemon acceptance */ }
     } catch (error) {
       this.rpcPending.get(id)?.reject(error);
       this.rpcPending.delete(id);
@@ -335,7 +355,10 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     });
     for (const pending of this.rpcPending.values()) pending.reject(error);
     this.rpcPending.clear();
-    const event: RemoteSessionEvent = { seq: ++this.lastSeq, type: "transport.disconnected" };
+    // This synthetic client event is not part of the daemon's replay sequence.
+    // Keep eventCursor on the last daemon event so a replacement connection
+    // cannot skip the first event the daemon publishes after the disconnect.
+    const event: RemoteSessionEvent = { seq: this.lastSeq + 1, type: "transport.disconnected" };
     for (const listener of this.listeners) {
       try { listener(event); } catch { /* observers are isolated */ }
     }

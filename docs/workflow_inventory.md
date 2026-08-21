@@ -1,5 +1,47 @@
 # Workflow Inventory
 
+Remote prompt lifecycle contract: acceptance and local reconciliation are
+separate outcomes. Only a failure before acceptance restores a draft; a later
+sync failure cannot invite a duplicate turn, while an explicit negative Pi RPC
+response remains a rejection and restores the draft. Detached client-proxy work keeps
+its reverse tunnel until settlement. Service startup discovers daemon-owned
+work without waiting for navigation, reacquires the stable egress lease after
+an app restart, and retains it through transient daemon-proxy or Stop failures.
+After the initial startup attempts, transient host outages continue
+recovery in the background with capped backoff until the host answers or the
+profile is removed. That background promise remains the same profile's Send
+gate, while removal cancels it before waiting. This recovery loop exists only
+after an offline startup; ordinary connected Direct profiles do not poll.
+Explicit Stop supersedes and cancels that gate, so it never waits for an offline
+recovery loop before issuing its own bounded stop command.
+Stop's wait on the aborted operation is itself bounded: a detached monitor
+retrying an unreachable host cannot park the request forever, and the timeout
+reports an unconfirmed stop while the background retry continues.
+If that stop command fails, recovery is reattached after the previous probe
+finishes so a still-running client-proxy task is not abandoned. Send rechecks
+the per-profile gate after that handoff; removal cancels a queued resume.
+Composer Stop also cancels a Send waiting on that gate immediately, restores
+the draft, and then resumes background recovery after the old probe exits.
+The bounded startup gate is per profile, so an offline saved host never delays
+work or Stop on another host.
+The operation-completed status edge drives one session/workspace refresh; a
+pending new session opens when its row appears, while a pending existing turn
+refetches the transcript already on screen.
+Per-profile event versions keep a newer operation status from being overwritten
+by an older profile-list snapshot that was already in flight.
+An operation recovered at app startup also emits one renderer completion token:
+its new session row appears automatically, and an already-open matching session
+refetches its transcript.
+Stop takes precedence over egress restoration, and an attached transport failure
+retains the original port until its client-proxy resources are released.
+The dispatched boundary keeps a lost daemon acknowledgement from becoming a
+duplicate retry, while a changed daemon id reports that detached work vanished
+instead of presenting a host restart as normal settlement.
+Recovery reloads profile edits before every SSH retry, and a missing RPC under
+the same daemon id is also an explicit unconfirmed failure rather than success.
+Dispatch is recorded only after the control frame enters the writable transport;
+a failed local profile removal restarts the recovery it had cancelled.
+
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |
 | [x] | WF-001 | Configure a provider and send the first chat | Provider state persists, a selected model responds, Pi JSONL stores the canonical turn, and SQLite projects it for the UI. | `tests/e2e/providers.spec.ts`, `tests/e2e/chat-runtime.spec.ts` |
@@ -17,4 +59,4 @@
 | [x] | WF-013 | Track and resume background tasks | A main-process registry keeps one Working item per Chat across projects, separates waiting/failed/running/recent states that the page groups and filters by summary count, persists unread results and notification preferences, restores stale runs as interrupted, and treats a selected Chat as viewed only while the main window is foreground. Tray-hidden or minimized completion keeps its unread fallback and routes Working rows or Windows notifications back to the exact accessible Chat with project-removal fallback. | `tests/e2e/working.spec.ts`, `tests/unit/working-registry.mjs`, `tests/unit/database-smoke.mjs` |
 | [x] | WF-014 | Approve agent actions | Ask mode permits project-scoped writes, asks before every shell command and every external or unscoped write, and fails closed on denial, cancellation, renderer reload/loss, or cross-window responses. Full access bypasses prompts and persists across restart. | `src/main/agent/extensions/permissionGate/tests/permission-gate.test.mjs`, `tests/e2e/permissions.spec.ts`, `tests/unit/database-smoke.mjs` |
 | [x] | WF-015 | Inspect agent file changes | Local tracking is configurable: the default fast mode captures only exact successful `write/edit` targets, while the experimental native watcher observes event paths without an initial workspace crawl. Managed targets can show deterministic net diffs and before/after previews; watcher-only updates may be after-only or path-only and explicitly disclose that Bash attribution is unavailable. Conversation edits do not imply filesystem rollback. Sensitive-path/content rules keep visible path and metadata while redacting preview bytes and diffs. | `src/main/agent/extensions/fileChanges/tests/file-changes.test.mjs`, `tests/unit/database-smoke.mjs`, `tests/e2e/panels.spec.ts`, `tests/e2e/settings.spec.ts`, `tests/e2e/working.spec.ts` |
-| [x] | WF-016 | Reach a remote host's history | A remote profile is created from a three-step wizard whose last step is the connection check and runtime install, not a hidden side effect of saving. Profiles live in pi-remote's own `profiles.json`, so an edit preserves the profile id the remote session directory hangs off, and removing a profile deletes local connection details and downloaded copies only. The sidebar groups profiles by SSH host and names each one's egress, because the same machine with and without the client proxy owns two isolated remote directories and therefore two separate histories. Workspaces are discovered from the working directories of listed sessions and can be added by browsing the host over plain SSH before any runtime is installed. Opening a workspace renders stored session rows with no network at all and reconciles behind them; a listing that reports nothing new leaves the local copy untouched, growth is fetched from the byte the local copy ends at, a rewritten session header forces a full refetch instead of a spliced transcript -- checked against the fingerprint the local copy was built from on the first resumed chunk, since the remote file can be replaced between the listing and the read -- and a session the host no longer reports stays readable as a read-only local copy, while one that was never downloaded is dropped rather than offered as a copy that does not exist. A download is all-or-nothing: bytes are staged and replace the published copy only on success, so a read that fails partway leaves the previous copy and its offset untouched. Reconciling a host's list never installs the managed runtime. Coverage gap: the incremental fetch loop itself is exercised through its decision function and the daemon's byte-range reader; an end-to-end incremental sync needs a disposable SSH host and runs only in the package's live harness. | `tests/unit/remote-sessions.mjs`, `tests/renderer/remoteSessions.test.tsx`, `tests/e2e/settings.spec.ts`, `src/main/agent/extensions/piRemote/tests/sessions-read.test.mjs`, `src/main/agent/extensions/piRemote/tests/profiles-framing.test.mjs` |
+| [x] | WF-016 | Work in a remote workspace and read its history | A remote profile is created from a three-step wizard whose last step is the connection check and runtime install, not a hidden side effect of saving. Profiles live in pi-remote's own `profiles.json`, so an edit preserves the profile id the remote session directory hangs off, and removing a profile deletes local connection details and downloaded copies only. The sidebar groups profiles by SSH host and names each one's egress, because the same machine with and without the client proxy owns two isolated remote directories and therefore two separate histories. Workspaces are discovered from the working directories of listed sessions and can be added by browsing the host over plain SSH before any runtime is installed. Opening a workspace renders stored session rows with no network at all and performs one time-boxed reconciliation behind them. New session first enters a local draft. Its first prompt reserves the profile-wide RPC operation, creates the isolated Pi session at the workspace cwd, subscribes before send, waits for the new `agent_settled`, closes without aborting on normal completion, refreshes the listing, and returns both the durable session row and reconciled transcript. Stop is the explicit abort path, including a click that arrives while the SSH/RPC port is still opening. Session reconciliation keeps the connection health stable and uses its own refresh state instead of repeatedly presenting a connection check. A listing that reports nothing new leaves the local copy untouched, growth is fetched from the byte the local copy ends at, a rewritten session header forces a full refetch instead of a spliced transcript -- checked against the fingerprint the local copy was built from on the first resumed chunk, since the remote file can be replaced between the listing and the read -- and a session the host no longer reports stays readable as a read-only local copy, while one that was never downloaded is dropped rather than offered as a copy that does not exist. A download is all-or-nothing: bytes are staged and replace the published copy only on success, so a read that fails partway leaves the previous copy and its offset untouched. Reconciling a host's list never installs the managed runtime. Coverage gap: a full app-to-real-host interactive run needs a disposable SSH host and remains in the pi-remote live harness; deterministic renderer and main tests cover the UI, lifecycle ordering, cancellation, schemas, and connection/sync state split. | `tests/unit/remote-sessions.mjs`, `tests/renderer/remoteSessions.test.tsx`, `tests/e2e/settings.spec.ts`, `src/main/agent/extensions/piRemote/tests/rpc-client.test.mjs`, `src/main/agent/extensions/piRemote/tests/sessions-read.test.mjs`, `src/main/agent/extensions/piRemote/tests/profiles-framing.test.mjs` |

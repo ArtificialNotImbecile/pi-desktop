@@ -4,12 +4,14 @@ import type {
   RemoteProfileStatus,
   RemoteProfileSummary,
   RemoteSessionSummary,
+  RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionTranscript,
   RemoteWorkspace
 } from "../../../shared/ipc";
 import { localeTag, useI18n, type I18nKey } from "../../i18n";
-import { RefreshIcon, ServerIcon } from "../icons/Icons";
-import { Button, EmptyState, LoadingDots, StatusPill } from "../ui";
+import { PlusIcon, RefreshIcon, SendIcon, ServerIcon, StopIcon } from "../icons/Icons";
+import { Button, EmptyState, LoadingDots, StatusPill, TextArea } from "../ui";
 import { sessionStateKey, statusLabelKey, statusTone } from "./RemoteTree";
 
 export type RemoteSessionPageProps = {
@@ -19,10 +21,15 @@ export type RemoteSessionPageProps = {
   status: RemoteProfileStatus | undefined;
   sessions: RemoteSessionSummary[];
   activeSessionId: string | null;
+  recoveredCompletion?: { version: number; sessionId: string | null };
   refreshing: boolean;
   onRefresh(): void;
   onSelectSession(sessionId: string): void;
   onOpenSession(sessionId: string, options?: { refetch?: boolean }): Promise<RemoteSessionTranscript | null>;
+  onBeginSession(): void;
+  onStartSession(text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null>;
+  onPromptSession(sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null>;
+  onAbortSession(sessionId?: string): Promise<boolean>;
 };
 
 /**
@@ -36,7 +43,42 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [failedSessionId, setFailedSessionId] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [optimisticPrompt, setOptimisticPrompt] = useState<{ sessionId: string | null; text: string } | null>(null);
+  const [pendingStartSessionId, setPendingStartSessionId] = useState<string | null>(null);
+  const [pendingExistingSession, setPendingExistingSession] = useState<{
+    sessionId: string;
+    sessionsAtSubmit: RemoteSessionSummary[];
+  } | null>(null);
   const requestRef = useRef(0);
+  const promptRequestRef = useRef(0);
+  const recoveredCompletionVersionRef = useRef(props.recoveredCompletion?.version ?? 0);
+  const activeSessionRef = useRef(props.activeSessionId);
+  activeSessionRef.current = props.activeSessionId;
+  const sessionOperation = props.status?.sessionOperation?.cwd === props.cwd ? props.status.sessionOperation : null;
+  const operationRunning = starting || Boolean(sendingSessionId) || Boolean(sessionOperation);
+
+  useEffect(() => {
+    promptRequestRef.current += 1;
+    setDrafting(false);
+    setDraft("");
+    setOptimisticPrompt(null);
+    setStarting(false);
+    setSendingSessionId(null);
+    setStopping(false);
+    setPendingStartSessionId(null);
+    setPendingExistingSession(null);
+    recoveredCompletionVersionRef.current = props.recoveredCompletion?.version ?? 0;
+    return () => { promptRequestRef.current += 1; };
+  }, [props.profile?.id, props.cwd]);
+
+  useEffect(() => {
+    if (!sessionOperation) setStopping(false);
+  }, [sessionOperation]);
 
   const activeSessionId = props.activeSessionId;
   useEffect(() => {
@@ -45,6 +87,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       setFailedSessionId(null);
       return;
     }
+    setDrafting(false);
     let cancelled = false;
     const request = ++requestRef.current;
     setLoadingSessionId(activeSessionId);
@@ -67,6 +110,31 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     };
   }, [activeSessionId, props.profile?.id, reloadToken]);
 
+  useEffect(() => {
+    if (!pendingStartSessionId || !props.sessions.some((session) => session.sessionId === pendingStartSessionId)) return;
+    setPendingStartSessionId(null);
+    props.onSelectSession(pendingStartSessionId);
+  }, [pendingStartSessionId, props.sessions]);
+
+  useEffect(() => {
+    if (!pendingExistingSession || sessionOperation) return;
+    if (props.sessions === pendingExistingSession.sessionsAtSubmit) return;
+    if (activeSessionId !== pendingExistingSession.sessionId) {
+      setPendingExistingSession(null);
+      return;
+    }
+    setPendingExistingSession(null);
+    void refetch();
+  }, [pendingExistingSession, props.sessions, sessionOperation, activeSessionId]);
+
+  useEffect(() => {
+    const completion = props.recoveredCompletion;
+    if (!completion || completion.version <= recoveredCompletionVersionRef.current) return;
+    recoveredCompletionVersionRef.current = completion.version;
+    if (!activeSessionId || (completion.sessionId && completion.sessionId !== activeSessionId)) return;
+    void refetch();
+  }, [props.recoveredCompletion?.version, activeSessionId]);
+
   async function refetch() {
     if (!activeSessionId) return;
     const request = ++requestRef.current;
@@ -77,6 +145,60 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     setTranscript(result);
     setFailedSessionId(result ? null : activeSessionId);
     setLoadingSessionId(null);
+  }
+
+  function beginSession() {
+    if (operationRunning) return;
+    setStopping(false);
+    setDrafting(true);
+    setTranscript(null);
+    setFailedSessionId(null);
+    props.onBeginSession();
+  }
+
+  async function sendPrompt() {
+    const sessionId = activeSessionRef.current;
+    const sessionsAtSubmit = props.sessions;
+    const text = draft.trim();
+    if (!text || operationRunning || !drafting && !sessionId) return;
+    const request = ++promptRequestRef.current;
+    setDraft("");
+    setOptimisticPrompt({ sessionId: drafting ? null : sessionId, text });
+    if (drafting) setStarting(true);
+    else setSendingSessionId(sessionId);
+    const started = drafting ? await props.onStartSession(text) : null;
+    const prompted = drafting ? null : await props.onPromptSession(sessionId!, text);
+    const submission = drafting ? started : prompted;
+    const pending = isSubmissionPending(submission);
+    const result: RemoteSessionTranscript | null = drafting
+      ? started && !isSubmissionPending(started) ? started.transcript : null
+      : prompted && !isSubmissionPending(prompted) ? prompted : null;
+    if (request !== promptRequestRef.current) return;
+    if (result && activeSessionRef.current === sessionId) setTranscript(result);
+    if (started && !isSubmissionPending(started) && activeSessionRef.current === null) {
+      setTranscript(started.transcript);
+      setDrafting(false);
+      props.onSelectSession(started.session.sessionId);
+    }
+    if (drafting && pending) {
+      setDrafting(false);
+      setPendingStartSessionId(isSubmissionPending(started) ? started.sessionId : null);
+    }
+    if (!drafting && pending && sessionId) {
+      setPendingExistingSession({ sessionId, sessionsAtSubmit });
+    }
+    if (!submission) setDraft(text);
+    setOptimisticPrompt(null);
+    setStarting(false);
+    setSendingSessionId(null);
+    setStopping(false);
+  }
+
+  async function stopPrompt() {
+    if (!operationRunning || stopping) return;
+    setStopping(true);
+    const stopped = await props.onAbortSession(starting ? undefined : sendingSessionId ?? sessionOperation?.sessionId ?? undefined);
+    if (!stopped) setStopping(false);
   }
 
   if (!props.profile) {
@@ -96,6 +218,17 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
           <p title={props.cwd}>{props.profile.name} · {props.cwd}</p>
         </div>
         <div className="remote-page-header-actions">
+          <Button variant="primary" disabled={drafting || operationRunning} leftIcon={<PlusIcon />} onClick={beginSession}>
+            {t("remote.session.new")}
+          </Button>
+          {sessionOperation && !starting && !sendingSessionId && !activeSessionId && !drafting ? (
+            <>
+              <span className="remote-transcript-status"><LoadingDots /> {sessionOperation.state === "reconnecting" ? t("remote.session.reconnecting") : t("remote.session.running")}</span>
+              <Button variant="danger" loading={stopping || sessionOperation.state === "stopping"} disabled={stopping} leftIcon={<StopIcon />} onClick={() => void stopPrompt()}>
+                {t("remote.session.stop")}
+              </Button>
+            </>
+          ) : null}
           <StatusPill tone={statusPillTone(props.status)}>{t(statusLabelKey(props.status))}</StatusPill>
           <Button
             variant="ghost"
@@ -123,7 +256,11 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       <div className="remote-page-body">
         <div className="remote-session-list" aria-label={t("remote.settings.workspaces")}>
           {props.sessions.length === 0 ? (
-            <p className="remote-empty-row">{t("remote.noSessions")}</p>
+            <EmptyState
+              icon={<ServerIcon />}
+              title={t("remote.noSessions")}
+              subtitle={t("remote.session.newHint")}
+            />
           ) : props.sessions.map((session) => (
             <button
               className={`remote-session-card ${session.sessionId === activeSessionId ? "active" : ""} ${session.state}`}
@@ -145,11 +282,26 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
         </div>
 
         <div className="remote-transcript" aria-live="polite">
-          {!activeSessionId ? (
+          {drafting ? (
+            <>
+              <EmptyState
+                icon={<ServerIcon />}
+                title={t("remote.session.new")}
+                subtitle={t("remote.session.newHint")}
+              />
+              {optimisticPrompt?.sessionId === null ? (
+                <article className="remote-entry user pending" aria-label={t("remote.session.sending")}>
+                  <header><span className="remote-entry-kind">{t("remote.session.entry.user")}</span></header>
+                  <p>{optimisticPrompt.text}</p>
+                </article>
+              ) : null}
+            </>
+          ) : !activeSessionId ? (
             <EmptyState
               icon={<ServerIcon />}
               title={workspaceName}
               subtitle={t("remote.session.count", { count: props.sessions.length })}
+              action={<Button variant="primary" disabled={drafting || operationRunning} leftIcon={<PlusIcon />} onClick={beginSession}>{t("remote.session.new")}</Button>}
             />
           ) : failedSessionId === activeSessionId ? (
             <div className="remote-transcript-failure">
@@ -189,12 +341,57 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
                   <p>{item.text}</p>
                 </article>
               ))}
+              {optimisticPrompt?.sessionId === activeSessionId ? (
+                <article className="remote-entry user pending" aria-label={t("remote.session.sending")}>
+                  <header><span className="remote-entry-kind">{t("remote.session.entry.user")}</span></header>
+                  <p>{optimisticPrompt.text}</p>
+                </article>
+              ) : null}
             </>
           )}
         </div>
       </div>
+
+      {drafting || activeSessionId && transcript?.state !== "gone" ? (
+        <div className="remote-composer">
+          <TextArea
+            value={draft}
+            disabled={operationRunning}
+            aria-label={t("remote.session.prompt")}
+            placeholder={t("remote.session.promptPlaceholder")}
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                void sendPrompt();
+              }
+            }}
+          />
+          <div className="remote-composer-actions">
+            {operationRunning ? (
+              <>
+                <span className="remote-transcript-status"><LoadingDots /> {sessionOperation?.state === "reconnecting" ? t("remote.session.reconnecting") : t("remote.session.running")}</span>
+                <Button variant="danger" loading={stopping || sessionOperation?.state === "stopping"} disabled={stopping} leftIcon={<StopIcon />} onClick={() => void stopPrompt()}>
+                  {t("remote.session.stop")}
+                </Button>
+              </>
+            ) : (
+              <Button variant="primary" disabled={!draft.trim()} leftIcon={<SendIcon />} onClick={() => void sendPrompt()}>
+                {t("remote.session.send")}
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function isSubmissionPending(
+  value: RemoteSessionStartResult | RemoteSessionTranscript | RemoteSessionSubmissionPending | null
+): value is RemoteSessionSubmissionPending {
+  return Boolean(value && "pending" in value);
 }
 
 function entryKindKey(kind: RemoteSessionTranscript["entries"][number]["kind"]): I18nKey {

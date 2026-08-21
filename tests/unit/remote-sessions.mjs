@@ -36,6 +36,7 @@ function listing(overrides) {
 try {
   const remotes = await import("../../dist/main/main/db/repositories/remotes.js");
   const transcript = await import("../../dist/main/main/services/remoteTranscript.js");
+  const remoteRun = await import("../../dist/main/main/services/remoteSessionRun.js");
   const migrations = await import("../../dist/main/main/db/migrations.js");
   const schemas = await import("../../dist/main/shared/schemas.js");
 
@@ -514,12 +515,303 @@ try {
   assert.equal(transcript.normalizeRemotePath("//"), "/");
   assert.equal(transcript.normalizeRemotePath("/.."), "/", "no spelling escapes above the root");
 
+  // A prompt waiter subscribes before send, ignores buffered history, and only
+  // settles for the new agent run. This is the lifecycle the renderer's single
+  // long-running IPC request depends on.
+  let promptListener;
+  let promptUnsubscribed = false;
+  const promptWaiter = remoteRun.waitForRemotePromptSettled({
+    eventCursor: 4,
+    subscribe(listener) {
+      promptListener = listener;
+      return () => { promptUnsubscribed = true; };
+    }
+  }, 1_000);
+  promptListener({ seq: 4, type: "rpc.message", data: { type: "agent_settled" } });
+  assert.equal(promptUnsubscribed, false, "a buffered settlement cannot finish the new prompt");
+  promptListener({ seq: 5, type: "rpc.message", data: { type: "agent_settled" } });
+  await promptWaiter.promise;
+  assert.equal(promptUnsubscribed, true);
+
+  let disconnectListener;
+  const disconnected = remoteRun.waitForRemotePromptSettled({
+    eventCursor: 0,
+    subscribe(listener) {
+      disconnectListener = listener;
+      return () => {};
+    }
+  }, 1_000);
+  disconnectListener({ seq: 1, type: "transport.disconnected" });
+  await assert.rejects(disconnected.promise, (error) => error?.code === "daemon-disconnected");
+  assert.equal(remoteRun.isDefinitePromptRejection({ code: "pi-rpc-failed" }), true);
+  assert.equal(remoteRun.isDefinitePromptRejection({ code: "daemon-disconnected" }), false);
+
+  const startCalls = [];
+  let startListener;
+  const startedSessionId = await remoteRun.startManagedRemoteSession({
+    async openSession(_profile, options) {
+      startCalls.push(["open", options]);
+      return {
+        eventCursor: 0,
+        subscribe(listener) { startListener = listener; return () => { startCalls.push(["unsubscribe"]); }; },
+        async createSession(cwd) { startCalls.push(["create", cwd]); return "created-session"; },
+        async prompt(text, _images, onAccepted, onDispatched) {
+          startCalls.push(["prompt", text]);
+          onDispatched?.();
+          onAccepted?.();
+          queueMicrotask(() => startListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
+        },
+        async close(options) { startCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "/srv/application", "inspect the workspace", {
+    onPromptAccepted() { startCalls.push(["accepted"]); },
+    onPromptDispatched() { startCalls.push(["dispatched"]); }
+  });
+  assert.equal(startedSessionId, "created-session");
+  assert.deepEqual(startCalls, [
+    ["open", { cwd: "/srv/application" }],
+    ["create", "/srv/application"],
+    ["prompt", "inspect the workspace"],
+    ["dispatched"],
+    ["accepted"],
+    ["unsubscribe"],
+    ["close", { abort: false }]
+  ], "the first prompt creates and settles the new session before normal non-aborting cleanup");
+
+  const promptCalls = [];
+  let runListener;
+  await remoteRun.promptManagedRemoteSession({
+    async openSession(_profile, options) {
+      promptCalls.push(["open", options]);
+      return {
+        eventCursor: 0,
+        subscribe(listener) { runListener = listener; return () => { promptCalls.push(["unsubscribe"]); }; },
+        async prompt(text) {
+          promptCalls.push(["prompt", text]);
+          queueMicrotask(() => runListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
+        },
+        async close(options) { promptCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "created-session", "inspect the workspace");
+  assert.deepEqual(promptCalls, [
+    ["open", { sessionId: "created-session" }],
+    ["prompt", "inspect the workspace"],
+    ["unsubscribe"],
+    ["close", { abort: false }]
+  ], "a prompt waits for settlement before closing the managed port without aborting remote work");
+
+  const timeoutCalls = [];
+  const keepAlive = setTimeout(() => {}, 100);
+  try {
+    await assert.rejects(remoteRun.promptManagedRemoteSession({
+      async openSession(_profile, options) {
+        timeoutCalls.push(["open", options]);
+        return {
+          eventCursor: 0,
+          subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
+          async prompt(_text, _images, onAccepted, onDispatched) { timeoutCalls.push(["prompt"]); onDispatched?.(); onAccepted?.(); },
+          async detach() { timeoutCalls.push(["detach"]); },
+          async close() { timeoutCalls.push(["close"]); }
+        };
+      }
+    }, {}, "slow-session", "long task", {
+      timeoutMs: 5,
+      onPromptDispatched() { timeoutCalls.push(["dispatched"]); },
+      onPromptAccepted() { timeoutCalls.push(["accepted"]); }
+    }), (error) => error?.code === "prompt-timeout");
+  } finally {
+    clearTimeout(keepAlive);
+  }
+  assert.deepEqual(timeoutCalls, [
+    ["open", { sessionId: "slow-session" }],
+    ["prompt"],
+    ["dispatched"],
+    ["accepted"],
+    ["unsubscribe"],
+    ["detach"]
+  ], "a local timeout detaches without stopping the daemon-owned remote process");
+
+  const disconnectCalls = [];
+  let transportListener;
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe(listener) { transportListener = listener; return () => { disconnectCalls.push(["unsubscribe"]); }; },
+        async prompt(_text, _images, onAccepted, onDispatched) {
+          disconnectCalls.push(["prompt"]);
+          onDispatched?.();
+          onAccepted?.();
+          queueMicrotask(() => transportListener({ seq: 1, type: "transport.disconnected" }));
+        },
+        async detach() { disconnectCalls.push(["detach"]); },
+        async close() { disconnectCalls.push(["close"]); }
+      };
+    }
+  }, {}, "disconnect-session", "long task", {
+    onPromptDispatched() { disconnectCalls.push(["dispatched"]); },
+    onPromptAccepted() { disconnectCalls.push(["accepted"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(disconnectCalls, [
+    ["prompt"],
+    ["dispatched"],
+    ["accepted"],
+    ["unsubscribe"],
+    ["detach"]
+  ], "a transport disconnect after acceptance detaches without closing detached resources");
+
+  const ambiguousCalls = [];
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe() { return () => {}; },
+        async prompt(_text, _images, _onAccepted, onDispatched) {
+          ambiguousCalls.push(["prompt"]);
+          onDispatched?.();
+          const error = new Error("daemon acknowledgement was lost");
+          error.code = "daemon-disconnected";
+          throw error;
+        },
+        async detach() { ambiguousCalls.push(["detach"]); },
+        async close() { ambiguousCalls.push(["close"]); }
+      };
+    }
+  }, {}, "ambiguous-session", "may already be running", {
+    onPromptDispatched() { ambiguousCalls.push(["dispatched"]); },
+    onPromptAccepted() { ambiguousCalls.push(["accepted"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(ambiguousCalls, [
+    ["prompt"],
+    ["dispatched"],
+    ["detach"]
+  ], "a lost daemon acknowledgement preserves the distinct dispatched boundary");
+
+  const prewriteCalls = [];
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe() { return () => {}; },
+        async prompt() {
+          prewriteCalls.push(["prompt"]);
+          const error = new Error("disconnected before transport write");
+          error.code = "daemon-disconnected";
+          throw error;
+        },
+        async detach() { prewriteCalls.push(["detach"]); },
+        async close() { prewriteCalls.push(["close"]); }
+      };
+    }
+  }, {}, "prewrite-session", "not sent", {
+    onPromptDispatched() { prewriteCalls.push(["dispatched"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(prewriteCalls, [
+    ["prompt"],
+    ["detach"]
+  ], "a disconnect before writable.write must not mark the prompt dispatched");
+
+  // Session reconciliation has its own renderer spinner. Reusing the profile's
+  // connection-checking state here is what made an idle Connected host appear
+  // to probe itself repeatedly whenever the tree or route refreshed.
+  const remoteProfileServiceSource = await readFile(path.join(process.cwd(), "src/main/services/remoteProfiles.ts"), "utf8");
+  const refreshSessionsBody = /async refreshSessions[\s\S]*?(?=\n  \/\*\* Creates the session)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.ok(refreshSessionsBody, "refreshSessions implementation must remain visible to the regression guard");
+  assert.doesNotMatch(refreshSessionsBody, /state:\s*"checking"/u,
+    "background session sync must not masquerade as a connection check");
+  assert.match(refreshSessionsBody, /listSessionsWithRuntime/u,
+    "session refresh must carry the daemon active-RPC snapshot used for restart recovery");
+  assert.match(remoteProfileServiceSource, /recoverActiveOperation\(profile, runtimeInfo\)/u);
+  const stopProfileBody = /async stopProfile[\s\S]*?(?=\n  listStatuses)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.match(stopProfileBody, /await this\.awaitStopConfirmation\(active\)/u,
+    "profile stop must wait until the active prompt handler has released its reservation");
+  assert.doesNotMatch(stopProfileBody, /await active\.done/u,
+    "a detached monitor that retries an unreachable host must not park profile Stop forever");
+  assert.match(remoteProfileServiceSource, /private async awaitStopConfirmation[\s\S]*?Promise\.race\(\[\s*operation\.done/u,
+    "the stop wait must race the operation against a bounded timer");
+  assert.match(stopProfileBody, /cancelledStartupRecovery\.add\(profileId\)/u,
+    "explicit Stop must cancel persistent startup recovery for its profile");
+  assert.doesNotMatch(stopProfileBody, /await this\.awaitProfileStartupRecovery/u,
+    "explicit Stop must not wait for an unbounded offline recovery gate");
+  assert.match(stopProfileBody, /catch \(error\)[\s\S]*recoveryResumeRequested\.add\(profile\.id\)[\s\S]*resumeProfileStartupRecovery/u,
+    "a failed Stop must resume the cancelled client-proxy recovery chain");
+  assert.match(remoteProfileServiceSource, /while \(true\)[\s\S]*startupRecoveryByProfile\.get\(profileId\) === recovery/u,
+    "Send must follow a recovery promise that is replaced after a failed Stop");
+  const abortSessionBody = /async abortSession[\s\S]*?(?=\n  async openSession)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.doesNotMatch(abortSessionBody, /releaseOperation/u,
+    "the abort handler must never release an opening or attached operation owned by its request");
+  assert.match(abortSessionBody, /operation\.phase === "detached"[\s\S]*monitorDetachedOperation/u,
+    "a detached Stop hands ownership to the daemon monitor");
+  assert.match(abortSessionBody, /startupRecoveryWaiters[\s\S]*cancelStartupRecoveryWaiters/u,
+    "composer Stop must cancel a prompt waiting on startup recovery");
+  assert.doesNotMatch(abortSessionBody, /operation\.port = null/u,
+    "an abort transport failure must retain the port's detached egress release handle");
+  assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
+    "detached work must stay monitored from daemon state rather than a stale client sequence");
+  assert.match(remoteProfileServiceSource, /reconnectDetachedEgress\(profile, recoveredRuntimeInfo\)/u,
+    "a recovered client-proxy operation must restore its stable egress lease");
+  assert.match(remoteProfileServiceSource, /releaseDetachedResources/u,
+    "the detached monitor owns final release of retained local egress resources");
+  const detachedMonitorStart = remoteProfileServiceSource.indexOf("private monitorDetachedOperation");
+  const detachedMonitorEnd = remoteProfileServiceSource.indexOf("\n}\n\nlet service", detachedMonitorStart);
+  const detachedMonitorBody = remoteProfileServiceSource.slice(detachedMonitorStart, detachedMonitorEnd);
+  assert.ok(detachedMonitorBody.indexOf("if (operation.abortRequested)") < detachedMonitorBody.indexOf('profile.network.mode === "client-proxy"'),
+    "a detached Stop must run before any attempt to restore client-proxy egress");
+  assert.match(remoteProfileServiceSource, /operation\.promptDispatched && isDetachedPromptFailure\(error\)[\s\S]*pending: true/u,
+    "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
+  assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,
+    "daemon-owned work must be discovered when the service starts, without waiting for navigation");
+  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?awaitProfileStartupRecovery\(profileId, true\)/u,
+    "new sessions must wait for their profile's startup recovery");
+  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?awaitProfileStartupRecovery\(profileId, true\)/u,
+    "existing-session prompts must wait for their profile's startup recovery");
+  assert.equal(remoteProfileServiceSource.match(/awaitProfileStartupRecovery\(profileId, true\)/gu)?.length, 2,
+    "both new and existing submissions need a cancellable recovery gate");
+  assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
+    "profile removal must not race a startup recovery that can still reserve it");
+  assert.doesNotMatch(remoteProfileServiceSource, /await Promise\.all\(profiles\.map/u,
+    "one offline host must not globally gate unrelated profile operations");
+  assert.equal(remoteProfileServiceSource.match(/promptDispatched && isDetachedPromptFailure\(error\)/gu)?.length, 2,
+    "both new and existing sessions must treat a lost delivery acknowledgement as pending");
+  assert.match(detachedMonitorBody, /operation\.daemonId && info\.daemonId !== operation\.daemonId/u,
+    "a detached prompt must fail explicitly when its daemon epoch changes");
+  assert.match(detachedMonitorBody, /if \(!active\)[\s\S]*remote-rpc-vanished/u,
+    "a missing RPC in the same daemon epoch must not be presented as normal settlement");
+  assert.match(remoteProfileServiceSource, /await this\.retryStartupRecovery\(profile\.id\)/u,
+    "both egress modes must remain inside their profile gate until the host answers");
+  assert.doesNotMatch(remoteProfileServiceSource, /currentProfile\.network\.mode !== "client-proxy"/u,
+    "remote-direct recovery must not be abandoned after an offline startup");
+  assert.match(remoteProfileServiceSource, /currentProfile = await this\.store\.get\(profileId\)/u,
+    "persistent recovery must reload profile edits before each SSH retry");
+  assert.match(remoteProfileServiceSource, /cancelledStartupRecovery\.add\(profileId\)[\s\S]*await this\.awaitProfileStartupRecovery\(profileId\)/u,
+    "profile removal must cancel an offline recovery before waiting for its gate");
+  assert.match(remoteProfileServiceSource, /if \(!removed\)[\s\S]*scheduleProfileStartupRecovery\(currentProfile\)/u,
+    "a failed local profile removal must restart startup recovery");
+  assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
+    "removing a profile must cancel its persistent background recovery");
+
+  const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
+  const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";
+  assert.ok(openWorkspaceHandler, "the remote workspace route handler must remain covered");
+  assert.doesNotMatch(openWorkspaceHandler, /openProfile/u,
+    "workspace navigation must let the route effect own the one background refresh");
+
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),
     "a profile name pi-remote would reject must not reach the store");
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops-box", sshHost: "-oProxyCommand=evil", networkMode: "remote-direct" }),
     "a host that reads as an ssh option must be refused before an argument is built");
   assert.throws(() => schemas.remoteWorkspaceAddSchema.parse({ profileId: PROFILE, cwd: "relative/path" }));
+  assert.throws(() => schemas.remoteSessionStartSchema.parse({ profileId: PROFILE, cwd: "relative/path", text: "inspect" }));
+  assert.throws(() => schemas.remoteSessionStartSchema.parse({ profileId: PROFILE, cwd: "/srv/application", text: "   " }));
+  assert.throws(() => schemas.remoteSessionPromptSchema.parse({ profileId: PROFILE, sessionId: "session-a", text: "   " }));
+  assert.deepEqual(schemas.remoteSessionPromptSchema.parse({
+    profileId: PROFILE,
+    sessionId: "session-a",
+    text: "  inspect the workspace  "
+  }), { profileId: PROFILE, sessionId: "session-a", text: "inspect the workspace" });
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops-box", sshHost: "ops-box", networkMode: "sideways" }));
   const parsed = schemas.remoteProfileCreateSchema.parse({
     name: "ops-box",

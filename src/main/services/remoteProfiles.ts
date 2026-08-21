@@ -11,6 +11,8 @@ import type {
   RemoteProfileSummary,
   RemoteProfileUpdateRequest,
   RemoteSessionSummary,
+  RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionTranscript,
   RemoteTranscriptEntry,
   RemoteWorkspace,
@@ -27,6 +29,7 @@ import {
   resolveSessionSyncPlan,
   syncSessionFile
 } from "./remoteTranscript.js";
+import { isDefinitePromptRejection, isDetachedPromptFailure, promptManagedRemoteSession, startManagedRemoteSession } from "./remoteSessionRun.js";
 // Imported module by module rather than through the package barrel: the barrel
 // also exports the upstream compatibility baseline, whose only purpose is
 // development-time protocol tests and whose `@earendil-works/pi-protocol` import
@@ -37,7 +40,12 @@ import { PiRemoteError } from "../agent/extensions/piRemote/errors.js";
 import { ProfileStore } from "../agent/extensions/piRemote/profiles.js";
 import { ManagedRemoteRuntime } from "../agent/extensions/piRemote/runtime.js";
 import { shellQuote } from "../agent/extensions/piRemote/ssh.js";
-import type { RemoteProfile, RemoteSessionMetadata, RuntimeInfo } from "../agent/extensions/piRemote/types.js";
+import type {
+  RemoteProfile,
+  RemoteSessionMetadata,
+  RemoteSessionPort,
+  RuntimeInfo
+} from "../agent/extensions/piRemote/types.js";
 
 /** Entries rendered for one session. Older ones are summarized rather than mounted. */
 const TRANSCRIPT_ENTRY_LIMIT = 400;
@@ -45,12 +53,38 @@ const DIRECTORY_ENTRY_LIMIT = 300;
 /** One incremental read; a larger gap loops until it reaches the end. */
 const SESSION_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_SESSION_SYNC_BYTES = 64 * 1024 * 1024;
+const DETACHED_OPERATION_POLL_MS = 5_000;
+const STARTUP_RECOVERY_ATTEMPTS = 3;
+/** Bounds one full detached stop cycle (SSH command cap plus reconciliation). */
+const STOP_CONFIRMATION_TIMEOUT_MS = 90_000;
+
+type ActiveRemoteOperation = {
+  sessionId: string | null;
+  cwd: string;
+  port: RemoteSessionPort | null;
+  abortRequested: boolean;
+  phase: "opening" | "attached" | "detached";
+  state: "running" | "reconnecting" | "stopping";
+  promptDispatched: boolean;
+  promptAccepted: boolean;
+  daemonId: string | null;
+  detachedEgress: { close(): Promise<void> } | null;
+  monitoring: boolean;
+  done: Promise<void>;
+  resolveDone(): void;
+};
 
 export class RemoteProfileService {
   private readonly store: ProfileStore;
   private readonly runtime: ManagedRemoteRuntime;
   private readonly statuses = new Map<string, RemoteProfileStatus>();
+  private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
+  private readonly cancelledStartupRecovery = new Set<string>();
+  private readonly recoveryResumeRequested = new Set<string>();
+  private readonly startupRecoveryWaiters = new Map<string, Set<() => void>>();
+  private readonly startupRecoveryByProfile = new Map<string, Promise<void>>();
   private readonly transcriptRoot: string;
+  private readonly startupRecovery: Promise<void>;
 
   constructor(
     private readonly db: JasmineDatabase,
@@ -59,6 +93,10 @@ export class RemoteProfileService {
     this.store = options.store ?? new ProfileStore();
     this.runtime = options.runtime ?? new ManagedRemoteRuntime({ artifactDirectory: resolveArtifactDirectory() });
     this.transcriptRoot = options.transcriptRoot ?? path.join(app.getPath("userData"), "remote-sessions");
+    // Recovery starts with the service, not with navigation. A client-proxy
+    // prompt loses its local egress when the old Jasmine process exits, so
+    // waiting for the user to expand its profile can already be too late.
+    this.startupRecovery = this.recoverActiveOperationsOnStartup();
   }
 
   async listProfiles(): Promise<RemoteProfileSummary[]> {
@@ -107,17 +145,42 @@ export class RemoteProfileService {
    * Removes local connection details and the local transcript copies. Remote
    * sessions, credentials, and the installed runtime are left alone -- the UI
    * says so, and this is what makes that promise true.
-   */
+  */
   async removeProfile(profileId: string): Promise<void> {
-    const profile = await this.store.get(profileId);
-    // profiles.json goes first. If that write fails the profile is still
-    // configured and the renderer keeps showing it, so deleting its history
-    // beforehand would destroy data for a profile the user still has.
-    await this.store.remove(profile.id);
-    const transcripts = this.db.removeRemoteProfileData(profile.id);
-    await Promise.all(transcripts.map((file) => rm(file, { force: true }).catch(() => {})));
-    await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
-    this.statuses.delete(profile.id);
+    this.recoveryResumeRequested.delete(profileId);
+    this.cancelledStartupRecovery.add(profileId);
+    this.cancelStartupRecoveryWaiters(profileId);
+    let removed = false;
+    try {
+      // Cancellation makes an offline client-proxy recovery leave its gate;
+      // otherwise removing that profile could wait forever for SSH to return.
+      await this.awaitProfileStartupRecovery(profileId);
+      if (this.activeOperations.has(profileId)) {
+        throw new PiRemoteError(
+          "remote-profile-busy",
+          "The remote profile has an active session operation.",
+          { phase: "session", retryable: true, remediation: "Wait for it to finish or stop the remote runtime first." }
+        );
+      }
+      const profile = await this.store.get(profileId);
+      // profiles.json goes first. If that write fails the profile is still
+      // configured and the renderer keeps showing it, so deleting its history
+      // beforehand would destroy data for a profile the user still has.
+      await this.store.remove(profile.id);
+      removed = true;
+      const transcripts = this.db.removeRemoteProfileData(profile.id);
+      await Promise.all(transcripts.map((file) => rm(file, { force: true }).catch(() => {})));
+      await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
+      this.statuses.delete(profile.id);
+    } finally {
+      if (!removed) {
+        this.cancelledStartupRecovery.delete(profileId);
+        let currentProfile: RemoteProfile | null = null;
+        try { currentProfile = await this.store.get(profileId); }
+        catch { /* a concurrently removed profile has nothing to recover */ }
+        if (currentProfile) this.scheduleProfileStartupRecovery(currentProfile);
+      }
+    }
   }
 
   async checkProfile(profileId: string): Promise<RemoteDoctorReport> {
@@ -203,14 +266,29 @@ export class RemoteProfileService {
   /**
    * Ends the remote daemon and any session it owns. Distinct from losing the
    * connection, which leaves remote work running.
-   */
+  */
   async stopProfile(profileId: string): Promise<RemoteProfileStatus> {
+    // Explicit Stop supersedes startup recovery. Do not wait for an unbounded
+    // offline client-proxy gate; any in-flight probe checks this cancellation
+    // before it can reserve the recovered operation.
+    this.cancelledStartupRecovery.add(profileId);
+    this.cancelStartupRecoveryWaiters(profileId);
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {
+      const active = this.activeOperations.get(profile.id);
+      if (active) {
+        const stopped = await this.abortSession(profile.id, active.sessionId ?? undefined);
+        if (!stopped) throw new PiRemoteError("remote-stop-failed", "The active remote session could not be stopped.", { phase: "session", retryable: true });
+        await this.awaitStopConfirmation(active);
+      }
       await this.runtime.stop(profile);
       return this.publishStatus({ profileId: profile.id, state: "disconnected", message: null, busy: false });
     } catch (error) {
+      // A failed stop means remote work may still exist. Restore the cancelled
+      // recovery chain so client-proxy egress is reacquired when SSH returns.
+      this.recoveryResumeRequested.add(profile.id);
+      void this.resumeProfileStartupRecovery(profile, this.startupRecoveryByProfile.get(profile.id));
       return this.publishFailure(profile.id, error);
     }
   }
@@ -275,10 +353,12 @@ export class RemoteProfileService {
    */
   async refreshSessions(profileId: string): Promise<RemoteSessionSummary[]> {
     const profile = await this.store.get(profileId);
-    this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     let sessions: RemoteSessionMetadata[];
+    let runtimeInfo: RuntimeInfo;
     try {
-      sessions = await this.runtime.listSessions(profile, { install: false });
+      const snapshot = await this.runtime.listSessionsWithRuntime(profile, { install: false });
+      sessions = snapshot.sessions;
+      runtimeInfo = snapshot.runtimeInfo;
     } catch (error) {
       if (error instanceof PiRemoteError && error.code === "runtime-not-installed") {
         this.publishStatus({
@@ -327,7 +407,179 @@ export class RemoteProfileService {
       checkedAt: new Date().toISOString(),
       busy: false
     });
+    this.recoverActiveOperation(profile, runtimeInfo);
     return this.listSessions(profile.id);
+  }
+
+  /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
+  async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
+    if (!await this.awaitProfileStartupRecovery(profileId, true)) {
+      throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
+    }
+    const profile = await this.store.get(profileId);
+    const normalizedCwd = normalizeRemotePath(cwd);
+    const operation = this.reserveOperation(profile.id, null, normalizedCwd);
+    let detached = false;
+    try {
+      operation.sessionId = await startManagedRemoteSession(
+        this.runtime,
+        profile,
+        normalizedCwd,
+        text,
+        {
+          onPort: async (port) => {
+            operation.port = port;
+            operation.daemonId = port.daemonId;
+            operation.phase = "attached";
+            this.updateOperationStatus(profile.id, operation, "running");
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          },
+          onSessionId: async (sessionId, port) => {
+            operation.sessionId = sessionId;
+            this.updateOperationStatus(profile.id, operation, "running");
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          },
+          onPromptDispatched: () => {
+            operation.promptDispatched = true;
+          },
+          onPromptAccepted: () => {
+            operation.promptAccepted = true;
+          }
+        }
+      );
+      operation.port = null;
+      const rows = await this.refreshSessions(profile.id);
+      const created = rows.find((row) => row.sessionId === operation.sessionId);
+      if (!created) {
+        throw new PiRemoteError(
+          "remote-session-not-listed",
+          "The remote session was created but did not appear in the host's session listing.",
+          { phase: "session", retryable: true, remediation: "Refresh the session list and open the new session." }
+        );
+      }
+      const transcript = await this.openSession(profile.id, created.sessionId, true);
+      return { session: created, transcript };
+    } catch (error) {
+      if (isDetachedPromptFailure(error)) {
+        detached = true;
+        operation.phase = "detached";
+        this.updateOperationStatus(profile.id, operation, "reconnecting");
+        this.monitorDetachedOperation(profile, operation);
+      }
+      if ((operation.promptAccepted || operation.promptDispatched && isDetachedPromptFailure(error))
+        && !isDefinitePromptRejection(error)) {
+        if (!detached) this.publishFailure(profile.id, error);
+        return { pending: true, sessionId: operation.sessionId };
+      }
+      throw error;
+    } finally {
+      if (!detached) this.releaseOperation(profile.id, operation);
+    }
+  }
+
+  /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
+  async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
+    if (!await this.awaitProfileStartupRecovery(profileId, true)) {
+      throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
+    }
+    const profile = await this.store.get(profileId);
+    const record = this.db.getRemoteSession(profile.id, sessionId);
+    if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
+    const operation = this.reserveOperation(profile.id, sessionId, record.cwd);
+    let detached = false;
+    try {
+      await promptManagedRemoteSession(
+        this.runtime,
+        profile,
+        sessionId,
+        text,
+        {
+          onPort: async (port) => {
+            operation.port = port;
+            operation.daemonId = port.daemonId;
+            operation.phase = "attached";
+            this.updateOperationStatus(profile.id, operation, "running");
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          },
+          onPromptDispatched: () => {
+            operation.promptDispatched = true;
+          },
+          onPromptAccepted: () => {
+            operation.promptAccepted = true;
+          }
+        }
+      );
+      operation.port = null;
+      await this.refreshSessions(profile.id);
+      return await this.openSession(profile.id, sessionId, true);
+    } catch (error) {
+      if (isDetachedPromptFailure(error)) {
+        detached = true;
+        operation.phase = "detached";
+        this.updateOperationStatus(profile.id, operation, "reconnecting");
+        this.monitorDetachedOperation(profile, operation);
+      }
+      if ((operation.promptAccepted || operation.promptDispatched && isDetachedPromptFailure(error))
+        && !isDefinitePromptRejection(error)) {
+        if (!detached) this.publishFailure(profile.id, error);
+        return { pending: true, sessionId: operation.sessionId };
+      }
+      throw error;
+    } finally {
+      if (!detached) this.releaseOperation(profile.id, operation);
+    }
+  }
+
+  /** Explicit cancellation is the only renderer action that aborts active remote work. */
+  async abortSession(profileId: string, sessionId?: string): Promise<boolean> {
+    const operation = this.activeOperations.get(profileId);
+    if (!operation) {
+      const waiters = this.startupRecoveryWaiters.get(profileId);
+      if (!waiters?.size) return false;
+      this.cancelledStartupRecovery.add(profileId);
+      this.recoveryResumeRequested.add(profileId);
+      const previous = this.startupRecoveryByProfile.get(profileId);
+      try {
+        const profile = await this.store.get(profileId);
+        void this.resumeProfileStartupRecovery(profile, previous);
+      } catch {
+        this.recoveryResumeRequested.delete(profileId);
+      }
+      this.cancelStartupRecoveryWaiters(profileId);
+      return true;
+    }
+    if (sessionId && operation.sessionId !== sessionId) return false;
+    operation.abortRequested = true;
+    this.updateOperationStatus(profileId, operation, "stopping");
+    if (operation.phase === "attached" && operation.port) {
+      try {
+        await operation.port.abort();
+      } catch {
+        // Keep the detached port as the owner of the original client-proxy
+        // broker. Its transport may be gone, but monitor cleanup still needs
+        // releaseDetachedResources() to close that retained reverse tunnel.
+        operation.phase = "detached";
+        const profile = await this.store.get(profileId);
+        this.monitorDetachedOperation(profile, operation);
+      }
+      return true;
+    }
+    if (operation.phase === "detached") {
+      const profile = await this.store.get(profileId);
+      this.monitorDetachedOperation(profile, operation);
+    }
+    // Opening and post-settlement reconciliation remain owned by the original
+    // request. Its callbacks observe abortRequested and its finally releases.
+    return true;
   }
 
   /**
@@ -532,6 +784,310 @@ export class RemoteProfileService {
     }
     return next;
   }
+
+  private reserveOperation(
+    profileId: string,
+    sessionId: string | null,
+    cwd: string,
+    state: ActiveRemoteOperation["state"] = "running",
+    phase: ActiveRemoteOperation["phase"] = "opening",
+    daemonId: string | null = null
+  ): ActiveRemoteOperation {
+    if (this.activeOperations.has(profileId)) {
+      throw new PiRemoteError(
+        "remote-profile-busy",
+        "Another session operation is already active for this remote profile.",
+        { phase: "session", retryable: true, remediation: "Wait for it to finish or stop it before starting another session." }
+      );
+    }
+    let resolveDone = () => {};
+    const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+    const operation: ActiveRemoteOperation = {
+      sessionId,
+      cwd,
+      port: null,
+      abortRequested: false,
+      phase,
+      state,
+      promptDispatched: false,
+      promptAccepted: false,
+      daemonId,
+      detachedEgress: null,
+      monitoring: false,
+      done,
+      resolveDone
+    };
+    this.activeOperations.set(profileId, operation);
+    this.publishStatus({ profileId, sessionOperation: operationStatus(operation) });
+    return operation;
+  }
+
+  private releaseOperation(profileId: string, operation: ActiveRemoteOperation): void {
+    if (this.activeOperations.get(profileId) !== operation) return;
+    this.activeOperations.delete(profileId);
+    this.publishStatus({ profileId, sessionOperation: null });
+    operation.resolveDone();
+  }
+
+  private updateOperationStatus(profileId: string, operation: ActiveRemoteOperation, state: ActiveRemoteOperation["state"]): void {
+    if (this.activeOperations.get(profileId) !== operation) return;
+    operation.state = state;
+    this.publishStatus({ profileId, sessionOperation: operationStatus(operation) });
+  }
+
+  /**
+   * Stop serializes with the operation it aborts, but a detached monitor
+   * retries an unreachable host forever. Past this bound Stop reports that it
+   * could not be confirmed while the monitor keeps retrying in the background,
+   * so one offline host can never park the stop request indefinitely.
+   */
+  private async awaitStopConfirmation(operation: ActiveRemoteOperation): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        operation.done,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new PiRemoteError(
+            "remote-stop-timeout",
+            "The remote stop could not be confirmed because the host has not answered.",
+            {
+              phase: "runtime",
+              retryable: true,
+              remediation: "The stop keeps retrying in the background and completes when the host is reachable again."
+            }
+          )), STOP_CONFIRMATION_TIMEOUT_MS);
+          timer.unref();
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private recoverActiveOperation(profile: RemoteProfile, runtimeInfo: RuntimeInfo): void {
+    const active = runtimeInfo.activeRpc;
+    if (!active?.busy || this.activeOperations.has(profile.id)) return;
+    const operation = this.reserveOperation(
+      profile.id,
+      active.sessionId,
+      normalizeRemotePath(active.cwd),
+      "reconnecting",
+      "detached",
+      runtimeInfo.daemonId
+    );
+    this.monitorDetachedOperation(profile, operation, runtimeInfo);
+  }
+
+  private async recoverActiveOperationsOnStartup(): Promise<void> {
+    let profiles: RemoteProfile[];
+    try {
+      profiles = await this.store.list();
+    } catch {
+      return;
+    }
+    for (const profile of profiles) {
+      this.scheduleProfileStartupRecovery(profile);
+    }
+  }
+
+  private scheduleProfileStartupRecovery(profile: RemoteProfile, previous?: Promise<void>): void {
+    const recovery = previous
+      ? previous.then(async () => {
+          if (this.cancelledStartupRecovery.has(profile.id)) return;
+          let currentProfile: RemoteProfile;
+          try { currentProfile = await this.store.get(profile.id); }
+          catch { return; }
+          await this.recoverProfileOnStartup(currentProfile);
+        })
+      : this.recoverProfileOnStartup(profile);
+    this.startupRecoveryByProfile.set(profile.id, recovery);
+    void recovery.then(() => {
+      if (this.startupRecoveryByProfile.get(profile.id) === recovery) {
+        this.startupRecoveryByProfile.delete(profile.id);
+      }
+    });
+  }
+
+  private async resumeProfileStartupRecovery(profile: RemoteProfile, previous?: Promise<void>): Promise<void> {
+    await previous;
+    // Removal wins over a failed Stop that was waiting for the old probe to
+    // leave. Multiple failed Stops coalesce into one resumed recovery.
+    if (!this.recoveryResumeRequested.delete(profile.id)) return;
+    let currentProfile: RemoteProfile;
+    try { currentProfile = await this.store.get(profile.id); }
+    catch { return; }
+    this.cancelledStartupRecovery.delete(profile.id);
+    this.scheduleProfileStartupRecovery(currentProfile);
+  }
+
+  private cancelStartupRecoveryWaiters(profileId: string): boolean {
+    const waiters = this.startupRecoveryWaiters.get(profileId);
+    if (!waiters?.size) return false;
+    this.startupRecoveryWaiters.delete(profileId);
+    for (const cancel of waiters) cancel();
+    return true;
+  }
+
+  private async awaitProfileStartupRecovery(profileId: string, cancellable = false): Promise<boolean> {
+    // The first promise only discovers and schedules profiles from local JSON.
+    // An operation waits for its own SSH probe, never for an unrelated host.
+    await this.startupRecovery;
+    while (true) {
+      const recovery = this.startupRecoveryByProfile.get(profileId);
+      if (!recovery) return true;
+      if (!cancellable) {
+        await recovery;
+      } else {
+        let cancel = () => {};
+        const cancelled = new Promise<"cancelled">((resolve) => {
+          cancel = () => resolve("cancelled");
+          const waiters = this.startupRecoveryWaiters.get(profileId) ?? new Set<() => void>();
+          waiters.add(cancel);
+          this.startupRecoveryWaiters.set(profileId, waiters);
+        });
+        const outcome = await Promise.race([recovery.then(() => "recovered" as const), cancelled]);
+        const waiters = this.startupRecoveryWaiters.get(profileId);
+        waiters?.delete(cancel);
+        if (!waiters?.size) this.startupRecoveryWaiters.delete(profileId);
+        if (outcome === "cancelled") return false;
+      }
+      // A failed Stop can replace the recovery as the previous promise settles.
+      // Re-read the map so Send cannot slip between those two generations.
+      if (this.startupRecoveryByProfile.get(profileId) === recovery) return true;
+    }
+  }
+
+  private async recoverProfileOnStartup(profile: RemoteProfile): Promise<void> {
+    let currentProfile = profile;
+    for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
+      if (this.cancelledStartupRecovery.has(profile.id)) return;
+      if (attempt > 0) {
+        try { currentProfile = await this.store.get(profile.id); }
+        catch { return; }
+      }
+      try {
+        const info = await this.runtime.inspectRuntime(currentProfile, { install: false });
+        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(currentProfile, info);
+        return;
+      } catch (error) {
+        if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
+        if (!isRetryableError(error)) return;
+        if (attempt === STARTUP_RECOVERY_ATTEMPTS - 1) {
+          // Keep the gate for both egress modes. Even remote-direct RPC can be
+          // reclaimed by a matching client, so Send must not race undiscovered
+          // busy work when the host returns after an offline app startup.
+          await this.retryStartupRecovery(profile.id);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      }
+    }
+  }
+
+  private async retryStartupRecovery(profileId: string): Promise<void> {
+    let delayMs = 2_000;
+    while (!this.cancelledStartupRecovery.has(profileId)) {
+      await delayUnref(delayMs);
+      if (this.cancelledStartupRecovery.has(profileId)) return;
+      let currentProfile: RemoteProfile;
+      try { currentProfile = await this.store.get(profileId); }
+      catch { return; }
+      try {
+        const info = await this.runtime.inspectRuntime(currentProfile, { install: false });
+        if (!this.cancelledStartupRecovery.has(profileId)) this.recoverActiveOperation(currentProfile, info);
+        return;
+      } catch (error) {
+        if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
+        if (!isRetryableError(error)) return;
+        delayMs = Math.min(delayMs * 2, 60_000);
+      }
+    }
+  }
+
+  private monitorDetachedOperation(profile: RemoteProfile, operation: ActiveRemoteOperation, recoveredRuntimeInfo?: RuntimeInfo): void {
+    if (operation.monitoring || this.activeOperations.get(profile.id) !== operation) return;
+    operation.monitoring = true;
+    void (async () => {
+      try {
+        while (this.activeOperations.get(profile.id) === operation) {
+          if (operation.abortRequested) {
+            try {
+              await this.runtime.stop(profile);
+              await this.refreshSessions(profile.id).catch((error) => { this.publishFailure(profile.id, error); });
+              return;
+            } catch (error) {
+              if (!isRetryableError(error)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+              continue;
+            }
+          }
+          if (profile.network.mode === "client-proxy" && !operation.port && !operation.detachedEgress) {
+            try {
+              operation.detachedEgress = await this.runtime.reconnectDetachedEgress(profile, recoveredRuntimeInfo);
+              recoveredRuntimeInfo = undefined;
+            } catch (error) {
+              if (!isRetryableError(error)) throw error;
+              this.updateOperationStatus(profile.id, operation, "reconnecting");
+              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+              continue;
+            }
+          }
+          let info: RuntimeInfo;
+          try {
+            info = await this.runtime.inspectRuntime(profile, { install: false });
+          } catch (error) {
+            if (!isRetryableError(error)) throw error;
+            this.updateOperationStatus(profile.id, operation, "reconnecting");
+            await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+            continue;
+          }
+          const active = info.activeRpc;
+          if (operation.daemonId && info.daemonId !== operation.daemonId) {
+            throw new PiRemoteError(
+              "remote-daemon-restarted",
+              "The remote daemon restarted while this prompt was detached, so its completion cannot be confirmed.",
+              { phase: "session", remediation: "Open the remote session history to verify what was saved before retrying." }
+            );
+          }
+          if (!active) {
+            throw new PiRemoteError(
+              "remote-rpc-vanished",
+              "The remote Pi process disappeared while this prompt was detached, so its completion cannot be confirmed.",
+              { phase: "session", remediation: "Open the remote session history to verify what was saved before retrying." }
+            );
+          }
+          if (!active.busy) {
+            await this.runtime.stop(profile);
+            await this.refreshSessions(profile.id);
+            return;
+          }
+          if (operation.sessionId && active.sessionId && operation.sessionId !== active.sessionId) {
+            throw new PiRemoteError(
+              "remote-session-changed",
+              "The remote daemon is running a different session than the one Jasmine was tracking.",
+              { phase: "session", retryable: true }
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+        }
+      } catch (error) {
+        if (this.activeOperations.get(profile.id) === operation) {
+          this.publishFailure(profile.id, error);
+        }
+      } finally {
+        operation.monitoring = false;
+        const cleanup = await Promise.allSettled([
+          operation.port?.releaseDetachedResources(),
+          operation.detachedEgress?.close()
+        ].filter((entry): entry is Promise<void> => Boolean(entry)));
+        const failedCleanup = cleanup.find((entry) => entry.status === "rejected");
+        if (failedCleanup?.status === "rejected" && this.activeOperations.get(profile.id) === operation) {
+          this.publishFailure(profile.id, failedCleanup.reason);
+        }
+        this.releaseOperation(profile.id, operation);
+      }
+    })();
+  }
 }
 
 let service: RemoteProfileService | null = null;
@@ -571,8 +1127,13 @@ function emptyStatus(profileId: string): RemoteProfileStatus {
     runtimeVersion: null,
     piVersion: null,
     checkedAt: null,
-    busy: false
+    busy: false,
+    sessionOperation: null
   };
+}
+
+function operationStatus(operation: ActiveRemoteOperation): NonNullable<RemoteProfileStatus["sessionOperation"]> {
+  return { sessionId: operation.sessionId, cwd: operation.cwd, state: operation.state };
 }
 
 function firstFailure(checks: Array<{ status: string; message: string }>): string | null {
@@ -584,6 +1145,17 @@ function describeError(error: unknown): { code: string | null; message: string; 
     return { code: error.code, message: error.message, remediation: error.remediation ?? null };
   }
   return { code: null, message: error instanceof Error ? error.message : "The remote host could not be reached.", remediation: null };
+}
+
+function isRetryableError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function delayUnref(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
 }
 
 function toProfileSummary(profile: RemoteProfile): RemoteProfileSummary {
