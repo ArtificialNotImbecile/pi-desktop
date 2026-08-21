@@ -53,9 +53,11 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   activeSessionRef.current = props.activeSessionId;
 
   useEffect(() => {
+    promptRequestRef.current += 1;
     setDrafting(false);
     setDraft("");
     setOptimisticPrompt(null);
+    return () => { promptRequestRef.current += 1; };
   }, [props.profile?.id, props.cwd]);
 
   const activeSessionId = props.activeSessionId;
@@ -65,6 +67,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       setFailedSessionId(null);
       return;
     }
+    setDrafting(false);
     let cancelled = false;
     const request = ++requestRef.current;
     setLoadingSessionId(activeSessionId);
@@ -120,7 +123,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     const result = drafting ? started?.transcript ?? null : await props.onPromptSession(sessionId!, text);
     if (request !== promptRequestRef.current) return;
     if (result && activeSessionRef.current === sessionId) setTranscript(result);
-    if (started) {
+    if (started && activeSessionRef.current === null) {
       setTranscript(started.transcript);
       setDrafting(false);
       props.onSelectSession(started.session.sessionId);

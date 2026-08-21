@@ -6,6 +6,7 @@ import type {
   RemoteProfileStatus,
   RemoteProfileSummary,
   RemoteSessionSummary,
+  RemoteSessionStartResult,
   RemoteSessionTranscript,
   RemoteWorkspace
 } from "../../src/shared/ipc";
@@ -340,6 +341,41 @@ function PageHarness(props: { initialSessionId: string | null; sessions: RemoteS
 }
 
 describe("remote session reader", () => {
+  test("a completed first prompt never pulls the user back after the workspace unmounts", async () => {
+    const created = session({ sessionId: "created-after-leave", title: "remote work" });
+    const started: RemoteSessionStartResult = {
+      session: created,
+      transcript: transcript({ sessionId: created.sessionId, title: created.title })
+    };
+    let resolveStart!: (result: RemoteSessionStartResult | null) => void;
+    const onSelectSession = vi.fn();
+    const view = render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={status("ready")}
+        sessions={[]}
+        activeSessionId={null}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={onSelectSession}
+        onOpenSession={async () => null}
+        onBeginSession={() => {}}
+        onStartSession={() => new Promise((resolve) => { resolveStart = resolve; })}
+        onPromptSession={async () => null}
+        onAbortSession={async () => true}
+      />
+    ));
+    fireEvent.click(screen.getAllByRole("button", { name: "New session" })[0]!);
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "long remote task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    view.unmount();
+
+    await act(async () => { resolveStart(started); });
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
   test("an empty workspace creates a real session and can run its first prompt", async () => {
     fake = installFakeBridge();
     fake.setRemoteState({
