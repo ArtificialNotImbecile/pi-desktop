@@ -1,6 +1,6 @@
 {
   "name": "@jasmine-ai/pi-remote",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Managed, isolated Pi runtimes over OpenSSH with native TUI and headless RPC clients.",
   "keywords": [
     "pi-package",

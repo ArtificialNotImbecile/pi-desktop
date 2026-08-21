@@ -90,7 +90,7 @@ try {
   await import("node:fs/promises").then(({ mkdir }) => mkdir(corruptDir, { recursive: true }));
   await writeFile(path.join(corruptDir, "corrupt.tar.gz"), "not-a-runtime", "utf8");
   await writeFile(path.join(corruptDir, "artifact.json"), JSON.stringify({
-    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.1", piVersion: "0.84.2",
+    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.2", piVersion: "0.84.2",
     archive: "corrupt.tar.gz", archiveSha256: "0".repeat(64)
   }), "utf8");
   let corruptRejected = false;

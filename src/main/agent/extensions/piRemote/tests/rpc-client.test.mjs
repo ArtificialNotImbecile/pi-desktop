@@ -7,10 +7,9 @@ test("daemon client correlates framed requests and replays sequenced events over
   const clientToServer = new PassThrough();
   const serverToClient = new PassThrough();
   const decoder = new JsonFrameDecoder();
-  let helloAfterSeq;
   const runtimeInfo = {
     controlVersion: 1,
-    runtimeVersion: "0.1.1",
+    runtimeVersion: "0.1.2",
     piVersion: "0.84.2",
     nodeVersion: "bun-compiled",
     platform: "linux",
@@ -24,7 +23,6 @@ test("daemon client correlates framed requests and replays sequenced events over
   clientToServer.on("data", (chunk) => {
     for (const message of decoder.push(chunk)) {
       if (message.type === "hello") {
-        helloAfterSeq = message.afterSeq;
         fragmentedWrite(serverToClient, encodeJsonFrame({ type: "hello_ok", info: runtimeInfo, seq: 4 }));
         fragmentedWrite(serverToClient, encodeJsonFrame({ type: "event", event: { seq: 5, type: "replayed", data: { detached: true } } }));
       } else if (message.type === "request") {
@@ -32,9 +30,8 @@ test("daemon client correlates framed requests and replays sequenced events over
       }
     }
   });
-  const client = new DaemonClient({ readable: serverToClient, writable: clientToServer, close() { serverToClient.end(); clientToServer.end(); } }, 4);
+  const client = new DaemonClient({ readable: serverToClient, writable: clientToServer, close() { serverToClient.end(); clientToServer.end(); } });
   assert.deepEqual(await client.connect(), runtimeInfo);
-  assert.equal(helloAfterSeq, 4, "a replacement client resumes after the last event its predecessor observed");
   assert.deepEqual(await client.request("runtime.info"), { method: "runtime.info" });
   const events = [];
   client.subscribe((event) => events.push(event));
@@ -98,7 +95,7 @@ test("daemon client rejects pending requests and closes transport on an oversize
           type: "hello_ok",
           seq: 0,
           info: {
-            controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+            controlVersion: 1, runtimeVersion: "0.1.2", piVersion: "0.84.2", nodeVersion: "bun-compiled",
             platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
             remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
           }

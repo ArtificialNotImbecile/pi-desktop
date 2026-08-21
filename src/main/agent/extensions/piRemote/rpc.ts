@@ -30,9 +30,7 @@ export class DaemonClient {
   private disconnectedState = false;
   runtimeInfo?: RuntimeInfo;
 
-  constructor(private readonly target: string | ControlTransport, afterSeq = 0) {
-    this.lastSeq = afterSeq;
-  }
+  constructor(private readonly target: string | ControlTransport) {}
 
   async connect(): Promise<RuntimeInfo> {
     if ((this.socket && !this.socket.destroyed || this.transport) && this.runtimeInfo) return this.runtimeInfo;

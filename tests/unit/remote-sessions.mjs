@@ -594,24 +594,11 @@ try {
   ], "a prompt waits for settlement before closing the managed port without aborting remote work");
 
   const timeoutCalls = [];
-  let timeoutOpenCount = 0;
   const keepAlive = setTimeout(() => {}, 100);
   try {
-    await remoteRun.promptManagedRemoteSession({
+    await assert.rejects(remoteRun.promptManagedRemoteSession({
       async openSession(_profile, options) {
-        timeoutOpenCount += 1;
         timeoutCalls.push(["open", options]);
-        if (timeoutOpenCount === 2) {
-          return {
-            eventCursor: 1,
-            subscribe(listener) {
-              queueMicrotask(() => listener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
-              return () => { timeoutCalls.push(["unsubscribe-reconnected"]); };
-            },
-            async detach() { timeoutCalls.push(["detach-reconnected"]); },
-            async close(options) { timeoutCalls.push(["close-reconnected", options]); }
-          };
-        }
         return {
           eventCursor: 0,
           subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
@@ -620,7 +607,7 @@ try {
           async close() { timeoutCalls.push(["close"]); }
         };
       }
-    }, {}, "slow-session", "long task", () => {}, 5);
+    }, {}, "slow-session", "long task", () => {}, 5), (error) => error?.code === "prompt-timeout");
   } finally {
     clearTimeout(keepAlive);
   }
@@ -628,11 +615,8 @@ try {
     ["open", { sessionId: "slow-session" }],
     ["prompt"],
     ["unsubscribe"],
-    ["detach"],
-    ["open", { sessionId: "slow-session", afterSeq: 0 }],
-    ["unsubscribe-reconnected"],
-    ["close-reconnected", { abort: false }]
-  ], "a local timeout detaches, reattaches after the last sequence, and only stops after settlement");
+    ["detach"]
+  ], "a local timeout detaches without stopping the daemon-owned remote process");
 
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear
@@ -642,6 +626,14 @@ try {
   assert.ok(refreshSessionsBody, "refreshSessions implementation must remain visible to the regression guard");
   assert.doesNotMatch(refreshSessionsBody, /state:\s*"checking"/u,
     "background session sync must not masquerade as a connection check");
+  assert.match(refreshSessionsBody, /listSessionsWithRuntime/u,
+    "session refresh must carry the daemon active-RPC snapshot used for restart recovery");
+  assert.match(remoteProfileServiceSource, /recoverActiveOperation\(profile, runtimeInfo\)/u);
+  const stopProfileBody = /async stopProfile[\s\S]*?(?=\n  listStatuses)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.match(stopProfileBody, /await active\.done/u,
+    "profile stop must wait until the active prompt handler has released its reservation");
+  assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
+    "detached work must stay monitored from daemon state rather than a stale client sequence");
 
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";

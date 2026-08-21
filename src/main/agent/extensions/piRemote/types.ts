@@ -1,5 +1,5 @@
 export const CONTROL_PROTOCOL_VERSION = 1;
-export const RUNTIME_VERSION = "0.1.1";
+export const RUNTIME_VERSION = "0.1.2";
 export const RUNTIME_PI_VERSION = "0.84.2";
 export const RUNTIME_NODE_VERSION = "bun-1.3.14-compiled";
 export const DEFAULT_REMOTE_ROOT = "${XDG_DATA_HOME:-$HOME/.local/share}/pi-remote";
@@ -60,6 +60,13 @@ export interface RuntimeInfo {
   remoteRoot: string;
   profileRoot: string;
   sessionRoot: string;
+  daemonId: string | null;
+  activeRpc: {
+    cwd: string;
+    sessionId: string | null;
+    busy: boolean;
+    startedAt: string;
+  } | null;
 }
 
 export interface RemoteSessionMetadata {
@@ -164,8 +171,6 @@ export interface OpenTuiOptions {
 export interface OpenSessionOptions {
   cwd?: string;
   sessionId?: string;
-  /** Replays only daemon events newer than the last event this client observed. */
-  afterSeq?: number;
 }
 
 export interface RemoteRuntimeManager {

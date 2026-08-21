@@ -63,6 +63,7 @@ interface RpcProcessState {
 }
 
 export class RemoteHostDaemon {
+  private readonly daemonId = randomUUID();
   private server?: Server;
   private readonly clients = new Set<Socket>();
   private readonly clientDecoders = new WeakMap<Socket, JsonFrameDecoder<PiRemoteControlMessage>>();
@@ -403,11 +404,18 @@ export class RemoteHostDaemon {
       artifactSha256: this.options.artifactSha256,
       capabilities: [
         "native-tui", "rpc-jsonl", "session-list", "prompt-text", "prompt-image", "steer", "follow-up",
-        "abort", "model", "thinking", "tree", "fork", "clone", "compact", "extension-ui", "client-proxy"
+        "abort", "model", "thinking", "tree", "fork", "clone", "compact", "extension-ui", "client-proxy", "rpc-status"
       ],
       remoteRoot: paths.remoteRoot,
       profileRoot: paths.profileRoot,
-      sessionRoot: paths.sessionDir
+      sessionRoot: paths.sessionDir,
+      daemonId: this.daemonId,
+      activeRpc: this.rpc ? {
+        cwd: this.rpc.cwd,
+        sessionId: this.rpc.sessionId ?? null,
+        busy: this.rpc.busy,
+        startedAt: this.rpc.startedAt
+      } : null
     };
   }
 

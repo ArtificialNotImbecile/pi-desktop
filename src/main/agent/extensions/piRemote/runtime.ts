@@ -168,7 +168,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     const egress = await this.startEgress(profile, info);
     let connection: Awaited<ReturnType<ManagedRemoteRuntime["connectDaemon"]>>;
     try {
-      connection = await this.connectDaemon(profile, info, options.afterSeq);
+      connection = await this.connectDaemon(profile, info);
     } catch (error) {
       await egress?.close();
       throw error;
@@ -200,14 +200,32 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
   }
 
   async listSessions(profile: RemoteProfile, options: RuntimeUseOptions = {}): Promise<RemoteSessionMetadata[]> {
+    return (await this.listSessionsWithRuntime(profile, options)).sessions;
+  }
+
+  async listSessionsWithRuntime(profile: RemoteProfile, options: RuntimeUseOptions = {}): Promise<{
+    sessions: RemoteSessionMetadata[];
+    runtimeInfo: RuntimeInfo;
+  }> {
     const info = await this.resolveRuntime(profile, options);
-    const { child, client } = await this.connectDaemon(profile, info);
+    const { child, client, remoteInfo } = await this.connectDaemon(profile, info);
     try {
-      return await client.request("sessions.list") as RemoteSessionMetadata[];
+      return {
+        sessions: await client.request("sessions.list") as RemoteSessionMetadata[],
+        runtimeInfo: remoteInfo
+      };
     } finally {
       client.close();
       child.kill();
     }
+  }
+
+  async inspectRuntime(profile: RemoteProfile, options: RuntimeUseOptions = {}): Promise<RuntimeInfo> {
+    const info = await this.resolveRuntime(profile, options);
+    const { child, client, remoteInfo } = await this.connectDaemon(profile, info);
+    client.close();
+    child.kill();
+    return remoteInfo;
   }
 
   async readSession(profile: RemoteProfile, sessionId: string, options: ReadSessionOptions = {}): Promise<RemoteSessionChunk> {
@@ -225,7 +243,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     }
   }
 
-  private async connectDaemon(profile: RemoteProfile, info: RuntimeInfo, afterSeq = 0): Promise<{
+  private async connectDaemon(profile: RemoteProfile, info: RuntimeInfo): Promise<{
     child: ChildProcessWithoutNullStreams;
     client: DaemonClient;
     remoteInfo: RuntimeInfo;
@@ -240,7 +258,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
       writable: child.stdin,
       close: () => child.kill()
     };
-    const client = new DaemonClient(transport, afterSeq);
+    const client = new DaemonClient(transport);
     const remoteInfo = await client.connect().catch((error) => {
       child.kill();
       throw new PiRemoteError("daemon-proxy-failed", "Failed to establish the remote daemon protocol.", {
@@ -472,7 +490,9 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
       capabilities: ["native-tui", "rpc-jsonl", "client-proxy"],
       remoteRoot: rootValue,
       profileRoot,
-      sessionRoot
+      sessionRoot,
+      daemonId: null,
+      activeRpc: null
     };
   }
 

@@ -10,7 +10,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const runtimeDir = path.join(packageRoot, "runtime", "linux-x64-glibc");
 const descriptorPath = path.join(runtimeDir, "artifact.json");
 const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
-if (descriptor.version !== 1 || descriptor.runtimeVersion !== "0.1.1" || descriptor.piVersion !== "0.84.2") {
+if (descriptor.version !== 1 || descriptor.runtimeVersion !== "0.1.2" || descriptor.piVersion !== "0.84.2") {
   throw new Error("Runtime artifact descriptor version does not match the package");
 }
 const archivePath = path.join(runtimeDir, descriptor.archive);
