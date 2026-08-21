@@ -171,7 +171,13 @@ export class RemoteProfileService {
       await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
       this.statuses.delete(profile.id);
     } finally {
-      if (!removed) this.cancelledStartupRecovery.delete(profileId);
+      if (!removed) {
+        this.cancelledStartupRecovery.delete(profileId);
+        let currentProfile: RemoteProfile | null = null;
+        try { currentProfile = await this.store.get(profileId); }
+        catch { /* a concurrently removed profile has nothing to recover */ }
+        if (currentProfile) this.scheduleProfileStartupRecovery(currentProfile);
+      }
     }
   }
 

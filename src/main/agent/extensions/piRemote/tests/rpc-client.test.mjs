@@ -198,15 +198,17 @@ test("Pi RPC port rejects inner commands when the daemon transport disconnects",
   const fakeClient = {
     subscribe(listener) { listener({ seq: 7, type: "rpc.message", data: { type: "agent_start" } }); return () => {}; },
     subscribeDisconnect(listener) { disconnectListeners.add(listener); return () => disconnectListeners.delete(listener); },
-    async request() { return { accepted: true }; },
+    async request(_method, _params, onWritten) { onWritten?.(); return { accepted: true }; },
     close() {}
   };
   const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl"]);
   const events = [];
   let accepted = false;
+  let dispatched = false;
   port.subscribe((event) => events.push(event));
-  const pending = port.prompt("sleep 180", [], () => { accepted = true; });
+  const pending = port.prompt("sleep 180", [], () => { accepted = true; }, () => { dispatched = true; });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatched, true, "dispatch is recorded after the control frame enters the writable transport");
   assert.equal(accepted, true, "daemon delivery is acknowledged before Pi's inner response");
   for (const listener of disconnectListeners) listener(new Error("fixture disconnect"));
   await assert.rejects(pending, (error) => error?.code === "daemon-disconnected" && error.retryable === true);

@@ -36,6 +36,8 @@ duplicate retry, while a changed daemon id reports that detached work vanished
 instead of presenting a host restart as normal settlement.
 Recovery reloads profile edits before every SSH retry, and a missing RPC under
 the same daemon id is also an explicit unconfirmed failure rather than success.
+Dispatch is recorded only after the control frame enters the writable transport;
+a failed local profile removal restarts the recovery it had cancelled.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

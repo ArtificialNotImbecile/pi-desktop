@@ -32,8 +32,7 @@ export async function startManagedRemoteSession(
     const sessionId = await port.createSession(cwd);
     await callbacks.onSessionId?.(sessionId, port);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs);
-    await callbacks.onPromptDispatched?.();
-    await port.prompt(text, [], callbacks.onPromptAccepted);
+    await port.prompt(text, [], callbacks.onPromptAccepted, callbacks.onPromptDispatched);
     await settled.promise;
     return sessionId;
   } catch (error) {
@@ -66,8 +65,7 @@ export async function promptManagedRemoteSession(
     port = await runtime.openSession(profile, { sessionId });
     await callbacks.onPort?.(port);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs ?? REMOTE_PROMPT_TIMEOUT_MS);
-    await callbacks.onPromptDispatched?.();
-    await port.prompt(text, [], callbacks.onPromptAccepted);
+    await port.prompt(text, [], callbacks.onPromptAccepted, callbacks.onPromptDispatched);
     await settled.promise;
   } catch (error) {
     failure = error;

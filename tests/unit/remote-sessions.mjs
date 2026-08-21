@@ -555,8 +555,9 @@ try {
         eventCursor: 0,
         subscribe(listener) { startListener = listener; return () => { startCalls.push(["unsubscribe"]); }; },
         async createSession(cwd) { startCalls.push(["create", cwd]); return "created-session"; },
-        async prompt(text, _images, onAccepted) {
+        async prompt(text, _images, onAccepted, onDispatched) {
           startCalls.push(["prompt", text]);
+          onDispatched?.();
           onAccepted?.();
           queueMicrotask(() => startListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
         },
@@ -564,13 +565,15 @@ try {
       };
     }
   }, {}, "/srv/application", "inspect the workspace", {
-    onPromptAccepted() { startCalls.push(["accepted"]); }
+    onPromptAccepted() { startCalls.push(["accepted"]); },
+    onPromptDispatched() { startCalls.push(["dispatched"]); }
   });
   assert.equal(startedSessionId, "created-session");
   assert.deepEqual(startCalls, [
     ["open", { cwd: "/srv/application" }],
     ["create", "/srv/application"],
     ["prompt", "inspect the workspace"],
+    ["dispatched"],
     ["accepted"],
     ["unsubscribe"],
     ["close", { abort: false }]
@@ -608,13 +611,14 @@ try {
         return {
           eventCursor: 0,
           subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
-          async prompt(_text, _images, onAccepted) { timeoutCalls.push(["prompt"]); onAccepted?.(); },
+          async prompt(_text, _images, onAccepted, onDispatched) { timeoutCalls.push(["prompt"]); onDispatched?.(); onAccepted?.(); },
           async detach() { timeoutCalls.push(["detach"]); },
           async close() { timeoutCalls.push(["close"]); }
         };
       }
     }, {}, "slow-session", "long task", {
       timeoutMs: 5,
+      onPromptDispatched() { timeoutCalls.push(["dispatched"]); },
       onPromptAccepted() { timeoutCalls.push(["accepted"]); }
     }), (error) => error?.code === "prompt-timeout");
   } finally {
@@ -623,6 +627,7 @@ try {
   assert.deepEqual(timeoutCalls, [
     ["open", { sessionId: "slow-session" }],
     ["prompt"],
+    ["dispatched"],
     ["accepted"],
     ["unsubscribe"],
     ["detach"]
@@ -635,8 +640,9 @@ try {
       return {
         eventCursor: 0,
         subscribe(listener) { transportListener = listener; return () => { disconnectCalls.push(["unsubscribe"]); }; },
-        async prompt(_text, _images, onAccepted) {
+        async prompt(_text, _images, onAccepted, onDispatched) {
           disconnectCalls.push(["prompt"]);
+          onDispatched?.();
           onAccepted?.();
           queueMicrotask(() => transportListener({ seq: 1, type: "transport.disconnected" }));
         },
@@ -645,10 +651,12 @@ try {
       };
     }
   }, {}, "disconnect-session", "long task", {
+    onPromptDispatched() { disconnectCalls.push(["dispatched"]); },
     onPromptAccepted() { disconnectCalls.push(["accepted"]); }
   }), (error) => error?.code === "daemon-disconnected");
   assert.deepEqual(disconnectCalls, [
     ["prompt"],
+    ["dispatched"],
     ["accepted"],
     ["unsubscribe"],
     ["detach"]
@@ -660,8 +668,9 @@ try {
       return {
         eventCursor: 0,
         subscribe() { return () => {}; },
-        async prompt() {
+        async prompt(_text, _images, _onAccepted, onDispatched) {
           ambiguousCalls.push(["prompt"]);
+          onDispatched?.();
           const error = new Error("daemon acknowledgement was lost");
           error.code = "daemon-disconnected";
           throw error;
@@ -675,10 +684,34 @@ try {
     onPromptAccepted() { ambiguousCalls.push(["accepted"]); }
   }), (error) => error?.code === "daemon-disconnected");
   assert.deepEqual(ambiguousCalls, [
-    ["dispatched"],
     ["prompt"],
+    ["dispatched"],
     ["detach"]
   ], "a lost daemon acknowledgement preserves the distinct dispatched boundary");
+
+  const prewriteCalls = [];
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe() { return () => {}; },
+        async prompt() {
+          prewriteCalls.push(["prompt"]);
+          const error = new Error("disconnected before transport write");
+          error.code = "daemon-disconnected";
+          throw error;
+        },
+        async detach() { prewriteCalls.push(["detach"]); },
+        async close() { prewriteCalls.push(["close"]); }
+      };
+    }
+  }, {}, "prewrite-session", "not sent", {
+    onPromptDispatched() { prewriteCalls.push(["dispatched"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(prewriteCalls, [
+    ["prompt"],
+    ["detach"]
+  ], "a disconnect before writable.write must not mark the prompt dispatched");
 
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear
@@ -750,6 +783,8 @@ try {
     "persistent recovery must reload profile edits before each SSH retry");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery\.add\(profileId\)[\s\S]*await this\.awaitProfileStartupRecovery\(profileId\)/u,
     "profile removal must cancel an offline recovery before waiting for its gate");
+  assert.match(remoteProfileServiceSource, /if \(!removed\)[\s\S]*scheduleProfileStartupRecovery\(currentProfile\)/u,
+    "a failed local profile removal must restart startup recovery");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
     "removing a profile must cancel its persistent background recovery");
 

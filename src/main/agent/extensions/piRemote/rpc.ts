@@ -93,13 +93,16 @@ export class DaemonClient {
     return () => this.disconnectListeners.delete(listener);
   }
 
-  async request(method: string, params?: unknown): Promise<unknown> {
+  async request(method: string, params?: unknown, onWritten?: () => void): Promise<unknown> {
     const writable = this.transport?.writable ?? this.socket;
     if (this.disconnectedState || !writable || this.socket?.destroyed) throw new PiRemoteError("daemon-disconnected", "Remote daemon is not connected.", { phase: "protocol", retryable: true });
     const id = randomUUID();
     const result = new Promise<unknown>((resolve, reject) => this.pending.set(id, { resolve, reject }));
     const message: RequestMessage = { type: "request", id, method, ...(params === undefined ? {} : { params }) };
-    try { writable.write(encodeJsonFrame(message)); }
+    try {
+      writable.write(encodeJsonFrame(message));
+      try { onWritten?.(); } catch { /* observers cannot revoke a written frame */ }
+    }
     catch (error) { this.rejectConnection(this.transportError(error)); }
     return result;
   }
@@ -250,8 +253,8 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     this.sessionId = session.id;
   }
 
-  prompt(text: string, images: RemoteImageInput[] = [], onAccepted?: () => void): Promise<void> {
-    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }, onAccepted).then(() => undefined);
+  prompt(text: string, images: RemoteImageInput[] = [], onAccepted?: () => void, onDispatched?: () => void): Promise<void> {
+    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }, onAccepted, onDispatched).then(() => undefined);
   }
 
   steer(text: string, images: RemoteImageInput[] = []): Promise<void> {
@@ -294,12 +297,12 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     // client-proxy resources that must outlive a detached control connection.
   }
 
-  private async rpc(command: Record<string, unknown>, onAccepted?: () => void): Promise<unknown> {
+  private async rpc(command: Record<string, unknown>, onAccepted?: () => void, onDispatched?: () => void): Promise<unknown> {
     const id = typeof command.id === "string" ? command.id : randomUUID();
     const message = { ...command, id };
     const result = new Promise<unknown>((resolve, reject) => this.rpcPending.set(id, { resolve, reject }));
     try {
-      await this.client.request("rpc.send", { command: message });
+      await this.client.request("rpc.send", { command: message }, onDispatched);
       // rpc.send resolves after the daemon has written the command into Pi's
       // stdin. The later inner RPC response may be lost with the transport, but
       // at this point retrying the prompt is already unsafe.

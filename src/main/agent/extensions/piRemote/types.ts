@@ -144,7 +144,7 @@ export interface RemoteSessionPort {
   listSessions(): Promise<RemoteSessionMetadata[]>;
   createSession(cwd: string): Promise<string>;
   openSession(sessionId: string): Promise<void>;
-  prompt(text: string, images?: RemoteImageInput[], onAccepted?: () => void): Promise<void>;
+  prompt(text: string, images?: RemoteImageInput[], onAccepted?: () => void, onDispatched?: () => void): Promise<void>;
   steer(text: string, images?: RemoteImageInput[]): Promise<void>;
   followUp(text: string, images?: RemoteImageInput[]): Promise<void>;
   abort(): Promise<void>;
