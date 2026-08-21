@@ -7,9 +7,11 @@ response remains a rejection and restores the draft. Detached client-proxy work 
 its reverse tunnel until settlement. Service startup discovers daemon-owned
 work without waiting for navigation, reacquires the stable egress lease after
 an app restart, and retains it through transient daemon-proxy or Stop failures.
-After its short startup gate, transient client-proxy host outages continue
+After the initial startup attempts, transient client-proxy host outages continue
 recovery in the background with capped backoff until the host answers or the
-profile is removed; direct profiles do not acquire a hidden polling loop.
+profile is removed. That background promise remains the same profile's Send
+gate, while removal cancels it before waiting; direct profiles do not acquire a
+hidden polling loop.
 The bounded startup gate is per profile, so an offline saved host never delays
 work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a

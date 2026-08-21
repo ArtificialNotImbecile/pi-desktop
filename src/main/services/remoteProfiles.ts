@@ -143,10 +143,12 @@ export class RemoteProfileService {
    * says so, and this is what makes that promise true.
   */
   async removeProfile(profileId: string): Promise<void> {
-    await this.awaitProfileStartupRecovery(profileId);
     this.cancelledStartupRecovery.add(profileId);
     let removed = false;
     try {
+      // Cancellation makes an offline client-proxy recovery leave its gate;
+      // otherwise removing that profile could wait forever for SSH to return.
+      await this.awaitProfileStartupRecovery(profileId);
       if (this.activeOperations.has(profileId)) {
         throw new PiRemoteError(
           "remote-profile-busy",
@@ -835,9 +837,10 @@ export class RemoteProfileService {
 
   private async recoverProfileOnStartup(profile: RemoteProfile): Promise<void> {
     for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
+      if (this.cancelledStartupRecovery.has(profile.id)) return;
       try {
         const info = await this.runtime.inspectRuntime(profile, { install: false });
-        this.recoverActiveOperation(profile, info);
+        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(profile, info);
         return;
       } catch (error) {
         if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
@@ -846,7 +849,7 @@ export class RemoteProfileService {
           // Only client-proxy work depends on this app staying online after
           // the bounded startup gate. Direct profiles remain daemon-owned and
           // are rediscovered by their next explicit session refresh.
-          if (profile.network.mode === "client-proxy") void this.retryStartupRecovery(profile);
+          if (profile.network.mode === "client-proxy") await this.retryStartupRecovery(profile);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
