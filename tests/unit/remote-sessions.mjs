@@ -632,6 +632,11 @@ try {
   const stopProfileBody = /async stopProfile[\s\S]*?(?=\n  listStatuses)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
   assert.match(stopProfileBody, /await active\.done/u,
     "profile stop must wait until the active prompt handler has released its reservation");
+  const abortSessionBody = /async abortSession[\s\S]*?(?=\n  async openSession)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.doesNotMatch(abortSessionBody, /releaseOperation/u,
+    "the abort handler must never release an opening or attached operation owned by its request");
+  assert.match(abortSessionBody, /operation\.phase === "detached"[\s\S]*monitorDetachedOperation/u,
+    "a detached Stop hands ownership to the daemon monitor");
   assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
     "detached work must stay monitored from daemon state rather than a stale client sequence");
 

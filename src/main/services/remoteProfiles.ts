@@ -59,6 +59,7 @@ type ActiveRemoteOperation = {
   cwd: string;
   port: RemoteSessionPort | null;
   abortRequested: boolean;
+  phase: "opening" | "attached" | "detached";
   state: "running" | "reconnecting" | "stopping";
   monitoring: boolean;
   done: Promise<void>;
@@ -381,6 +382,7 @@ export class RemoteProfileService {
         {
           onPort: async (port) => {
             operation.port = port;
+            operation.phase = "attached";
             this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
               await port.abort().catch(() => {});
@@ -413,6 +415,7 @@ export class RemoteProfileService {
       if (isDetachedPromptFailure(error)) {
         detached = true;
         operation.port = null;
+        operation.phase = "detached";
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
@@ -437,6 +440,7 @@ export class RemoteProfileService {
         text,
         async (port) => {
           operation.port = port;
+          operation.phase = "attached";
           this.updateOperationStatus(profile.id, operation, "running");
           if (operation.abortRequested) {
             await port.abort().catch(() => {});
@@ -451,6 +455,7 @@ export class RemoteProfileService {
       if (isDetachedPromptFailure(error)) {
         detached = true;
         operation.port = null;
+        operation.phase = "detached";
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
@@ -467,20 +472,23 @@ export class RemoteProfileService {
     operation.abortRequested = true;
     this.updateOperationStatus(profileId, operation, "stopping");
     if (operation.port) {
-      await operation.port.abort();
+      try {
+        await operation.port.abort();
+      } catch {
+        operation.port = null;
+        operation.phase = "detached";
+        const profile = await this.store.get(profileId);
+        this.monitorDetachedOperation(profile, operation);
+      }
       return true;
     }
-    const profile = await this.store.get(profileId);
-    try {
-      await this.runtime.stop(profile);
-      this.releaseOperation(profile.id, operation);
-      await this.refreshSessions(profile.id).catch((error) => { this.publishFailure(profile.id, error); });
-      return true;
-    } catch (error) {
-      this.publishFailure(profile.id, error);
-      this.updateOperationStatus(profile.id, operation, "reconnecting");
-      return false;
+    if (operation.phase === "detached") {
+      const profile = await this.store.get(profileId);
+      this.monitorDetachedOperation(profile, operation);
     }
+    // Opening and post-settlement reconciliation remain owned by the original
+    // request. Its callbacks observe abortRequested and its finally releases.
+    return true;
   }
 
   /**
@@ -690,7 +698,8 @@ export class RemoteProfileService {
     profileId: string,
     sessionId: string | null,
     cwd: string,
-    state: ActiveRemoteOperation["state"] = "running"
+    state: ActiveRemoteOperation["state"] = "running",
+    phase: ActiveRemoteOperation["phase"] = "opening"
   ): ActiveRemoteOperation {
     if (this.activeOperations.has(profileId)) {
       throw new PiRemoteError(
@@ -706,6 +715,7 @@ export class RemoteProfileService {
       cwd,
       port: null,
       abortRequested: false,
+      phase,
       state,
       monitoring: false,
       done,
@@ -736,7 +746,8 @@ export class RemoteProfileService {
       profile.id,
       active.sessionId,
       normalizeRemotePath(active.cwd),
-      "reconnecting"
+      "reconnecting",
+      "detached"
     );
     this.monitorDetachedOperation(profile, operation);
   }
@@ -746,7 +757,18 @@ export class RemoteProfileService {
     operation.monitoring = true;
     void (async () => {
       try {
-        while (this.activeOperations.get(profile.id) === operation && !operation.abortRequested) {
+        while (this.activeOperations.get(profile.id) === operation) {
+          if (operation.abortRequested) {
+            try {
+              await this.runtime.stop(profile);
+              await this.refreshSessions(profile.id).catch((error) => { this.publishFailure(profile.id, error); });
+              return;
+            } catch (error) {
+              if (!isRetryableError(error)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+              continue;
+            }
+          }
           let info: RuntimeInfo;
           try {
             info = await this.runtime.inspectRuntime(profile, { install: false });
@@ -772,12 +794,12 @@ export class RemoteProfileService {
           await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
         }
       } catch (error) {
-        if (this.activeOperations.get(profile.id) === operation && !operation.abortRequested) {
+        if (this.activeOperations.get(profile.id) === operation) {
           this.publishFailure(profile.id, error);
         }
       } finally {
         operation.monitoring = false;
-        if (!operation.abortRequested) this.releaseOperation(profile.id, operation);
+        this.releaseOperation(profile.id, operation);
       }
     })();
   }
