@@ -12,13 +12,17 @@ import type {
   ProviderUpdateRequest,
   PromptTemplateRecord,
   PromptTemplateSource,
+  RemoteDoctorReport,
+  RemoteProfileStatus,
+  RemoteProfileSummary,
+  RemoteWorkspace,
   SkillCreateRequest,
   SkillOpenResponse,
   SkillRecord,
   SkillSource,
   SkillUpdateRequest,
 } from "../../../shared/ipc";
-import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, SearchIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
+import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, SearchIcon, ServerIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
 import { LocalSettingsPage } from "./LocalSettingsPage";
 import { ProviderDetailPage } from "./ProviderDetailPage";
 import { useI18n } from "../../i18n";
@@ -49,6 +53,17 @@ export function ProviderSettingsPanel(props: {
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
+  remoteProfiles: RemoteProfileSummary[];
+  remoteWorkspaces: RemoteWorkspace[];
+  remoteStatuses: Record<string, RemoteProfileStatus>;
+  selectedRemoteProfileId: string | null;
+  onSelectRemoteProfile(profileId: string): void;
+  onAddRemoteProfile(): void;
+  onAddRemoteWorkspace(profileId: string): void;
+  onRemoveRemoteProfile(profileId: string): Promise<unknown>;
+  onCheckRemoteProfile(profileId: string): Promise<RemoteDoctorReport | null>;
+  onInstallRemoteRuntime(profileId: string): Promise<boolean>;
+  onStopRemoteProfile(profileId: string): Promise<boolean>;
   onSelectProvider(providerId: string): void;
   onNavigateSection?(section: SettingsSection, providerId?: string): void;
   onClose(): void;
@@ -161,6 +176,7 @@ export function ProviderSettingsPanel(props: {
           <strong>{t("app.settings")}</strong>
           <button className={section === "general" ? "active" : ""} type="button" onClick={() => selectSection("general")}><SettingsIcon /><span>{t("settings.nav.general")}</span></button>
           <button className={section === "providers" ? "active" : ""} type="button" onClick={() => selectSection("providers", props.selectedProviderId)}><TerminalIcon /><span>{t("settings.nav.providers")}</span></button>
+          <button className={section === "remotes" ? "active" : ""} type="button" onClick={() => selectSection("remotes")}><ServerIcon /><span>{t("settings.nav.remotes")}</span></button>
           <button className={section === "appearance" ? "active" : ""} type="button" onClick={() => selectSection("appearance")}><EyeIcon /><span>{t("settings.nav.appearance")}</span></button>
           <button className={section === "memory" ? "active" : ""} type="button" onClick={() => selectSection("memory")}><BrainIcon /><span>{t("settings.nav.memory")}</span></button>
           <button className={section === "skills" ? "active" : ""} type="button" onClick={() => selectSection("skills")}><SkillIcon /><span>{t("settings.nav.skills")}</span></button>
@@ -220,6 +236,17 @@ export function ProviderSettingsPanel(props: {
               plugins={props.plugins}
               pluginsLoading={props.pluginsLoading}
               pluginSavingSource={props.pluginSavingSource}
+              remoteProfiles={props.remoteProfiles}
+              remoteWorkspaces={props.remoteWorkspaces}
+              remoteStatuses={props.remoteStatuses}
+              selectedRemoteProfileId={props.selectedRemoteProfileId}
+              onSelectRemoteProfile={props.onSelectRemoteProfile}
+              onAddRemoteProfile={props.onAddRemoteProfile}
+              onAddRemoteWorkspace={props.onAddRemoteWorkspace}
+              onRemoveRemoteProfile={props.onRemoveRemoteProfile}
+              onCheckRemoteProfile={props.onCheckRemoteProfile}
+              onInstallRemoteRuntime={props.onInstallRemoteRuntime}
+              onStopRemoteProfile={props.onStopRemoteProfile}
               onClose={props.onClose}
               onOpenMemory={props.onOpenMemory}
               onOpenActivity={props.onOpenActivity}

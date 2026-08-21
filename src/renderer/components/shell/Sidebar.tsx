@@ -4,6 +4,7 @@ import { ChevronRightIcon, EditIcon, ExternalLinkIcon, FolderIcon, InfoIcon, Mor
 import { IconButton } from "../ui/IconButton";
 import { MenuItem, MenuSurface } from "../ui";
 import { useI18n } from "../../i18n";
+import { RemoteTree, type RemoteTreeProps } from "../remote/RemoteTree";
 
 declare global {
   interface Window {
@@ -46,6 +47,7 @@ export const Sidebar = memo(function Sidebar(props: {
   onRemoveProject(projectId: string): void;
   onOpenProjectInExplorer(projectId: string): void;
   onCloseFloatingSurfaces(): void;
+  remote: RemoteTreeProps;
 }) {
   recordHarnessRender();
   const { t } = useI18n();
@@ -274,6 +276,8 @@ export const Sidebar = memo(function Sidebar(props: {
             </div>
           );
         })}
+
+        <RemoteTree {...props.remote} />
 
         <div className="sidebar-section-heading chats-heading">
           <span>{t("sidebar.chats")}</span>

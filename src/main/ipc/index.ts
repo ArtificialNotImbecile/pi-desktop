@@ -12,6 +12,7 @@ import { registerPermissionApprovalIpc } from "./permissionApproval.js";
 import { registerProviderIpc } from "./providers.js";
 import { registerProjectIpc } from "./projects.js";
 import { registerPromptTemplateIpc } from "./promptTemplates.js";
+import { registerRemoteIpc } from "./remotes.js";
 import { registerRightPanelIpc } from "./rightPanels.js";
 import { registerSkillIpc } from "./skills.js";
 import { registerTerminalIpc } from "./terminal.js";
@@ -25,6 +26,7 @@ export function registerIpc(context: IpcContext): void {
   registerPermissionApprovalIpc(context);
   registerThreadIpc(context);
   registerProjectIpc(context);
+  registerRemoteIpc(context);
   registerChatIpc(context);
   registerTraceIpc(context);
   registerMemoryIpc(context);

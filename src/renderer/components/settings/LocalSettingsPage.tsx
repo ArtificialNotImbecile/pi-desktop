@@ -14,6 +14,10 @@ import type {
   ReasoningEffort,
   PromptTemplateRecord,
   PromptTemplateSource,
+  RemoteDoctorReport,
+  RemoteProfileStatus,
+  RemoteProfileSummary,
+  RemoteWorkspace,
   ExecutablePickerKind,
   SkillCreateRequest,
   SkillOpenResponse,
@@ -24,6 +28,7 @@ import type {
 } from "../../../shared/ipc";
 import type { SettingsSection as SettingsSectionKey } from "./ProviderSettingsPanel";
 import { PluginsSettingsPage } from "./PluginsSettingsPage";
+import { RemoteSettingsPage } from "./RemoteSettingsPage";
 import { PromptTemplatesSettingsPage } from "./PromptTemplatesSettingsPage";
 import { SkillsSettingsPage } from "./SkillsSettingsPage";
 import { SettingsHeader } from "./SettingsHeader";
@@ -57,7 +62,18 @@ export function LocalSettingsPage(props: {
   plugins: PluginPackageRecord[];
   pluginsLoading: boolean;
   pluginSavingSource: string | null;
+  remoteProfiles: RemoteProfileSummary[];
+  remoteWorkspaces: RemoteWorkspace[];
+  remoteStatuses: Record<string, RemoteProfileStatus>;
+  selectedRemoteProfileId: string | null;
   onClose(): void;
+  onSelectRemoteProfile(profileId: string): void;
+  onAddRemoteProfile(): void;
+  onAddRemoteWorkspace(profileId: string): void;
+  onRemoveRemoteProfile(profileId: string): Promise<unknown>;
+  onCheckRemoteProfile(profileId: string): Promise<RemoteDoctorReport | null>;
+  onInstallRemoteRuntime(profileId: string): Promise<boolean>;
+  onStopRemoteProfile(profileId: string): Promise<boolean>;
   onOpenMemory(): void;
   onOpenActivity(): void;
   onUpdateAppSettings(request: AppSettingsUpdateRequest): Promise<AppSettings | null>;
@@ -154,6 +170,24 @@ export function LocalSettingsPage(props: {
         onUpdateSkill={props.onUpdateSkill}
         onDeleteSkill={props.onDeleteSkill}
         onOpenSkill={props.onOpenSkill}
+      />
+    );
+  }
+
+  if (props.section === "remotes") {
+    return (
+      <RemoteSettingsPage
+        profiles={props.remoteProfiles}
+        workspaces={props.remoteWorkspaces}
+        statuses={props.remoteStatuses}
+        selectedProfileId={props.selectedRemoteProfileId}
+        onSelectProfile={props.onSelectRemoteProfile}
+        onAddProfile={props.onAddRemoteProfile}
+        onAddWorkspace={props.onAddRemoteWorkspace}
+        onRemoveProfile={props.onRemoveRemoteProfile}
+        onCheck={props.onCheckRemoteProfile}
+        onInstall={props.onInstallRemoteRuntime}
+        onStop={props.onStopRemoteProfile}
       />
     );
   }

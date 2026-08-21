@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import net, { type Server, type Socket } from "node:net";
 import path from "node:path";
 import { PiRemoteError, asPiRemoteError } from "./errors.js";
@@ -196,6 +196,7 @@ export class RemoteHostDaemon {
       case "rpc.send": return this.sendRpc(asObject(request.params), socket);
       case "rpc.stop": return this.stopRpcForClient(socket, Boolean(asObject(request.params).abort ?? true));
       case "sessions.list": return listSessionMetadata(this.options.paths.sessionDir);
+      case "sessions.read": return readSessionRange(this.options.paths.sessionDir, asObject(request.params));
       case "daemon.stop": {
         setTimeout(() => void this.close({ abort: true }), 25).unref();
         return { stopping: true };
@@ -690,28 +691,248 @@ async function listSessionMetadata(sessionDir: string): Promise<Array<Record<str
   return results.sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
 }
 
+const SESSION_SCAN_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Summarizes one session by streaming it a chunk at a time. Listing is an
+ * ordinary sidebar action that runs over every session a profile owns, so it
+ * holds one line at a time rather than a whole transcript -- and never a second
+ * copy of it -- however long the history has grown.
+ */
 async function sessionMetadata(filePath: string): Promise<Record<string, unknown> | null> {
+  let handle;
   try {
-    const raw = await readFile(filePath, "utf8");
-    const lines = raw.split("\n").filter(Boolean);
-    const header = JSON.parse(lines[0] || "null") as Record<string, unknown> | null;
-    if (!header || header.type !== "session" || typeof header.id !== "string") return null;
-    let name: string | undefined;
-    for (let index = lines.length - 1; index > 0; index -= 1) {
-      const value = JSON.parse(lines[index]!) as Record<string, unknown>;
-      if (value.type === "session_info" && typeof value.name === "string") { name = value.name; break; }
-    }
     const fileStat = await stat(filePath);
+    handle = await open(filePath, "r");
+    const buffer = Buffer.allocUnsafe(SESSION_SCAN_CHUNK_BYTES);
+    const decoder = new TextDecoder("utf8");
+    let pending = "";
+    let position = 0;
+    let headerLine: string | null = null;
+    let header: Record<string, unknown> | null = null;
+    let name: string | undefined;
+    let turnCount = 0;
+    let preview: string | undefined;
+
+    const consume = (line: string): boolean => {
+      if (headerLine === null) {
+        headerLine = line;
+        header = parseJsonLine(line);
+        // Anything that does not open with a session header is not a session.
+        return Boolean(header && header.type === "session" && typeof header.id === "string");
+      }
+      // One malformed line must not discard a whole session; the file is
+      // appended to while it is being read.
+      const value = parseJsonLine(line);
+      if (!value) return true;
+      if (value.type === "session_info" && typeof value.name === "string") name = value.name;
+      if (value.type !== "message") return true;
+      const message = value.message as Record<string, unknown> | undefined;
+      if (!message || message.role !== "user") return true;
+      turnCount += 1;
+      if (preview === undefined) {
+        const text = messageText(message.content);
+        if (text) preview = text.slice(0, 120);
+      }
+      return true;
+    };
+
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, SESSION_SCAN_CHUNK_BYTES, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      // Streaming decode so a multi-byte character split across a chunk
+      // boundary is not turned into replacement characters.
+      pending += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+      let newline = pending.indexOf("\n");
+      while (newline >= 0) {
+        const line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        if (line && !consume(line)) return null;
+        newline = pending.indexOf("\n");
+      }
+    }
+    pending += decoder.decode();
+    // A file still being appended to can end without its final newline.
+    if (pending && !consume(pending)) return null;
+    if (headerLine === null || !header) return null;
+
+    const parsed = header as Record<string, unknown>;
     return {
-      id: header.id,
-      cwd: typeof header.cwd === "string" ? header.cwd : "",
-      createdAt: typeof header.timestamp === "string" ? header.timestamp : fileStat.birthtime.toISOString(),
+      id: parsed.id,
+      cwd: typeof parsed.cwd === "string" ? parsed.cwd : "",
+      createdAt: typeof parsed.timestamp === "string" ? parsed.timestamp : fileStat.birthtime.toISOString(),
       updatedAt: fileStat.mtime.toISOString(),
-      ...(name ? { name } : {})
+      turnCount,
+      sizeBytes: fileStat.size,
+      headerFingerprint: fingerprintHeader(headerLine),
+      ...(name ? { name } : {}),
+      ...(preview ? { preview } : {})
     };
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
+}
+
+function parseJsonLine(line: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(line) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pi message content is a string or a content-part array; only text is a usable preview. */
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === "text" && typeof candidate.text === "string") parts.push(candidate.text);
+  }
+  return parts.join(" ").replace(/\s+/gu, " ").trim();
+}
+
+function fingerprintHeader(headerLine: string): string {
+  return createHash("sha256").update(headerLine, "utf8").digest("hex").slice(0, 32);
+}
+
+const DEFAULT_SESSION_READ_BYTES = 1024 * 1024;
+const MAX_SESSION_READ_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Reads one byte range of a session file so a client can append what it does not
+ * have yet instead of downloading the whole transcript again. The header
+ * fingerprint travels with every chunk: if the prefix a client cached is no
+ * longer the prefix on disk, its offset is meaningless and it must start over.
+ */
+async function readSessionRange(sessionDir: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = requiredSessionId(params.id);
+  const fromOffset = optionalByteCount(params.fromOffset, "fromOffset") ?? 0;
+  const requested = optionalByteCount(params.maxBytes, "maxBytes") ?? DEFAULT_SESSION_READ_BYTES;
+  const maxBytes = Math.min(Math.max(requested, 1), MAX_SESSION_READ_BYTES);
+  const located = await findSessionFile(sessionDir, id);
+  if (!located) {
+    throw new PiRemoteError("session-not-found", `Remote session ${id} was not found.`, { phase: "session" });
+  }
+  const handle = await open(located.filePath, "r");
+  try {
+    // The header is fingerprinted through the handle the range is read from, not
+    // through the path. A session file replaced between locating it and opening
+    // it would otherwise return the old inode's fingerprint with the new
+    // inode's bytes, which is precisely the case the client cannot detect: it
+    // would append a different transcript's tail to its cached prefix.
+    const header = await readHeaderLineFrom(handle);
+    const headerValue = header ? parseJsonLine(header) : null;
+    if (!header || !headerValue || headerValue.type !== "session" || headerValue.id !== id) {
+      throw new PiRemoteError("session-not-found", `Remote session ${id} was not found.`, {
+        phase: "session",
+        remediation: "Refresh the session list; the remote file was replaced.",
+        safeDetails: { replaced: true }
+      });
+    }
+    const headerFingerprint = fingerprintHeader(header);
+    const fileStat = await handle.stat();
+    if (fromOffset > fileStat.size) {
+      throw new PiRemoteError("session-offset-past-end", "The requested session offset is past the end of the remote file.", {
+        phase: "session",
+        remediation: "Read the session from offset 0; the remote file was replaced or truncated.",
+        safeDetails: { size: fileStat.size, fromOffset }
+      });
+    }
+    const length = Math.min(maxBytes, fileStat.size - fromOffset);
+    const buffer = Buffer.allocUnsafe(length);
+    let read = 0;
+    while (read < length) {
+      const { bytesRead } = await handle.read(buffer, read, length - read, fromOffset + read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    return {
+      id: located.id,
+      offset: fromOffset,
+      bytes: read,
+      size: fileStat.size,
+      data: buffer.subarray(0, read).toString("base64"),
+      headerFingerprint,
+      eof: fromOffset + read >= fileStat.size
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+const HEADER_PROBE_BYTES = 64 * 1024;
+
+/**
+ * Finds a session by the id in its header rather than by filename, and only
+ * reads the first line of each candidate. The path always comes from walking the
+ * profile's own session directory, so a hostile id cannot escape it.
+ */
+async function findSessionFile(
+  sessionDir: string,
+  id: string
+): Promise<{ filePath: string; id: string; headerFingerprint: string } | null> {
+  const walk = async (directory: string): Promise<{ filePath: string; id: string; headerFingerprint: string } | null> => {
+    for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        const found = await walk(target);
+        if (found) return found;
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      const headerLine = await readHeaderLine(target);
+      if (!headerLine) continue;
+      const header = parseJsonLine(headerLine);
+      if (!header || header.type !== "session" || header.id !== id) continue;
+      return { filePath: target, id, headerFingerprint: fingerprintHeader(headerLine) };
+    }
+    return null;
+  };
+  return walk(sessionDir);
+}
+
+async function readHeaderLine(filePath: string): Promise<string | null> {
+  const handle = await open(filePath, "r").catch(() => null);
+  if (!handle) return null;
+  try {
+    return await readHeaderLineFrom(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The header of whatever this handle is open on, whatever the path now holds. */
+async function readHeaderLineFrom(handle: FileHandle): Promise<string | null> {
+  try {
+    const buffer = Buffer.allocUnsafe(HEADER_PROBE_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, HEADER_PROBE_BYTES, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const newline = text.indexOf("\n");
+    return newline < 0 ? null : text.slice(0, newline);
+  } catch {
+    return null;
+  }
+}
+
+function requiredSessionId(value: unknown): string {
+  const id = optionalSessionId(value);
+  if (!id) throw new PiRemoteError("session-id-invalid", "sessionId is required.", { phase: "session" });
+  return id;
+}
+
+function optionalByteCount(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new PiRemoteError(`${name}-invalid`, `${name} must be a non-negative integer.`, { phase: "session" });
+  }
+  return value;
 }
 
 function requiredAbsolutePath(value: unknown, name: string): string {

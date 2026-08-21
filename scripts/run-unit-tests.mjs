@@ -61,6 +61,7 @@ const tasks = [
   { name: "renderer-font-assets", steps: [["node", "--no-warnings", "tests/unit/renderer-font-assets.mjs"]] },
   { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
   { name: "local-files", steps: [["node", "--no-warnings", "tests/unit/local-files.mjs"]] },
+  { name: "remote-sessions", steps: [["node", "--no-warnings", "tests/unit/remote-sessions.mjs"]] },
   {
     name: "context-capture",
     steps: [

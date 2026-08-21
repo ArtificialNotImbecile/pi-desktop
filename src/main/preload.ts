@@ -43,6 +43,16 @@ import type {
   MemoryCreateRequest,
   MemoryListRequest,
   MemoryUpdateRequest,
+  RemoteDirectoryListRequest,
+  RemoteProfileCreateRequest,
+  RemoteProfileIdRequest,
+  RemoteProfileStatus,
+  RemoteProfileUpdateRequest,
+  RemoteSessionListRequest,
+  RemoteSessionOpenRequest,
+  RemoteWorkspaceAddRequest,
+  RemoteWorkspaceIdRequest,
+  RemoteWorkspaceUpdateRequest,
   SkillCreateRequest,
   SkillSourceCreateRequest,
   SkillUpdateRequest,
@@ -112,6 +122,59 @@ const api: JasmineApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: WorkspaceProject) => callback(payload);
     ipcRenderer.on("projects:opened", listener);
     return () => ipcRenderer.removeListener("projects:opened", listener);
+  },
+  listRemoteProfiles() {
+    return ipcRenderer.invoke("remotes:listProfiles");
+  },
+  createRemoteProfile(request: RemoteProfileCreateRequest) {
+    return ipcRenderer.invoke("remotes:createProfile", request);
+  },
+  updateRemoteProfile(request: RemoteProfileUpdateRequest) {
+    return ipcRenderer.invoke("remotes:updateProfile", request);
+  },
+  removeRemoteProfile(request: RemoteProfileIdRequest) {
+    return ipcRenderer.invoke("remotes:removeProfile", request);
+  },
+  checkRemoteProfile(request: RemoteProfileIdRequest) {
+    return ipcRenderer.invoke("remotes:checkProfile", request);
+  },
+  installRemoteRuntime(request: RemoteProfileIdRequest) {
+    return ipcRenderer.invoke("remotes:installRuntime", request);
+  },
+  stopRemoteProfile(request: RemoteProfileIdRequest) {
+    return ipcRenderer.invoke("remotes:stopProfile", request);
+  },
+  listRemoteProfileStatuses() {
+    return ipcRenderer.invoke("remotes:listStatuses");
+  },
+  listRemoteWorkspaces(request?: Partial<RemoteProfileIdRequest>) {
+    return ipcRenderer.invoke("remotes:listWorkspaces", request);
+  },
+  addRemoteWorkspace(request: RemoteWorkspaceAddRequest) {
+    return ipcRenderer.invoke("remotes:addWorkspace", request);
+  },
+  updateRemoteWorkspace(request: RemoteWorkspaceUpdateRequest) {
+    return ipcRenderer.invoke("remotes:updateWorkspace", request);
+  },
+  removeRemoteWorkspace(request: RemoteWorkspaceIdRequest) {
+    return ipcRenderer.invoke("remotes:removeWorkspace", request);
+  },
+  listRemoteDirectory(request: RemoteDirectoryListRequest) {
+    return ipcRenderer.invoke("remotes:listDirectory", request);
+  },
+  listRemoteSessions(request: RemoteSessionListRequest) {
+    return ipcRenderer.invoke("remotes:listSessions", request);
+  },
+  refreshRemoteSessions(request: RemoteProfileIdRequest) {
+    return ipcRenderer.invoke("remotes:refreshSessions", request);
+  },
+  openRemoteSession(request: RemoteSessionOpenRequest) {
+    return ipcRenderer.invoke("remotes:openSession", request);
+  },
+  onRemoteStatusChanged(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: RemoteProfileStatus) => callback(payload);
+    ipcRenderer.on("remotes:status-changed", listener);
+    return () => ipcRenderer.removeListener("remotes:status-changed", listener);
   },
   getWorkingSnapshot() {
     return ipcRenderer.invoke("working:snapshot");

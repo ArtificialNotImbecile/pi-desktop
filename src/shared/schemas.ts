@@ -60,6 +60,77 @@ export const projectOpenInExplorerSchema = z.object({
   id: z.string().min(1)
 });
 
+// Mirrors the validation pi-remote's ProfileStore applies, so the renderer gets
+// a field-level rejection before an SSH argument is ever assembled. A leading
+// dash in a host would otherwise read as an ssh option.
+const remoteProfileNameSchema = z.string().trim().regex(/^[\p{L}\p{N}][\p{L}\p{N}._-]{0,63}$/u);
+const remoteSshHostSchema = z.string().trim().min(1).max(255).regex(/^[^\s\0\r\n-][^\s\0\r\n]*$/u);
+const remotePathSchema = z.string().trim().max(4096).regex(/^\/[^\0\r\n]*$/u);
+const remoteNoProxySchema = z.array(z.string().trim().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/u)).max(64);
+const remoteAllowedPortsSchema = z.array(z.number().int().min(1).max(65_535)).min(1).max(64);
+const remoteProxyEnvSchema = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).max(128);
+const remoteProfileIdValueSchema = z.string().uuid();
+const remoteSessionIdSchema = z.string().min(1).max(256).regex(/^[^\0\r\n]+$/u);
+
+export const remoteProfileCreateSchema = z.object({
+  name: remoteProfileNameSchema,
+  sshHost: remoteSshHostSchema,
+  sshPort: z.union([z.number().int().min(1).max(65_535), z.null()]).optional(),
+  defaultCwd: z.union([remotePathSchema, z.null()]).optional(),
+  networkMode: z.enum(["remote-direct", "client-proxy"]),
+  noProxy: remoteNoProxySchema.optional(),
+  allowedPorts: remoteAllowedPortsSchema.optional(),
+  upstreamProxyEnv: z.union([remoteProxyEnvSchema, z.null()]).optional()
+});
+
+export const remoteProfileUpdateSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  name: remoteProfileNameSchema.optional(),
+  sshHost: remoteSshHostSchema.optional(),
+  sshPort: z.union([z.number().int().min(1).max(65_535), z.null()]).optional(),
+  defaultCwd: z.union([remotePathSchema, z.null()]).optional(),
+  noProxy: remoteNoProxySchema.optional(),
+  allowedPorts: remoteAllowedPortsSchema.optional(),
+  upstreamProxyEnv: z.union([remoteProxyEnvSchema, z.null()]).optional()
+});
+
+export const remoteProfileIdSchema = z.object({
+  profileId: remoteProfileIdValueSchema
+});
+
+export const remoteWorkspaceAddSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  cwd: remotePathSchema,
+  name: z.string().trim().min(1).max(80).optional(),
+  setDefault: z.boolean().optional()
+});
+
+export const remoteWorkspaceUpdateSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(80).optional(),
+  pinned: z.boolean().optional()
+});
+
+export const remoteWorkspaceIdSchema = z.object({
+  id: z.string().uuid()
+});
+
+export const remoteSessionListSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  cwd: remotePathSchema.optional()
+});
+
+export const remoteSessionOpenSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  sessionId: remoteSessionIdSchema,
+  refetch: z.boolean().optional()
+});
+
+export const remoteDirectoryListSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  path: remotePathSchema.optional()
+});
+
 export const messageListRequestSchema = z.union([
   threadIdSchema,
   z.object({

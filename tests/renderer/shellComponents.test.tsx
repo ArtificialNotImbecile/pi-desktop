@@ -164,6 +164,23 @@ describe("shell renderer components", () => {
           onRemoveProject={vi.fn()}
           onOpenProjectInExplorer={vi.fn()}
           onCloseFloatingSurfaces={closeFloatingSurfaces}
+          remoteHostGroups={[]}
+          remoteWorkspaces={[]}
+          remoteSessions={{}}
+          remoteStatuses={{}}
+          remoteRefreshingProfileIds={[]}
+          activeRemoteProfileId={null}
+          activeRemoteSessionId={null}
+          onAddRemoteProfile={vi.fn()}
+          onExpandRemoteProfile={vi.fn()}
+          onRefreshRemoteProfile={vi.fn()}
+          onOpenRemoteProfileSettings={vi.fn()}
+          onCheckRemoteProfile={vi.fn()}
+          onAddRemoteWorkspace={vi.fn()}
+          onRemoveRemoteWorkspace={vi.fn()}
+          onToggleRemoteWorkspacePinned={vi.fn()}
+          onOpenRemoteWorkspace={vi.fn()}
+          onOpenRemoteSession={vi.fn()}
         >
           <div />
         </AppShell>

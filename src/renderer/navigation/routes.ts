@@ -1,6 +1,7 @@
 export const settingsSections = [
   "general",
   "providers",
+  "remotes",
   "appearance",
   "memory",
   "skills",
@@ -27,6 +28,8 @@ export type JasmineRoute =
   | { name: "thread"; threadId: string; projectId?: string | null }
   | { name: "working" }
   | { name: "settings"; section: SettingsSection; providerId?: string }
+  | { name: "remoteWorkspace"; profileId: string; cwd: string }
+  | { name: "remoteSession"; profileId: string; sessionId: string }
   | { name: "rightPanel"; threadId: string; panel: RightPanelMode; projectId?: string | null };
 
 export function routeToPath(route: JasmineRoute): string {
@@ -43,6 +46,10 @@ export function routeToPath(route: JasmineRoute): string {
         : `/chats/${encodeRouteSegment(route.threadId)}/right-panel/${route.panel}`;
     case "working":
       return "/working";
+    case "remoteWorkspace":
+      return `/remotes/${encodeRouteSegment(route.profileId)}/workspace/${encodeRouteSegment(route.cwd)}`;
+    case "remoteSession":
+      return `/remotes/${encodeRouteSegment(route.profileId)}/session/${encodeRouteSegment(route.sessionId)}`;
     case "settings":
       if (route.section === "providers" && route.providerId) {
         return `/settings/providers/${encodeRouteSegment(route.providerId)}`;
@@ -99,6 +106,24 @@ export function parseJasminePath(path: string): JasmineRoute | null {
     return null;
   }
 
+  const remoteWorkspaceMatch = cleanPath.match(/^\/remotes\/([^/]+)\/workspace\/([^/]+)$/);
+  if (remoteWorkspaceMatch) {
+    return {
+      name: "remoteWorkspace",
+      profileId: decodeRouteSegment(remoteWorkspaceMatch[1]),
+      cwd: decodeRouteSegment(remoteWorkspaceMatch[2])
+    };
+  }
+
+  const remoteSessionMatch = cleanPath.match(/^\/remotes\/([^/]+)\/session\/([^/]+)$/);
+  if (remoteSessionMatch) {
+    return {
+      name: "remoteSession",
+      profileId: decodeRouteSegment(remoteSessionMatch[1]),
+      sessionId: decodeRouteSegment(remoteSessionMatch[2])
+    };
+  }
+
   const settingsMatch = cleanPath.match(/^\/settings\/([^/]+)(?:\/([^/]+))?$/);
   if (settingsMatch) {
     const section = pathToSettingsSection(settingsMatch[1]);
@@ -117,6 +142,8 @@ export function routeLabel(route: JasmineRoute): string {
   if (route.name === "newChat") return route.projectId ? `Project ${route.projectId} new chat` : "New chat";
   if (route.name === "thread") return route.projectId ? `Project ${route.projectId} thread ${route.threadId}` : `Thread ${route.threadId}`;
   if (route.name === "working") return "Working";
+  if (route.name === "remoteWorkspace") return `Remote workspace ${route.cwd}`;
+  if (route.name === "remoteSession") return `Remote session ${route.sessionId}`;
   if (route.name === "rightPanel") return `${route.panel} panel`;
   return route.providerId ? `Settings ${route.section}/${route.providerId}` : `Settings ${route.section}`;
 }

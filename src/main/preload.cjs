@@ -52,6 +52,59 @@ contextBridge.exposeInMainWorld("jasmine", {
     ipcRenderer.on("projects:opened", listener);
     return () => ipcRenderer.removeListener("projects:opened", listener);
   },
+  listRemoteProfiles() {
+    return ipcRenderer.invoke("remotes:listProfiles");
+  },
+  createRemoteProfile(request) {
+    return ipcRenderer.invoke("remotes:createProfile", request);
+  },
+  updateRemoteProfile(request) {
+    return ipcRenderer.invoke("remotes:updateProfile", request);
+  },
+  removeRemoteProfile(request) {
+    return ipcRenderer.invoke("remotes:removeProfile", request);
+  },
+  checkRemoteProfile(request) {
+    return ipcRenderer.invoke("remotes:checkProfile", request);
+  },
+  installRemoteRuntime(request) {
+    return ipcRenderer.invoke("remotes:installRuntime", request);
+  },
+  stopRemoteProfile(request) {
+    return ipcRenderer.invoke("remotes:stopProfile", request);
+  },
+  listRemoteProfileStatuses() {
+    return ipcRenderer.invoke("remotes:listStatuses");
+  },
+  listRemoteWorkspaces(request) {
+    return ipcRenderer.invoke("remotes:listWorkspaces", request);
+  },
+  addRemoteWorkspace(request) {
+    return ipcRenderer.invoke("remotes:addWorkspace", request);
+  },
+  updateRemoteWorkspace(request) {
+    return ipcRenderer.invoke("remotes:updateWorkspace", request);
+  },
+  removeRemoteWorkspace(request) {
+    return ipcRenderer.invoke("remotes:removeWorkspace", request);
+  },
+  listRemoteDirectory(request) {
+    return ipcRenderer.invoke("remotes:listDirectory", request);
+  },
+  listRemoteSessions(request) {
+    return ipcRenderer.invoke("remotes:listSessions", request);
+  },
+  refreshRemoteSessions(request) {
+    return ipcRenderer.invoke("remotes:refreshSessions", request);
+  },
+  openRemoteSession(request) {
+    return ipcRenderer.invoke("remotes:openSession", request);
+  },
+  onRemoteStatusChanged(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("remotes:status-changed", listener);
+    return () => ipcRenderer.removeListener("remotes:status-changed", listener);
+  },
   getWorkingSnapshot() {
     return ipcRenderer.invoke("working:snapshot");
   },

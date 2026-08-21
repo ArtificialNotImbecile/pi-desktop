@@ -68,7 +68,7 @@ export async function runCli(argv: string[], io: CliIo = defaultIo, dependencies
     }
     if (group === "prompt") return await promptCommand(runtime, store, command, rest, io, json);
     if (group === "shell") return await shellCommand(runtime, store, command, rest, io, json);
-    if (group === "sessions" && command === "list") return await sessionsCommand(runtime, store, rest, io, json);
+    if (group === "sessions") return await sessionsCommand(runtime, store, command, rest, io, json);
     if (group === "runtime") return await runtimeCommand(runtime, store, command, rest, io, json);
     if (group === "auth") return await authCommand(runtime, store, command, rest, io, json);
     if (group === "config") return await configCommand(runtime, store, command, rest, io, json);
@@ -128,12 +128,27 @@ async function profileCommand(store: ProfileStore, command: string | undefined, 
     printValue(await store.get(requiredPositional(args[0], "profile")), io, json);
     return 0;
   }
+  if (command === "update") {
+    const target = requiredPositional(args[0], "profile");
+    // An empty string clears an optional field; an absent flag leaves it alone.
+    const updated = await store.update(target, {
+      ...(option(args, "--name") === undefined ? {} : { name: option(args, "--name")! }),
+      ...(option(args, "--host") === undefined ? {} : { sshHost: option(args, "--host")! }),
+      ...(option(args, "--port") === undefined ? {} : { sshPort: option(args, "--port") ? parsePort(option(args, "--port")!) : null }),
+      ...(option(args, "--cwd") === undefined ? {} : { defaultCwd: option(args, "--cwd") || null }),
+      ...(option(args, "--no-proxy") === undefined ? {} : { noProxy: splitList(option(args, "--no-proxy")) }),
+      ...(option(args, "--allow-port") === undefined ? {} : { allowedPorts: splitList(option(args, "--allow-port")).map(parsePort) }),
+      ...(option(args, "--upstream-proxy-env") === undefined ? {} : { upstreamProxyEnv: option(args, "--upstream-proxy-env") || null })
+    });
+    printValue(updated, io, json);
+    return 0;
+  }
   if (command === "remove") {
     const removed = await store.remove(requiredPositional(args[0], "profile"));
     printValue({ removed: removed.name, remoteDataPreserved: true }, io, json);
     return 0;
   }
-  throw new PiRemoteError("cli-command-invalid", "Usage: pi-remote profile add|list|show|remove", { phase: "profile" });
+  throw new PiRemoteError("cli-command-invalid", "Usage: pi-remote profile add|list|show|update|remove", { phase: "profile" });
 }
 
 async function runtimeCommand(runtime: ManagedRemoteRuntime, store: ProfileStore, command: string | undefined, args: string[], io: CliIo, json: boolean): Promise<number> {
@@ -151,8 +166,22 @@ async function runtimeCommand(runtime: ManagedRemoteRuntime, store: ProfileStore
   throw new PiRemoteError("cli-command-invalid", "Usage: pi-remote runtime status|install|upgrade <profile>", { phase: "runtime" });
 }
 
-async function sessionsCommand(runtime: ManagedRemoteRuntime, store: ProfileStore, args: string[], io: CliIo, json: boolean): Promise<number> {
+async function sessionsCommand(runtime: ManagedRemoteRuntime, store: ProfileStore, command: string | undefined, args: string[], io: CliIo, json: boolean): Promise<number> {
   const profile = await store.get(requiredPositional(args[0], "profile"));
+  if (command === "read") {
+    const fromOffset = option(args, "--from-offset");
+    const chunk = await runtime.readSession(profile, requiredOption(args, "--session"), {
+      ...(fromOffset ? { fromOffset: parseByteCount(fromOffset) } : {}),
+      ...(option(args, "--max-bytes") ? { maxBytes: parseByteCount(option(args, "--max-bytes")!) } : {})
+    });
+    // The transcript itself goes to stdout only in JSON mode; the human form
+    // reports the range so a caller can drive the loop without a wall of text.
+    printValue(json ? chunk : { id: chunk.id, offset: chunk.offset, bytes: chunk.bytes, size: chunk.size, eof: chunk.eof }, io, json);
+    return 0;
+  }
+  if (command !== "list") {
+    throw new PiRemoteError("cli-command-invalid", "Usage: pi-remote sessions list|read <profile> [--session ID] [--from-offset N]", { phase: "session" });
+  }
   printValue(await runtime.listSessions(profile), io, json);
   return 0;
 }
@@ -349,6 +378,11 @@ function parsePort(value: string): number {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new PiRemoteError("port-invalid", `Invalid port ${value}.`, { phase: "profile" });
   return port;
 }
+function parseByteCount(value: string): number {
+  const bytes = Number(value);
+  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new PiRemoteError("byte-count-invalid", `Invalid byte count ${value}.`, { phase: "session" });
+  return bytes;
+}
 function afterDoubleDash(args: string[]): string[] { const index = args.indexOf("--"); return index < 0 ? [] : args.slice(index + 1); }
 function mimeType(filePath: string): string {
   const extension = path.extname(filePath).toLocaleLowerCase();
@@ -365,11 +399,13 @@ function helpText(): string {
 Usage:
   pi-remote profile add <name> --host <ssh-alias> [--port N] [--cwd /path] [--network remote-direct|client-proxy]
   pi-remote profile list|show|remove
+  pi-remote profile update <profile> [--name N] [--host H] [--port N] [--cwd /path] [--no-proxy LIST] [--allow-port LIST]
   pi-remote doctor <profile> [--json]
   pi-remote connect <profile> [--cwd /path] [--continue|--resume|--session ID] [-- <pi args>]
   pi-remote prompt <profile> --text <message> [--image FILE] [--json]
   pi-remote shell <profile> -- <command>
   pi-remote sessions list <profile>
+  pi-remote sessions read <profile> --session ID [--from-offset N] [--max-bytes N] [--json]
   pi-remote runtime status|install|upgrade <profile>
   pi-remote auth list|import|remove <profile> [--provider ID]
   pi-remote config sync <profile> [--from-agent-dir PATH] [--yes]

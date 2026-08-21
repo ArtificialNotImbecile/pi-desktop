@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { JsonFrameDecoder, PiRemoteError, ProfileStore, encodeJsonFrame } from "../dist/index.js";
-import { reclaimOwnedLock, removeOwnedLock, withOwnedFileLock } from "../dist/file-lock.js";
+import { isLockDirectoryGone, reclaimOwnedLock, removeOwnedLock, withOwnedFileLock } from "../dist/file-lock.js";
 
 test("profile storage is atomic, versioned, isolated, and validates SSH/path input", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-profile-"));
@@ -39,6 +39,75 @@ test("profile storage is atomic, versioned, isolated, and validates SSH/path inp
     assert.deepEqual(await store.list(), []);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("editing a profile keeps its id, so remote sessions and credentials stay attached", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-profile-update-"));
+  const filePath = path.join(root, "profiles.json");
+  try {
+    const store = new ProfileStore(filePath);
+    const created = await store.add({
+      name: "ops-box",
+      sshHost: "ops-box",
+      sshPort: 2222,
+      defaultCwd: "/srv/application",
+      networkMode: "client-proxy",
+      noProxy: ["db.internal"],
+      upstreamProxyEnv: "HTTPS_PROXY"
+    });
+    await store.add({ name: "other-box", sshHost: "other-box" });
+
+    const renamed = await store.update("ops-box", { name: "ops-box-eu", sshHost: "ops-box.eu" });
+    assert.equal(renamed.id, created.id, "remote state lives under profiles/<id>; a new id would orphan it");
+    assert.equal(renamed.name, "ops-box-eu");
+    assert.equal(renamed.sshHost, "ops-box.eu");
+    assert.equal(renamed.createdAt, created.createdAt);
+    assert.notEqual(renamed.updatedAt, created.updatedAt);
+
+    // Untouched fields survive a partial edit.
+    assert.equal(renamed.sshPort, 2222);
+    assert.equal(renamed.defaultCwd, "/srv/application");
+    assert.deepEqual(renamed.network.clientProxy.noProxy, ["db.internal"]);
+    assert.equal(renamed.network.mode, "client-proxy");
+
+    // An explicit null clears an optional field; undefined leaves it alone.
+    const cleared = await store.update(created.id, { sshPort: null, upstreamProxyEnv: null });
+    assert.equal("sshPort" in cleared, false);
+    assert.equal("upstreamProxyEnv" in cleared.network.clientProxy, false);
+    assert.equal(cleared.defaultCwd, "/srv/application");
+
+    const moved = await store.update(created.id, { defaultCwd: "/srv/etl", allowedPorts: [443, 80, 443] });
+    assert.equal(moved.defaultCwd, "/srv/etl");
+    assert.deepEqual(moved.network.clientProxy.allowedPorts, [80, 443]);
+
+    await assert.rejects(() => store.update(created.id, { name: "other-box" }), /already exists/u);
+    await assert.rejects(() => store.update(created.id, { sshHost: "-oProxyCommand=evil" }), /SSH host/u);
+    await assert.rejects(() => store.update(created.id, { defaultCwd: "relative" }), /absolute POSIX/u);
+    await assert.rejects(() => store.update(created.id, { upstreamProxyEnv: "https://proxy:8080" }), /environment variable name/u);
+    await assert.rejects(() => store.update("missing-box", { name: "whatever" }), /was not found/u);
+
+    // A rejected edit leaves the stored profile exactly as it was.
+    const reloaded = await new ProfileStore(filePath).get(created.id);
+    assert.equal(reloaded.name, "ops-box-eu");
+    assert.equal(reloaded.defaultCwd, "/srv/etl");
+    assert.equal((await store.list()).length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a lock directory a contender is deleting reads as gone on every platform", () => {
+  // Scanning the lock races another contender removing it. POSIX answers
+  // ENOENT, but Windows answers EPERM or EBUSY for a directory pending
+  // deletion, and treating those as failures made concurrent profile writes
+  // fail there while passing everywhere else.
+  for (const code of ["ENOENT", "ENOTDIR", "EPERM", "EBUSY"]) {
+    assert.equal(isLockDirectoryGone(code), true, `${code} means the lock is already gone`);
+  }
+  // A lock this process genuinely may not read is a real error, not a race.
+  for (const code of ["EACCES", "EIO", "EMFILE", undefined]) {
+    assert.equal(isLockDirectoryGone(code), false, `${code} is not a missing lock`);
   }
 });
 

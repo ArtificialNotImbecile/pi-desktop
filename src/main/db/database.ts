@@ -24,6 +24,8 @@ import type {
   ProviderModelUpdateRequest,
   ProviderStatus,
   ProviderUpdateRequest,
+  RemoteWorkspace,
+  RemoteWorkspaceSource,
   SkillRecord,
   SkillSource,
   SkillReference,
@@ -90,6 +92,24 @@ import {
   removeProject as removeProjectRow,
   renameProject as renameProjectRow
 } from "./repositories/projects.js";
+import {
+  getRemoteSession as getRemoteSessionRow,
+  getRemoteWorkspace as getRemoteWorkspaceRow,
+  listRemoteSessionCwds as listRemoteSessionCwdRows,
+  listRemoteSessions as listRemoteSessionRows,
+  listRemoteWorkspaces as listRemoteWorkspaceRows,
+  markMissingRemoteSessions as markMissingRemoteSessionRows,
+  pruneDiscoveredRemoteWorkspaces as pruneDiscoveredRemoteWorkspaceRows,
+  removeRemoteProfileData as removeRemoteProfileDataRows,
+  removeRemoteWorkspace as removeRemoteWorkspaceRow,
+  updateRemoteSessionCache as updateRemoteSessionCacheRow,
+  updateRemoteWorkspace as updateRemoteWorkspaceRow,
+  upsertRemoteSessions as upsertRemoteSessionRows,
+  upsertRemoteWorkspace as upsertRemoteWorkspaceRow,
+  type RemoteSessionCacheUpdate,
+  type RemoteSessionRecord,
+  type RemoteSessionUpsert
+} from "./repositories/remotes.js";
 import {
   getProvider as getProviderRow,
   listProviders as listProviderRows,
@@ -257,6 +277,60 @@ export class JasmineDatabase {
   removeProject(projectId: string): void {
     if (!this.getProject(projectId)) throw new Error("Project does not exist.");
     removeProjectRow(this.db, projectId);
+  }
+
+  listRemoteWorkspaces(profileId?: string): RemoteWorkspace[] {
+    return listRemoteWorkspaceRows(this.db, profileId);
+  }
+
+  getRemoteWorkspace(id: string): RemoteWorkspace | null {
+    return getRemoteWorkspaceRow(this.db, id);
+  }
+
+  upsertRemoteWorkspace(input: { profileId: string; cwd: string; name?: string; source: RemoteWorkspaceSource }): RemoteWorkspace {
+    return upsertRemoteWorkspaceRow(this.db, input, now());
+  }
+
+  updateRemoteWorkspace(input: { id: string; name?: string; pinned?: boolean }): RemoteWorkspace {
+    if (!this.getRemoteWorkspace(input.id)) throw new Error("Remote workspace does not exist.");
+    return updateRemoteWorkspaceRow(this.db, input, now());
+  }
+
+  removeRemoteWorkspace(id: string): void {
+    if (!this.getRemoteWorkspace(id)) throw new Error("Remote workspace does not exist.");
+    removeRemoteWorkspaceRow(this.db, id, now());
+  }
+
+  listRemoteSessions(profileId: string, cwd?: string): RemoteSessionRecord[] {
+    return listRemoteSessionRows(this.db, profileId, cwd);
+  }
+
+  getRemoteSession(profileId: string, sessionId: string): RemoteSessionRecord | null {
+    return getRemoteSessionRow(this.db, profileId, sessionId);
+  }
+
+  replaceRemoteSessionListing(profileId: string, sessions: RemoteSessionUpsert[]): void {
+    const timestamp = now();
+    this.runInTransaction(() => {
+      upsertRemoteSessionRows(this.db, sessions, timestamp);
+      markMissingRemoteSessionRows(this.db, profileId, sessions.map((session) => session.sessionId), timestamp);
+    });
+  }
+
+  updateRemoteSessionCache(update: RemoteSessionCacheUpdate): void {
+    updateRemoteSessionCacheRow(this.db, update);
+  }
+
+  pruneDiscoveredRemoteWorkspaces(profileId: string, keepCwds: string[]): void {
+    pruneDiscoveredRemoteWorkspaceRows(this.db, profileId, keepCwds);
+  }
+
+  listRemoteSessionCwds(profileId: string): string[] {
+    return listRemoteSessionCwdRows(this.db, profileId);
+  }
+
+  removeRemoteProfileData(profileId: string): string[] {
+    return removeRemoteProfileDataRows(this.db, profileId);
   }
 
   getThreadCwd(threadId: string): string {

@@ -1,11 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
+import type { ActivitySettingsUpdateRequest, AppSettings, ChatMessage, ChatQueueMode, ChatThread, ClipboardImagePasteRequest, MemoryRecord, PermissionMode, PickedPath, PluginPackageRecord, ReasoningEffort, RemoteSessionSummary, RemoteWorkspace, SkillRecord, WorkingNavigationTarget, WorkingTask } from "../shared/ipc";
 import { ChatPage } from "./components/chat/ChatPage";
 import { AppDialogs } from "./components/shell/AppDialogs";
 import { AppShell } from "./components/shell/AppShell";
 import { CommandPalette } from "./components/shell/CommandPalette";
 import { SearchOverlay } from "./components/shell/SearchOverlay";
 import { WorkingPage } from "./components/working/WorkingPage";
+import { AddRemoteWorkspaceDialog } from "./components/remote/AddRemoteWorkspaceDialog";
+import { RemoteProfileWizard } from "./components/remote/RemoteProfileWizard";
+import { RemoteSessionPage } from "./components/remote/RemoteSessionPage";
 import { useAppSurfaces } from "./hooks/useAppSurfaces";
 import { useAskUserQuestion } from "./hooks/useAskUserQuestion";
 import { usePermissionApproval } from "./hooks/usePermissionApproval";
@@ -22,6 +25,7 @@ import { usePlugins } from "./hooks/usePlugins";
 import { useProviders } from "./hooks/useProviders";
 import { usePromptTemplates } from "./hooks/usePromptTemplates";
 import { useProjects } from "./hooks/useProjects";
+import { useRemotes } from "./hooks/useRemotes";
 import { useSkills } from "./hooks/useSkills";
 import { useSpotlightCommandBridge } from "./hooks/useSpotlightCommandBridge";
 import { useStableCallbacks } from "./hooks/useStableCallbacks";
@@ -71,6 +75,9 @@ function App(props: { initialAppSettings: AppSettings }) {
   const [inlinePluginIds, setInlinePluginIds] = useState<string[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [startingNewChat, setStartingNewChat] = useState(false);
+  const [remoteWizardOpen, setRemoteWizardOpen] = useState(false);
+  const [remoteWorkspaceDialogProfileId, setRemoteWorkspaceDialogProfileId] = useState<string | null>(null);
+  const [settingsRemoteProfileId, setSettingsRemoteProfileId] = useState<string | null>(null);
   const { toast, showToast } = useToast();
   const surfaces = useAppSurfaces();
   const navigation = useJasmineNavigation();
@@ -89,6 +96,10 @@ function App(props: { initialAppSettings: AppSettings }) {
     onProjectOpened: (project) => {
       selectProjectScope(project.id, "replace");
     }
+  });
+  const remotes = useRemotes({
+    onError: setAppError,
+    onToast: showToast
   });
   const chat = useChatMessages({
     activeThread: threads.activeThread,
@@ -230,7 +241,10 @@ function App(props: { initialAppSettings: AppSettings }) {
   });
 
   useEffect(() => {
-    if (navigation.route.name === "working") return;
+    // Routes that are not the chat surface own themselves. Without this the
+    // effect would replace a remote route with the active chat on the very next
+    // render, so a remote page could only flash before navigation left it.
+    if (navigation.route.name === "working" || isRemoteRouteName(navigation.route.name)) return;
     if (surfaces.settingsOpen) return;
     if (threads.activeThreadId && activeRightPanelMode) {
       navigation.replace({ name: "rightPanel", threadId: threads.activeThreadId, projectId: threads.activeThread?.projectId ?? null, panel: activeRightPanelMode });
@@ -386,10 +400,11 @@ function App(props: { initialAppSettings: AppSettings }) {
       resetWorkspaceState();
       closeFloatingSurfaces();
       clearErrors();
-      // The route-sync effect deliberately leaves the Working route alone, so a
-      // chat started from there has to carry the navigation itself. Without
-      // this, every New chat control on the Working page reads as inert.
-      if (navigation.route.name === "working") {
+      // The route-sync effect deliberately leaves the Working route and the
+      // remote pages alone, so a chat started from one of them has to carry the
+      // navigation itself. Without this, the thread is created behind a page
+      // that never changes and every New chat control there reads as inert.
+      if (navigation.route.name === "working" || isRemoteRouteName(navigation.route.name)) {
         navigation.navigate({ name: "thread", threadId: thread.id, projectId });
       }
       return thread;
@@ -466,6 +481,17 @@ function App(props: { initialAppSettings: AppSettings }) {
     ]
   );
 
+  // Landing on a remote route directly -- a restored navigation, a reload --
+  // has to load that profile's stored sessions the same way expanding it in the
+  // sidebar does, or the page renders an empty list it never fills.
+  const remoteRouteProfileId = navigation.route.name === "remoteWorkspace" || navigation.route.name === "remoteSession"
+    ? navigation.route.profileId
+    : null;
+  useEffect(() => {
+    if (!remoteRouteProfileId) return;
+    void remotes.openProfile(remoteRouteProfileId);
+  }, [remoteRouteProfileId, remotes.openProfile]);
+
   // Stable identities for handlers that flow into memoized components
   // (Sidebar, ChatHeader, Composer). The proxies always invoke the latest
   // closure, so memo boundaries hold across stream ticks without stale state.
@@ -513,6 +539,33 @@ function App(props: { initialAppSettings: AppSettings }) {
     onDeleteThread: (threadId: string) => {
       closeFloatingSurfaces();
       setDeleteThreadCandidate(threads.threads.find((thread) => thread.id === threadId) ?? null);
+    },
+    onAddRemoteProfile: () => {
+      closeFloatingSurfaces();
+      setRemoteWizardOpen(true);
+    },
+    // Expanding a profile renders stored rows first and reconciles behind them,
+    // so the tree never waits on SSH to open.
+    onExpandRemoteProfile: (profileId: string) => void remotes.openProfile(profileId),
+    onRefreshRemoteProfile: (profileId: string) => void remotes.refreshSessions(profileId, { force: true }),
+    onOpenRemoteProfileSettings: (profileId: string) => {
+      setSettingsRemoteProfileId(profileId);
+      openSettingsSection("remotes");
+    },
+    onCheckRemoteProfile: (profileId: string) => void remotes.checkProfile(profileId),
+    onAddRemoteWorkspace: (profileId: string) => {
+      closeFloatingSurfaces();
+      setRemoteWorkspaceDialogProfileId(profileId);
+    },
+    onRemoveRemoteWorkspace: (workspace: RemoteWorkspace) => void remotes.removeWorkspace(workspace.id),
+    onToggleRemoteWorkspacePinned: (workspace: RemoteWorkspace) =>
+      void remotes.updateWorkspace(workspace.id, { pinned: !workspace.pinned }),
+    onOpenRemoteWorkspace: (profileId: string, cwd: string) => {
+      void remotes.openProfile(profileId);
+      navigateToRoute({ name: "remoteWorkspace", profileId, cwd });
+    },
+    onOpenRemoteSession: (profileId: string, sessionId: string) => {
+      navigateToRoute({ name: "remoteSession", profileId, sessionId });
     }
   });
 
@@ -619,6 +672,15 @@ function App(props: { initialAppSettings: AppSettings }) {
     onCollapseRightPanel: () => collapseRightPanel()
   });
 
+  // One derivation for both remote routes: the workspace view and the reader are
+  // the same page, and the session route carries the workspace it belongs to
+  // through the session's own cwd.
+  const remoteRoute = resolveRemoteRoute(navigation.route, remotes.sessions);
+  const remoteProfile = remoteRoute ? remotes.profiles.find((profile) => profile.id === remoteRoute.profileId) ?? null : null;
+  const remoteWorkspace = remoteRoute
+    ? remotes.workspaces.find((workspace) => workspace.profileId === remoteRoute.profileId && workspace.cwd === remoteRoute.cwd) ?? null
+    : null;
+
   return (
     <I18nProvider language={appSettings.settings.language}>
     <AppShell
@@ -629,9 +691,16 @@ function App(props: { initialAppSettings: AppSettings }) {
       workingActive={navigation.route.name === "working"}
       workingActiveCount={working.snapshot.activeCount}
       workingAttention={working.snapshot.attentionCount > 0}
-      messagesEmpty={navigation.route.name !== "working" && chat.messages.length === 0}
+      messagesEmpty={navigation.route.name !== "working" && !remoteRoute && chat.messages.length === 0}
       sidebarCollapsed={sidebarCollapsed}
       moreOpen={surfaces.moreOpen}
+      remoteHostGroups={remotes.hostGroups}
+      remoteWorkspaces={remotes.workspaces}
+      remoteSessions={remotes.sessions}
+      remoteStatuses={remotes.statuses}
+      remoteRefreshingProfileIds={remotes.refreshingProfileIds}
+      activeRemoteProfileId={remoteRoute?.profileId ?? null}
+      activeRemoteSessionId={remoteRoute?.sessionId ?? null}
       {...shellHandlers}
     >
       {workspaceLoading && navigation.route.name !== "working" ? (
@@ -640,6 +709,19 @@ function App(props: { initialAppSettings: AppSettings }) {
           <div className="workspace-startup-line" />
           <div className="workspace-startup-composer" />
         </main>
+      ) : remoteRoute ? (
+        <RemoteSessionPage
+          profile={remoteProfile}
+          workspace={remoteWorkspace}
+          cwd={remoteRoute.cwd}
+          status={remotes.statuses[remoteRoute.profileId]}
+          sessions={(remotes.sessions[remoteRoute.profileId] ?? []).filter((session) => session.cwd === remoteRoute.cwd)}
+          activeSessionId={remoteRoute.sessionId}
+          refreshing={remotes.refreshingProfileIds.includes(remoteRoute.profileId)}
+          onRefresh={() => void remotes.refreshSessions(remoteRoute.profileId, { force: true })}
+          onSelectSession={(sessionId) => navigateToRoute({ name: "remoteSession", profileId: remoteRoute.profileId, sessionId })}
+          onOpenSession={(sessionId, options) => remotes.openSession(remoteRoute.profileId, sessionId, options)}
+        />
       ) : navigation.route.name === "working" ? (
         <WorkingPage
           snapshot={working.snapshot}
@@ -753,6 +835,17 @@ function App(props: { initialAppSettings: AppSettings }) {
             plugins={plugins.packages}
             pluginsLoading={plugins.loading}
             pluginSavingSource={plugins.savingSource}
+            remoteProfiles={remotes.profiles}
+            remoteWorkspaces={remotes.workspaces}
+            remoteStatuses={remotes.statuses}
+            selectedRemoteProfileId={settingsRemoteProfileId}
+            onSelectRemoteProfile={setSettingsRemoteProfileId}
+            onAddRemoteProfile={() => setRemoteWizardOpen(true)}
+            onAddRemoteWorkspace={(profileId) => setRemoteWorkspaceDialogProfileId(profileId)}
+            onRemoveRemoteProfile={(profileId) => remotes.removeProfile(profileId)}
+            onCheckRemoteProfile={(profileId) => remotes.checkProfile(profileId)}
+            onInstallRemoteRuntime={(profileId) => remotes.installRuntime(profileId)}
+            onStopRemoteProfile={(profileId) => remotes.stopProfile(profileId)}
             onSelectProvider={providers.setSelectedProviderId}
             onNavigateSection={(section, providerId) => navigateToRoute({ name: "settings", section, providerId: section === "providers" ? providerId ?? providers.selectedProviderId : undefined }, { keepSettingsOpen: true })}
             onClose={() => surfaces.setSettingsOpen(false)}
@@ -814,6 +907,21 @@ function App(props: { initialAppSettings: AppSettings }) {
         onAnswerAskUserQuestion={(response) => void askUserQuestion.answer(response)}
         onAnswerPermissionApproval={(response) => void permissionApproval.answer(response)}
       />
+
+      <RemoteProfileWizard
+        open={remoteWizardOpen}
+        onClose={() => setRemoteWizardOpen(false)}
+        onCreate={(request) => remotes.createProfile(request)}
+        onCheck={(profileId) => remotes.checkProfile(profileId)}
+        onInstall={(profileId) => remotes.installRuntime(profileId)}
+      />
+
+      <AddRemoteWorkspaceDialog
+        open={remoteWorkspaceDialogProfileId !== null}
+        profile={remotes.profiles.find((profile) => profile.id === remoteWorkspaceDialogProfileId) ?? null}
+        onClose={() => setRemoteWorkspaceDialogProfileId(null)}
+        onAdd={(request) => remotes.addWorkspace(request)}
+      />
     </AppShell>
     </I18nProvider>
   );
@@ -858,7 +966,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       closeFloatingSurfaces();
       return;
     }
-    if (nextRoute.name === "working") {
+    if (nextRoute.name === "working" || nextRoute.name === "remoteWorkspace" || nextRoute.name === "remoteSession") {
       closeFloatingSurfaces();
       return;
     }
@@ -995,6 +1103,25 @@ function App(props: { initialAppSettings: AppSettings }) {
     if (rightPanelTabs.length === 0) return;
     setRightPanelCollapsed(true);
   }
+}
+
+function isRemoteRouteName(name: JasmineRoute["name"]): boolean {
+  return name === "remoteWorkspace" || name === "remoteSession";
+}
+
+/**
+ * Both remote routes resolve to the same view. A session route carries only the
+ * session id, so its workspace comes from the session's own cwd once the profile's
+ * stored list is in memory.
+ */
+function resolveRemoteRoute(
+  route: JasmineRoute,
+  sessions: Record<string, RemoteSessionSummary[]>
+): { profileId: string; cwd: string; sessionId: string | null } | null {
+  if (route.name === "remoteWorkspace") return { profileId: route.profileId, cwd: route.cwd, sessionId: null };
+  if (route.name !== "remoteSession") return null;
+  const session = (sessions[route.profileId] ?? []).find((item) => item.sessionId === route.sessionId);
+  return { profileId: route.profileId, cwd: session?.cwd ?? "", sessionId: route.sessionId };
 }
 
 export default App;

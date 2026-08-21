@@ -21,6 +21,27 @@ export interface AddProfileInput {
   upstreamProxyEnv?: string;
 }
 
+/**
+ * Editable fields of an existing profile. `id` is never editable: remote state
+ * lives under `profiles/<id>/`, so a new id would orphan every session, every
+ * credential, and the runtime already installed for that profile.
+ *
+ * `networkMode` and `remoteRoot` are excluded for the same reason — they select
+ * which isolated remote tree the profile owns. Changing egress mode is adding a
+ * second profile, not editing this one.
+ *
+ * An explicit `null` clears an optional field; `undefined` leaves it untouched.
+ */
+export interface UpdateProfileInput {
+  name?: string;
+  sshHost?: string;
+  sshPort?: number | null;
+  defaultCwd?: string | null;
+  noProxy?: string[];
+  allowedPorts?: number[];
+  upstreamProxyEnv?: string | null;
+}
+
 export function defaultProfilesPath(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   if (env.PI_REMOTE_CONFIG_PATH) return path.resolve(env.PI_REMOTE_CONFIG_PATH);
   if (platform === "win32") {
@@ -95,6 +116,58 @@ export class ProfileStore {
       document.profiles.push(profile);
       await this.write(document);
       return cloneProfile(profile);
+    });
+  }
+
+  async update(nameOrId: string, input: UpdateProfileInput): Promise<RemoteProfile> {
+    const name = input.name === undefined ? undefined : validateProfileName(input.name);
+    const sshHost = input.sshHost === undefined ? undefined : validateSshHost(input.sshHost);
+    const sshPort = input.sshPort === undefined || input.sshPort === null ? input.sshPort : validateSshPort(input.sshPort);
+    const defaultCwd = input.defaultCwd === undefined || input.defaultCwd === null
+      ? input.defaultCwd
+      : validateRemotePath(input.defaultCwd, "cwd");
+    const noProxy = input.noProxy === undefined ? undefined : validateNoProxy(input.noProxy);
+    const allowedPorts = input.allowedPorts === undefined ? undefined : validateAllowedPorts(input.allowedPorts);
+    const upstreamProxyEnv = input.upstreamProxyEnv === undefined || input.upstreamProxyEnv === null
+      ? input.upstreamProxyEnv
+      : validateEnvironmentName(input.upstreamProxyEnv);
+    return this.withLock(async () => {
+      const document = await this.read();
+      const normalized = nameOrId.trim().toLocaleLowerCase();
+      const index = document.profiles.findIndex((candidate) =>
+        candidate.id.toLocaleLowerCase() === normalized || candidate.name.toLocaleLowerCase() === normalized);
+      if (index < 0) {
+        throw new PiRemoteError("profile-not-found", `Remote profile ${JSON.stringify(nameOrId)} was not found.`, {
+          phase: "profile",
+          remediation: "Run `pi-remote profile list` or add the profile first."
+        });
+      }
+      const current = document.profiles[index]!;
+      if (name && document.profiles.some((candidate) =>
+        candidate.id !== current.id && candidate.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        throw new PiRemoteError("profile-exists", `Remote profile ${JSON.stringify(name)} already exists.`, { phase: "profile" });
+      }
+      const next: RemoteProfile = {
+        id: current.id,
+        name: name ?? current.name,
+        sshHost: sshHost ?? current.sshHost,
+        ...resolveOptional("sshPort", sshPort, current.sshPort),
+        ...resolveOptional("defaultCwd", defaultCwd, current.defaultCwd),
+        ...(current.remoteRoot ? { remoteRoot: current.remoteRoot } : {}),
+        network: {
+          mode: current.network.mode,
+          clientProxy: {
+            noProxy: noProxy ?? current.network.clientProxy.noProxy,
+            allowedPorts: allowedPorts ?? current.network.clientProxy.allowedPorts,
+            ...resolveOptional("upstreamProxyEnv", upstreamProxyEnv, current.network.clientProxy.upstreamProxyEnv)
+          }
+        },
+        createdAt: current.createdAt,
+        updatedAt: new Date().toISOString()
+      };
+      document.profiles[index] = next;
+      await this.write(document);
+      return cloneProfile(next);
     });
   }
 
@@ -245,4 +318,14 @@ function parseProfile(value: unknown): RemoteProfile {
 
 function cloneProfile(profile: RemoteProfile): RemoteProfile {
   return structuredClone(profile);
+}
+
+/**
+ * Optional fields are absent rather than `undefined` in the stored document, so
+ * an edit has three outcomes: keep what is there, clear it, or set a new value.
+ */
+function resolveOptional<K extends string, V>(key: K, incoming: V | null | undefined, current: V | undefined): Partial<Record<K, V>> {
+  if (incoming === undefined) return current === undefined ? {} : { [key]: current } as Partial<Record<K, V>>;
+  if (incoming === null) return {};
+  return { [key]: incoming } as Partial<Record<K, V>>;
 }
