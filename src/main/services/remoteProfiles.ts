@@ -29,7 +29,7 @@ import {
   resolveSessionSyncPlan,
   syncSessionFile
 } from "./remoteTranscript.js";
-import { isDetachedPromptFailure, promptManagedRemoteSession, startManagedRemoteSession } from "./remoteSessionRun.js";
+import { isDefinitePromptRejection, isDetachedPromptFailure, promptManagedRemoteSession, startManagedRemoteSession } from "./remoteSessionRun.js";
 // Imported module by module rather than through the package barrel: the barrel
 // also exports the upstream compatibility baseline, whose only purpose is
 // development-time protocol tests and whose `@earendil-works/pi-protocol` import
@@ -76,6 +76,7 @@ export class RemoteProfileService {
   private readonly statuses = new Map<string, RemoteProfileStatus>();
   private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
   private readonly cancelledStartupRecovery = new Set<string>();
+  private readonly startupRecoveryByProfile = new Map<string, Promise<void>>();
   private readonly transcriptRoot: string;
   private readonly startupRecovery: Promise<void>;
 
@@ -140,7 +141,7 @@ export class RemoteProfileService {
    * says so, and this is what makes that promise true.
   */
   async removeProfile(profileId: string): Promise<void> {
-    await this.startupRecovery;
+    await this.awaitProfileStartupRecovery(profileId);
     this.cancelledStartupRecovery.add(profileId);
     let removed = false;
     try {
@@ -251,7 +252,7 @@ export class RemoteProfileService {
    * connection, which leaves remote work running.
    */
   async stopProfile(profileId: string): Promise<RemoteProfileStatus> {
-    await this.startupRecovery;
+    await this.awaitProfileStartupRecovery(profileId);
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {
@@ -388,7 +389,7 @@ export class RemoteProfileService {
 
   /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
   async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
-    await this.startupRecovery;
+    await this.awaitProfileStartupRecovery(profileId);
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
     const operation = this.reserveOperation(profile.id, null, normalizedCwd);
@@ -441,7 +442,7 @@ export class RemoteProfileService {
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
-      if (operation.promptAccepted) {
+      if (operation.promptAccepted && !isDefinitePromptRejection(error)) {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
@@ -453,7 +454,7 @@ export class RemoteProfileService {
 
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
   async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
-    await this.startupRecovery;
+    await this.awaitProfileStartupRecovery(profileId);
     const profile = await this.store.get(profileId);
     const record = this.db.getRemoteSession(profile.id, sessionId);
     if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
@@ -490,7 +491,7 @@ export class RemoteProfileService {
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
-      if (operation.promptAccepted) {
+      if (operation.promptAccepted && !isDefinitePromptRejection(error)) {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
@@ -796,26 +797,43 @@ export class RemoteProfileService {
     } catch {
       return;
     }
-    await Promise.all(profiles.map(async (profile) => {
-      for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
-        try {
-          const info = await this.runtime.inspectRuntime(profile, { install: false });
-          this.recoverActiveOperation(profile, info);
-          return;
-        } catch (error) {
-          if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
-          if (!isRetryableError(error)) return;
-          if (attempt === STARTUP_RECOVERY_ATTEMPTS - 1) {
-            // Only client-proxy work depends on this app staying online after
-            // the bounded startup gate. Direct profiles remain daemon-owned and
-            // are rediscovered by their next explicit session refresh.
-            if (profile.network.mode === "client-proxy") void this.retryStartupRecovery(profile);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+    for (const profile of profiles) {
+      const recovery = this.recoverProfileOnStartup(profile);
+      this.startupRecoveryByProfile.set(profile.id, recovery);
+      void recovery.then(() => {
+        if (this.startupRecoveryByProfile.get(profile.id) === recovery) {
+          this.startupRecoveryByProfile.delete(profile.id);
         }
+      });
+    }
+  }
+
+  private async awaitProfileStartupRecovery(profileId: string): Promise<void> {
+    // The first promise only discovers and schedules profiles from local JSON.
+    // An operation waits for its own SSH probe, never for an unrelated host.
+    await this.startupRecovery;
+    await this.startupRecoveryByProfile.get(profileId);
+  }
+
+  private async recoverProfileOnStartup(profile: RemoteProfile): Promise<void> {
+    for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
+      try {
+        const info = await this.runtime.inspectRuntime(profile, { install: false });
+        this.recoverActiveOperation(profile, info);
+        return;
+      } catch (error) {
+        if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
+        if (!isRetryableError(error)) return;
+        if (attempt === STARTUP_RECOVERY_ATTEMPTS - 1) {
+          // Only client-proxy work depends on this app staying online after
+          // the bounded startup gate. Direct profiles remain daemon-owned and
+          // are rediscovered by their next explicit session refresh.
+          if (profile.network.mode === "client-proxy") void this.retryStartupRecovery(profile);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       }
-    }));
+    }
   }
 
   private async retryStartupRecovery(profile: RemoteProfile): Promise<void> {

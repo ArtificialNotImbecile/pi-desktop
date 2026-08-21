@@ -239,15 +239,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     cwd: string,
     text: string
   ): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null> => {
-    submissionStateRef.current.set(profileId, "awaiting");
+    const tracksCompletion = beginSubmissionTracking(profileId);
     try {
       const result = await getBridge().startRemoteSession({ profileId, cwd, text });
       if ("pending" in result) {
-        recordSubmissionResult(profileId, true);
+        recordSubmissionResult(profileId, true, tracksCompletion);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
         return result;
       }
-      recordSubmissionResult(profileId, false);
+      recordSubmissionResult(profileId, false, tracksCompletion);
       lastRefreshRef.current[profileId] = Date.now();
       setSessions((current) => ({
         ...current,
@@ -263,7 +263,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       onToastRef.current("Remote session created");
       return result;
     } catch (caught) {
-      submissionStateRef.current.set(profileId, "failed");
+      if (tracksCompletion) submissionStateRef.current.set(profileId, "failed");
       onErrorRef.current(errorMessage(caught, "Failed to create the remote session."));
       return null;
     }
@@ -293,7 +293,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     });
   }, [loadProfiles, refreshSessions]);
 
-  function recordSubmissionResult(profileId: string, pending: boolean) {
+  function beginSubmissionTracking(profileId: string): boolean {
+    const current = submissionStateRef.current.get(profileId);
+    if (current === "awaiting" || current === "pending" || current === "completed-before-result") return false;
+    submissionStateRef.current.set(profileId, "awaiting");
+    return true;
+  }
+
+  function recordSubmissionResult(profileId: string, pending: boolean, tracksCompletion: boolean) {
+    if (!tracksCompletion) return;
     const current = submissionStateRef.current.get(profileId);
     if (pending) {
       if (current === "completed-before-result") {
@@ -313,15 +321,15 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     sessionId: string,
     text: string
   ): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null> => {
-    submissionStateRef.current.set(profileId, "awaiting");
+    const tracksCompletion = beginSubmissionTracking(profileId);
     try {
       const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text });
       if ("pending" in transcript) {
-        recordSubmissionResult(profileId, true);
+        recordSubmissionResult(profileId, true, tracksCompletion);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
         return transcript;
       }
-      recordSubmissionResult(profileId, false);
+      recordSubmissionResult(profileId, false, tracksCompletion);
       lastRefreshRef.current[profileId] = Date.now();
       try {
         await Promise.all([
@@ -335,7 +343,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       }
       return transcript;
     } catch (caught) {
-      submissionStateRef.current.set(profileId, "failed");
+      if (tracksCompletion) submissionStateRef.current.set(profileId, "failed");
       onErrorRef.current(errorMessage(caught, "The remote prompt failed."));
       return null;
     }

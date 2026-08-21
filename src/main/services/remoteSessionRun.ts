@@ -81,6 +81,11 @@ export function isDetachedPromptFailure(error: unknown): boolean {
   return code === "prompt-timeout" || code === "daemon-disconnected";
 }
 
+/** Pi answered the command itself with success:false; retry remains safe. */
+export function isDefinitePromptRejection(error: unknown): boolean {
+  return errorCode(error) === "pi-rpc-failed";
+}
+
 function shouldDetach(error: unknown): boolean {
   return isDetachedPromptFailure(error);
 }

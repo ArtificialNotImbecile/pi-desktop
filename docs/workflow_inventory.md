@@ -2,13 +2,16 @@
 
 Remote prompt lifecycle contract: acceptance and local reconciliation are
 separate outcomes. Only a failure before acceptance restores a draft; a later
-sync failure cannot invite a duplicate turn. Detached client-proxy work keeps
+sync failure cannot invite a duplicate turn, while an explicit negative Pi RPC
+response remains a rejection and restores the draft. Detached client-proxy work keeps
 its reverse tunnel until settlement. Service startup discovers daemon-owned
 work without waiting for navigation, reacquires the stable egress lease after
 an app restart, and retains it through transient daemon-proxy or Stop failures.
 After its short startup gate, transient client-proxy host outages continue
 recovery in the background with capped backoff until the host answers or the
 profile is removed; direct profiles do not acquire a hidden polling loop.
+The bounded startup gate is per profile, so an offline saved host never delays
+work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a
 pending new session opens when its row appears, while a pending existing turn
 refetches the transcript already on screen.

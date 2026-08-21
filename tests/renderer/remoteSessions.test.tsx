@@ -341,6 +341,17 @@ function PageHarness(props: { initialSessionId: string | null; sessions: RemoteS
   );
 }
 
+function SubmissionTrackingHarness() {
+  const remotes = useRemotes({ onError: () => {}, onToast: () => {} });
+  return (
+    <>
+      <button onClick={() => void remotes.startSession(DIRECT.id, "/srv/first", "first")}>First submission</button>
+      <button onClick={() => void remotes.startSession(DIRECT.id, "/srv/second", "second")}>Concurrent submission</button>
+      {(remotes.sessions[DIRECT.id] ?? []).map((row) => <span key={row.sessionId}>{row.title}</span>)}
+    </>
+  );
+}
+
 describe("remote session reader", () => {
   test("a completed first prompt never pulls the user back after the workspace unmounts", async () => {
     const created = session({ sessionId: "created-after-leave", title: "remote work" });
@@ -579,6 +590,62 @@ describe("remote session reader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByDisplayValue("retry after opening fails")).toBeDefined();
+  });
+
+  test("an explicit Pi rejection in an existing session restores the draft", async () => {
+    const row = session({ sessionId: "pi-rejected", title: "remote work" });
+    render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={status("ready")}
+        sessions={[row]}
+        activeSessionId={row.sessionId}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={() => {}}
+        onOpenSession={async () => transcript({ sessionId: row.sessionId, title: row.title })}
+        onBeginSession={() => {}}
+        onStartSession={async () => null}
+        onPromptSession={async () => null}
+        onAbortSession={async () => true}
+      />
+    ));
+    await screen.findByText("refactor the auth middleware");
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "fix the rejected request" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByDisplayValue("fix the rejected request")).toBeDefined();
+  });
+
+  test("a concurrent busy rejection preserves the original pending completion refresh", async () => {
+    fake = installFakeBridge();
+    const created = session({ sessionId: "first-pending", title: "first accepted work" });
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [status("ready")], sessions: { [DIRECT.id]: [] } });
+    let attempt = 0;
+    fake.bridge.startRemoteSession = async (request) => {
+      fake.calls.startRemoteSession.push(request);
+      attempt += 1;
+      if (attempt === 1) return { pending: true, sessionId: created.sessionId };
+      throw new Error("remote-profile-busy");
+    };
+    render(withI18n(<SubmissionTrackingHarness />));
+
+    fireEvent.click(screen.getByRole("button", { name: "First submission" }));
+    await waitFor(() => expect(attempt).toBe(1));
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: created.sessionId, cwd: "/srv/first", state: "reconnecting" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Concurrent submission" }));
+    await waitFor(() => expect(attempt).toBe(2));
+
+    fake.setRemoteState({ refreshed: { [DIRECT.id]: [created] } });
+    await fake.emitRemoteStatus(status("ready"));
+
+    expect(await screen.findByText("first accepted work")).toBeDefined();
+    expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
   });
 
   test("a pending first prompt automatically appears and opens when the operation settles", async () => {

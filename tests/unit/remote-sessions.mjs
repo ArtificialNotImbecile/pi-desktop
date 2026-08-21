@@ -543,6 +543,8 @@ try {
   }, 1_000);
   disconnectListener({ seq: 1, type: "transport.disconnected" });
   await assert.rejects(disconnected.promise, (error) => error?.code === "daemon-disconnected");
+  assert.equal(remoteRun.isDefinitePromptRejection({ code: "pi-rpc-failed" }), true);
+  assert.equal(remoteRun.isDefinitePromptRejection({ code: "daemon-disconnected" }), false);
 
   const startCalls = [];
   let startListener;
@@ -677,16 +679,20 @@ try {
     "a recovered client-proxy operation must restore its stable egress lease");
   assert.match(remoteProfileServiceSource, /releaseDetachedResources/u,
     "the detached monitor owns final release of retained local egress resources");
-  assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted\)[\s\S]*pending: true/u,
+  assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted && !isDefinitePromptRejection\(error\)\)[\s\S]*pending: true/u,
     "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
   assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,
     "daemon-owned work must be discovered when the service starts, without waiting for navigation");
-  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?await this\.startupRecovery/u,
-    "new sessions must wait for startup recovery to reserve any daemon-owned operation");
-  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?await this\.startupRecovery/u,
-    "existing-session prompts must wait for startup recovery to reserve any daemon-owned operation");
-  assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.startupRecovery/u,
+  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
+    "new sessions must wait for their profile's startup recovery");
+  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
+    "existing-session prompts must wait for their profile's startup recovery");
+  assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.awaitProfileStartupRecovery\(profileId\)/u,
     "profile removal must not race a startup recovery that can still reserve it");
+  assert.doesNotMatch(remoteProfileServiceSource, /await Promise\.all\(profiles\.map/u,
+    "one offline host must not globally gate unrelated profile operations");
+  assert.equal(remoteProfileServiceSource.match(/promptAccepted && !isDefinitePromptRejection\(error\)/gu)?.length, 2,
+    "both new and existing sessions must keep an explicit Pi rejection retryable in the composer");
   assert.match(remoteProfileServiceSource, /void this\.retryStartupRecovery\(profile\)/u,
     "transient startup outages must hand off to an unbounded background recovery loop");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
