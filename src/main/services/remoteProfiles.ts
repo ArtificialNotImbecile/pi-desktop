@@ -936,10 +936,10 @@ export class RemoteProfileService {
         if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
         if (!isRetryableError(error)) return;
         if (attempt === STARTUP_RECOVERY_ATTEMPTS - 1) {
-          // Only client-proxy work depends on this app staying online after
-          // the bounded startup gate. Direct profiles remain daemon-owned and
-          // are rediscovered by their next explicit session refresh.
-          if (currentProfile.network.mode === "client-proxy") await this.retryStartupRecovery(profile.id);
+          // Keep the gate for both egress modes. Even remote-direct RPC can be
+          // reclaimed by a matching client, so Send must not race undiscovered
+          // busy work when the host returns after an offline app startup.
+          await this.retryStartupRecovery(profile.id);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
@@ -955,7 +955,6 @@ export class RemoteProfileService {
       let currentProfile: RemoteProfile;
       try { currentProfile = await this.store.get(profileId); }
       catch { return; }
-      if (currentProfile.network.mode !== "client-proxy") return;
       try {
         const info = await this.runtime.inspectRuntime(currentProfile, { install: false });
         if (!this.cancelledStartupRecovery.has(profileId)) this.recoverActiveOperation(currentProfile, info);

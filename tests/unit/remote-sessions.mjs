@@ -743,7 +743,9 @@ try {
   assert.match(detachedMonitorBody, /if \(!active\)[\s\S]*remote-rpc-vanished/u,
     "a missing RPC in the same daemon epoch must not be presented as normal settlement");
   assert.match(remoteProfileServiceSource, /await this\.retryStartupRecovery\(profile\.id\)/u,
-    "client-proxy recovery must remain inside its profile gate until the host answers");
+    "both egress modes must remain inside their profile gate until the host answers");
+  assert.doesNotMatch(remoteProfileServiceSource, /currentProfile\.network\.mode !== "client-proxy"/u,
+    "remote-direct recovery must not be abandoned after an offline startup");
   assert.match(remoteProfileServiceSource, /currentProfile = await this\.store\.get\(profileId\)/u,
     "persistent recovery must reload profile edits before each SSH retry");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery\.add\(profileId\)[\s\S]*await this\.awaitProfileStartupRecovery\(profileId\)/u,
