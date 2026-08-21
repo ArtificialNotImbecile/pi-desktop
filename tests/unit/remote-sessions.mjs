@@ -687,6 +687,10 @@ try {
     "existing-session prompts must wait for startup recovery to reserve any daemon-owned operation");
   assert.match(remoteProfileServiceSource, /async removeProfile[\s\S]*?await this\.startupRecovery/u,
     "profile removal must not race a startup recovery that can still reserve it");
+  assert.match(remoteProfileServiceSource, /void this\.retryStartupRecovery\(profile\)/u,
+    "transient startup outages must hand off to an unbounded background recovery loop");
+  assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
+    "removing a profile must cancel its persistent background recovery");
 
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";

@@ -75,6 +75,7 @@ export class RemoteProfileService {
   private readonly runtime: ManagedRemoteRuntime;
   private readonly statuses = new Map<string, RemoteProfileStatus>();
   private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
+  private readonly cancelledStartupRecovery = new Set<string>();
   private readonly transcriptRoot: string;
   private readonly startupRecovery: Promise<void>;
 
@@ -140,22 +141,29 @@ export class RemoteProfileService {
   */
   async removeProfile(profileId: string): Promise<void> {
     await this.startupRecovery;
-    if (this.activeOperations.has(profileId)) {
-      throw new PiRemoteError(
-        "remote-profile-busy",
-        "The remote profile has an active session operation.",
-        { phase: "session", retryable: true, remediation: "Wait for it to finish or stop the remote runtime first." }
-      );
+    this.cancelledStartupRecovery.add(profileId);
+    let removed = false;
+    try {
+      if (this.activeOperations.has(profileId)) {
+        throw new PiRemoteError(
+          "remote-profile-busy",
+          "The remote profile has an active session operation.",
+          { phase: "session", retryable: true, remediation: "Wait for it to finish or stop the remote runtime first." }
+        );
+      }
+      const profile = await this.store.get(profileId);
+      // profiles.json goes first. If that write fails the profile is still
+      // configured and the renderer keeps showing it, so deleting its history
+      // beforehand would destroy data for a profile the user still has.
+      await this.store.remove(profile.id);
+      removed = true;
+      const transcripts = this.db.removeRemoteProfileData(profile.id);
+      await Promise.all(transcripts.map((file) => rm(file, { force: true }).catch(() => {})));
+      await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
+      this.statuses.delete(profile.id);
+    } finally {
+      if (!removed) this.cancelledStartupRecovery.delete(profileId);
     }
-    const profile = await this.store.get(profileId);
-    // profiles.json goes first. If that write fails the profile is still
-    // configured and the renderer keeps showing it, so deleting its history
-    // beforehand would destroy data for a profile the user still has.
-    await this.store.remove(profile.id);
-    const transcripts = this.db.removeRemoteProfileData(profile.id);
-    await Promise.all(transcripts.map((file) => rm(file, { force: true }).catch(() => {})));
-    await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
-    this.statuses.delete(profile.id);
   }
 
   async checkProfile(profileId: string): Promise<RemoteDoctorReport> {
@@ -796,11 +804,35 @@ export class RemoteProfileService {
           return;
         } catch (error) {
           if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
-          if (!isRetryableError(error) || attempt === STARTUP_RECOVERY_ATTEMPTS - 1) return;
+          if (!isRetryableError(error)) return;
+          if (attempt === STARTUP_RECOVERY_ATTEMPTS - 1) {
+            // Only client-proxy work depends on this app staying online after
+            // the bounded startup gate. Direct profiles remain daemon-owned and
+            // are rediscovered by their next explicit session refresh.
+            if (profile.network.mode === "client-proxy") void this.retryStartupRecovery(profile);
+            return;
+          }
           await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
         }
       }
     }));
+  }
+
+  private async retryStartupRecovery(profile: RemoteProfile): Promise<void> {
+    let delayMs = 2_000;
+    while (!this.cancelledStartupRecovery.has(profile.id)) {
+      await delayUnref(delayMs);
+      if (this.cancelledStartupRecovery.has(profile.id)) return;
+      try {
+        const info = await this.runtime.inspectRuntime(profile, { install: false });
+        if (!this.cancelledStartupRecovery.has(profile.id)) this.recoverActiveOperation(profile, info);
+        return;
+      } catch (error) {
+        if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
+        if (!isRetryableError(error)) return;
+        delayMs = Math.min(delayMs * 2, 60_000);
+      }
+    }
   }
 
   private monitorDetachedOperation(profile: RemoteProfile, operation: ActiveRemoteOperation, recoveredRuntimeInfo?: RuntimeInfo): void {
@@ -934,6 +966,13 @@ function describeError(error: unknown): { code: string | null; message: string; 
 
 function isRetryableError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
+}
+
+function delayUnref(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
 }
 
 function toProfileSummary(profile: RemoteProfile): RemoteProfileSummary {

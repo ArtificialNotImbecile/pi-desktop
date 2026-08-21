@@ -452,6 +452,48 @@ describe("remote session reader", () => {
     await waitFor(() => expect(onAbortSession).toHaveBeenCalledWith("detached-session"));
   });
 
+  test("a completed detached Stop does not disable the next operation's Stop button", async () => {
+    const common = {
+      profile: DIRECT,
+      workspace: WORKSPACE,
+      cwd: WORKSPACE.cwd,
+      sessions: [] as RemoteSessionSummary[],
+      activeSessionId: null,
+      refreshing: false,
+      onRefresh: () => {},
+      onSelectSession: () => {},
+      onOpenSession: async () => null,
+      onBeginSession: () => {},
+      onStartSession: async () => null,
+      onPromptSession: async () => null,
+      onAbortSession: async () => true
+    };
+    const view = render(withI18n(
+      <RemoteSessionPage
+        {...common}
+        status={{
+          ...status("ready"),
+          sessionOperation: { sessionId: "stopped-session", cwd: WORKSPACE.cwd, state: "reconnecting" }
+        }}
+      />
+    ));
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toHaveProperty("disabled", true));
+
+    view.rerender(withI18n(<RemoteSessionPage {...common} status={status("ready")} />));
+    view.rerender(withI18n(
+      <RemoteSessionPage
+        {...common}
+        status={{
+          ...status("ready"),
+          sessionOperation: { sessionId: "next-session", cwd: WORKSPACE.cwd, state: "running" }
+        }}
+      />
+    ));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toHaveProperty("disabled", false));
+  });
+
   test("an accepted first prompt is not restored when post-settlement session sync is pending", async () => {
     const onSelectSession = vi.fn();
     render(withI18n(

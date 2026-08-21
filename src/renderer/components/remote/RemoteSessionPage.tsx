@@ -73,6 +73,10 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     return () => { promptRequestRef.current += 1; };
   }, [props.profile?.id, props.cwd]);
 
+  useEffect(() => {
+    if (!sessionOperation) setStopping(false);
+  }, [sessionOperation]);
+
   const activeSessionId = props.activeSessionId;
   useEffect(() => {
     if (!activeSessionId) {
@@ -134,6 +138,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
 
   function beginSession() {
     if (operationRunning) return;
+    setStopping(false);
     setDrafting(true);
     setTranscript(null);
     setFailedSessionId(null);
