@@ -196,16 +196,20 @@ try {
   ];
   const raw = `${lines.join("\n")}\n`;
   const entries = transcript.readTranscriptEntries(raw, Number.POSITIVE_INFINITY);
-  assert.deepEqual(entries.map((entry) => entry.kind), ["user", "tool", "thinking", "compaction"],
+  // m2 carries a call and text, and each block is its own row in the order the
+  // model produced them.
+  assert.deepEqual(entries.map((entry) => entry.kind), ["user", "tool", "assistant", "thinking", "compaction"],
     "the session header and a torn trailing line are not rows");
   assert.equal(entries[0].text, "refactor the auth middleware");
   assert.equal(entries[1].toolName, "Bash");
+  assert.equal(entries[2].text, "npm test");
   assert.equal(entries.every((entry) => entry.appended === false), true);
 
   // Rows past the previous end are the ones the last sync brought in.
   const previousBytes = Buffer.byteLength(`${lines[0]}\n${lines[1]}\n`, "utf8");
   const afterAppend = transcript.readTranscriptEntries(raw, previousBytes);
-  assert.deepEqual(afterAppend.map((entry) => entry.appended), [false, true, true, true]);
+  // Both entries m2 projects into are past the previous end, so both are new.
+  assert.deepEqual(afterAppend.map((entry) => entry.appended), [false, true, true, true, true]);
 
   // --- the incremental download is all-or-nothing ---------------------------
   // A read that fails partway must not leave a longer file behind: the next open
@@ -467,6 +471,34 @@ try {
   assert.deepEqual(reasonedCall.map((item) => item.kind), ["thinking", "tool"]);
   assert.equal(reasonedCall[1].toolName, "read_file");
   assert.deepEqual(transcript.parseTranscriptLine("{not json", false), [], "an unreadable line is dropped, not thrown");
+
+  // A batch of parallel calls is several blocks in one record. Collapsing them
+  // to one tool name would render a batch of four reads as a single call.
+  const batched = transcript.parseTranscriptLine(JSON.stringify({
+    type: "message",
+    id: "m-batch",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Reading both files." },
+        { type: "toolCall", name: "read_file" },
+        { type: "toolCall", name: "grep" }
+      ]
+    }
+  }), false);
+  assert.deepEqual(batched.map((item) => item.kind), ["assistant", "tool", "tool"]);
+  assert.deepEqual(batched.map((item) => item.toolName), [null, "read_file", "grep"]);
+  assert.equal(new Set(batched.map((item) => item.id)).size, 3);
+
+  // Text that arrived in several parts is still one entry: only a change of kind
+  // starts a new one.
+  const split = transcript.parseTranscriptLine(JSON.stringify({
+    type: "message",
+    id: "m-split",
+    message: { role: "assistant", content: [{ type: "text", text: "one" }, { type: "text", text: "two" }] }
+  }), false);
+  assert.deepEqual(split.map((item) => item.text), ["one\ntwo"]);
+  assert.equal(split[0].id, "m-split", "a single entry keeps the record's own id");
 
   // A workspace is keyed by its directory, and the host reports its own
   // canonical spelling for every session it lists. A default cwd typed with a

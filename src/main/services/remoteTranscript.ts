@@ -263,15 +263,19 @@ export function parseTranscriptLine(line: string, appended: boolean): RemoteTran
     return present(entry(id, "tool", timestamp, parts.text, typeof message.toolName === "string" ? message.toolName : null, appended));
   }
   if (role !== "assistant") return [];
-  // The thinking that produced the output is rendered before it. Its id is
-  // derived from the record's so two entries from one line stay distinct.
-  const thinking = parts.thinking
-    ? entry(id ? `${id}:thinking` : null, "thinking", timestamp, parts.thinking, null, appended)
-    : null;
-  const output = parts.toolName
-    ? entry(id, "tool", timestamp, parts.text, parts.toolName, appended)
-    : entry(id, "assistant", timestamp, parts.text, null, appended);
-  return present(thinking, output);
+  // Every block in the order the model produced it: the thinking that led to the
+  // output, the output, and one entry per tool call. Batched calls are several
+  // blocks in one record, so collapsing to a single tool name would render a
+  // parallel batch as one call.
+  const blocks = assistantBlocks(message.content);
+  return present(...blocks.map((block, index) => entry(
+    id && blocks.length > 1 ? `${id}:${index}` : id,
+    block.kind,
+    timestamp,
+    block.text,
+    block.toolName,
+    appended
+  )));
 }
 
 function present(...entries: Array<RemoteTranscriptEntry | null>): RemoteTranscriptEntry[] {
@@ -291,20 +295,44 @@ function entry(
   return { id: id ?? `${kind}-${timestamp ?? "0"}-${trimmed.slice(0, 16)}`, kind, timestamp, text: trimmed, toolName, appended };
 }
 
-function contentParts(content: unknown): { text: string; thinking: string; toolName: string | null } {
-  if (typeof content === "string") return { text: content, thinking: "", toolName: null };
-  if (!Array.isArray(content)) return { text: "", thinking: "", toolName: null };
+function contentParts(content: unknown): { text: string } {
+  if (typeof content === "string") return { text: content };
+  if (!Array.isArray(content)) return { text: "" };
   const text: string[] = [];
-  const thinking: string[] = [];
-  let toolName: string | null = null;
   for (const part of content) {
     if (!part || typeof part !== "object") continue;
     const candidate = part as Record<string, unknown>;
     if (candidate.type === "text" && typeof candidate.text === "string") text.push(candidate.text);
-    else if (candidate.type === "thinking" && typeof candidate.thinking === "string") thinking.push(candidate.thinking);
-    else if (candidate.type === "toolCall" && typeof candidate.name === "string") toolName = candidate.name;
   }
-  return { text: text.join("\n").trim(), thinking: thinking.join("\n").trim(), toolName };
+  return { text: text.join("\n").trim() };
+}
+
+type AssistantBlock = { kind: RemoteTranscriptEntryKind; text: string; toolName: string | null };
+
+/**
+ * The blocks of one assistant message, in order. Runs of the same kind are
+ * joined so text that arrived in several parts stays one entry, while a
+ * different kind -- thinking, or a tool call -- always starts a new one.
+ */
+function assistantBlocks(content: unknown): AssistantBlock[] {
+  if (typeof content === "string") return [{ kind: "assistant", text: content, toolName: null }];
+  if (!Array.isArray(content)) return [];
+  const blocks: AssistantBlock[] = [];
+  const append = (kind: RemoteTranscriptEntryKind, text: string) => {
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind && !last.toolName) last.text = `${last.text}\n${text}`;
+    else blocks.push({ kind, text, toolName: null });
+  };
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === "text" && typeof candidate.text === "string") append("assistant", candidate.text);
+    else if (candidate.type === "thinking" && typeof candidate.thinking === "string") append("thinking", candidate.thinking);
+    else if (candidate.type === "toolCall" && typeof candidate.name === "string") {
+      blocks.push({ kind: "tool", text: "", toolName: candidate.name });
+    }
+  }
+  return blocks;
 }
 
 /**

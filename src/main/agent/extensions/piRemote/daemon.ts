@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import net, { type Server, type Socket } from "node:net";
 import path from "node:path";
 import { PiRemoteError, asPiRemoteError } from "./errors.js";
@@ -822,6 +822,21 @@ async function readSessionRange(sessionDir: string, params: Record<string, unkno
   }
   const handle = await open(located.filePath, "r");
   try {
+    // The header is fingerprinted through the handle the range is read from, not
+    // through the path. A session file replaced between locating it and opening
+    // it would otherwise return the old inode's fingerprint with the new
+    // inode's bytes, which is precisely the case the client cannot detect: it
+    // would append a different transcript's tail to its cached prefix.
+    const header = await readHeaderLineFrom(handle);
+    const headerValue = header ? parseJsonLine(header) : null;
+    if (!header || !headerValue || headerValue.type !== "session" || headerValue.id !== id) {
+      throw new PiRemoteError("session-not-found", `Remote session ${id} was not found.`, {
+        phase: "session",
+        remediation: "Refresh the session list; the remote file was replaced.",
+        safeDetails: { replaced: true }
+      });
+    }
+    const headerFingerprint = fingerprintHeader(header);
     const fileStat = await handle.stat();
     if (fromOffset > fileStat.size) {
       throw new PiRemoteError("session-offset-past-end", "The requested session offset is past the end of the remote file.", {
@@ -844,7 +859,7 @@ async function readSessionRange(sessionDir: string, params: Record<string, unkno
       bytes: read,
       size: fileStat.size,
       data: buffer.subarray(0, read).toString("base64"),
-      headerFingerprint: located.headerFingerprint,
+      headerFingerprint,
       eof: fromOffset + read >= fileStat.size
     };
   } finally {
@@ -887,6 +902,15 @@ async function readHeaderLine(filePath: string): Promise<string | null> {
   const handle = await open(filePath, "r").catch(() => null);
   if (!handle) return null;
   try {
+    return await readHeaderLineFrom(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The header of whatever this handle is open on, whatever the path now holds. */
+async function readHeaderLineFrom(handle: FileHandle): Promise<string | null> {
+  try {
     const buffer = Buffer.allocUnsafe(HEADER_PROBE_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, HEADER_PROBE_BYTES, 0);
     const text = buffer.subarray(0, bytesRead).toString("utf8");
@@ -894,8 +918,6 @@ async function readHeaderLine(filePath: string): Promise<string | null> {
     return newline < 0 ? null : text.slice(0, newline);
   } catch {
     return null;
-  } finally {
-    await handle.close();
   }
 }
 

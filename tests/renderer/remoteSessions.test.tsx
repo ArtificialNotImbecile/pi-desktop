@@ -154,11 +154,28 @@ describe("remote tree", () => {
     const host = await screen.findByRole("button", { name: /Expand host ops-box/ });
     fireEvent.click(host);
 
-    // One host row, two profiles, each labelled by how it reaches the network.
-    // The tree column is narrow, so it carries the short form of each name.
-    expect(screen.getByText("Direct")).toBeDefined();
-    expect(screen.getByText("Proxied")).toBeDefined();
+    // One host row, two profiles, each named and labelled by how it reaches the
+    // network. The tree column is narrow, so the egress keeps its short form.
+    const direct = screen.getByTitle(`${DIRECT.name} · ${DIRECT.sshHost}`);
+    const proxied = screen.getByTitle(`${PROXIED.name} · ${PROXIED.sshHost}`);
+    expect(direct.textContent).toContain("Direct");
+    expect(proxied.textContent).toContain("Proxied");
     expect(screen.getByText("2 profiles")).toBeDefined();
+  });
+
+  test("two profiles sharing a host and an egress mode are still told apart", async () => {
+    fake = installFakeBridge();
+    // Nothing stops one host from having two direct profiles, and they own
+    // separate remote trees, so rows carrying only the egress would be
+    // identical for two histories that cannot see each other.
+    const second: RemoteProfileSummary = { ...DIRECT, id: "profile-second", name: "ops-box-staging" };
+    fake.setRemoteState({ profiles: [DIRECT, second], workspaces: [], statuses: [] });
+
+    render(withI18n(<TreeHarness />));
+    fireEvent.click(await screen.findByRole("button", { name: /Expand host ops-box/ }));
+
+    expect(screen.getByTitle(`${DIRECT.name} · ${DIRECT.sshHost}`).textContent).toContain(DIRECT.name);
+    expect(screen.getByTitle(`${second.name} · ${second.sshHost}`).textContent).toContain(second.name);
   });
 
   test("expanding a profile shows stored sessions before any refresh answers", async () => {

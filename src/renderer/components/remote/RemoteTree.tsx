@@ -127,7 +127,7 @@ export function RemoteTree(props: RemoteTreeProps) {
           <button
             className="remote-profile-item"
             type="button"
-            title={profile.sshHost}
+            title={`${profile.name} · ${profile.sshHost}`}
             onClick={() => {
               if (!expanded) {
                 toggle(setExpandedProfiles, profile.id);
@@ -136,10 +136,17 @@ export function RemoteTree(props: RemoteTreeProps) {
             }}
           >
             <span className={`remote-status-dot ${statusTone(status)}`} aria-hidden="true" />
-            {/* The tree column is narrow, so the row carries the short form of
-                the egress name; the descriptive one lives in Settings. */}
-            <span>{profile.networkMode === "client-proxy" ? t("remote.egress.proxyShort") : t("remote.egress.directShort")}</span>
-            <small>{t(statusLabelKey(status))}</small>
+            {/* The name has to be here: two profiles on one host can share an
+                egress mode, and then the egress label alone gives two identical
+                rows for two isolated session histories. The tree column is
+                narrow, so the egress keeps its short form and the descriptive
+                one lives in Settings. */}
+            <span>{profile.name}</span>
+            <small>
+              {profile.networkMode === "client-proxy" ? t("remote.egress.proxyShort") : t("remote.egress.directShort")}
+              {" · "}
+              {t(statusLabelKey(status))}
+            </small>
           </button>
           <div className="thread-actions project-actions">
             <button
