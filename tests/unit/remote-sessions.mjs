@@ -673,12 +673,19 @@ try {
     "the abort handler must never release an opening or attached operation owned by its request");
   assert.match(abortSessionBody, /operation\.phase === "detached"[\s\S]*monitorDetachedOperation/u,
     "a detached Stop hands ownership to the daemon monitor");
+  assert.doesNotMatch(abortSessionBody, /operation\.port = null/u,
+    "an abort transport failure must retain the port's detached egress release handle");
   assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
     "detached work must stay monitored from daemon state rather than a stale client sequence");
   assert.match(remoteProfileServiceSource, /reconnectDetachedEgress\(profile, recoveredRuntimeInfo\)/u,
     "a recovered client-proxy operation must restore its stable egress lease");
   assert.match(remoteProfileServiceSource, /releaseDetachedResources/u,
     "the detached monitor owns final release of retained local egress resources");
+  const detachedMonitorStart = remoteProfileServiceSource.indexOf("private monitorDetachedOperation");
+  const detachedMonitorEnd = remoteProfileServiceSource.indexOf("\n}\n\nlet service", detachedMonitorStart);
+  const detachedMonitorBody = remoteProfileServiceSource.slice(detachedMonitorStart, detachedMonitorEnd);
+  assert.ok(detachedMonitorBody.indexOf("if (operation.abortRequested)") < detachedMonitorBody.indexOf('profile.network.mode === "client-proxy"'),
+    "a detached Stop must run before any attempt to restore client-proxy egress");
   assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted && !isDefinitePromptRejection\(error\)\)[\s\S]*pending: true/u,
     "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
   assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,

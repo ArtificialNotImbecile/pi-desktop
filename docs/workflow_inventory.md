@@ -20,6 +20,8 @@ by an older profile-list snapshot that was already in flight.
 An operation recovered at app startup also emits one renderer completion token:
 its new session row appears automatically, and an already-open matching session
 refetches its transcript.
+Stop takes precedence over egress restoration, and an attached transport failure
+retains the original port until its client-proxy resources are released.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

@@ -511,7 +511,9 @@ export class RemoteProfileService {
       try {
         await operation.port.abort();
       } catch {
-        operation.port = null;
+        // Keep the detached port as the owner of the original client-proxy
+        // broker. Its transport may be gone, but monitor cleanup still needs
+        // releaseDetachedResources() to close that retained reverse tunnel.
         operation.phase = "detached";
         const profile = await this.store.get(profileId);
         this.monitorDetachedOperation(profile, operation);
@@ -859,17 +861,6 @@ export class RemoteProfileService {
     void (async () => {
       try {
         while (this.activeOperations.get(profile.id) === operation) {
-          if (profile.network.mode === "client-proxy" && !operation.port && !operation.detachedEgress) {
-            try {
-              operation.detachedEgress = await this.runtime.reconnectDetachedEgress(profile, recoveredRuntimeInfo);
-              recoveredRuntimeInfo = undefined;
-            } catch (error) {
-              if (!isRetryableError(error)) throw error;
-              this.updateOperationStatus(profile.id, operation, "reconnecting");
-              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
-              continue;
-            }
-          }
           if (operation.abortRequested) {
             try {
               await this.runtime.stop(profile);
@@ -877,6 +868,17 @@ export class RemoteProfileService {
               return;
             } catch (error) {
               if (!isRetryableError(error)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+              continue;
+            }
+          }
+          if (profile.network.mode === "client-proxy" && !operation.port && !operation.detachedEgress) {
+            try {
+              operation.detachedEgress = await this.runtime.reconnectDetachedEgress(profile, recoveredRuntimeInfo);
+              recoveredRuntimeInfo = undefined;
+            } catch (error) {
+              if (!isRetryableError(error)) throw error;
+              this.updateOperationStatus(profile.id, operation, "reconnecting");
               await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
               continue;
             }
