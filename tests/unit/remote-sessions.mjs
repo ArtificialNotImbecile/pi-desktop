@@ -403,16 +403,84 @@ try {
   }), (error) => error?.code === "session-too-large");
   assert.equal(await readFile(cappedPath, "utf8"), head, "refusing the range leaves the previous copy alone");
 
+  // Two opens of one session share a staging file. Selecting a session, leaving
+  // before its read answers, and selecting it again is enough to run both at
+  // once, and interleaved staging publishes a spliced transcript or fails an
+  // open whose staging file the other call renamed away.
+  const sharedPath = path.join(syncDir, "shared.jsonl");
+  let inFlight = 0;
+  let overlapped = false;
+  const concurrentRead = async (offset) => {
+    inFlight += 1;
+    if (inFlight > 1) overlapped = true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight -= 1;
+    return chunk(head + tailOne, offset, headBytes + oneBytes, "fp-a", true);
+  };
+  const both = await Promise.all([
+    transcript.syncSessionFile({
+      transcriptPath: sharedPath, fromOffset: 0, expectedFingerprint: null,
+      maxSyncBytes: 1024 * 1024, onTooLarge: tooLarge, readChunk: concurrentRead
+    }),
+    transcript.syncSessionFile({
+      transcriptPath: sharedPath, fromOffset: 0, expectedFingerprint: null,
+      maxSyncBytes: 1024 * 1024, onTooLarge: tooLarge, readChunk: concurrentRead
+    })
+  ]);
+  assert.equal(overlapped, false, "the second sync waits for the first rather than sharing its staging file");
+  assert.equal(await readFile(sharedPath, "utf8"), head + tailOne);
+  for (const result of both) assert.equal(result.offset, headBytes + oneBytes);
+  await assert.rejects(() => stat(`${sharedPath}.partial`), (error) => error?.code === "ENOENT");
+
+  // --- transcript projection ------------------------------------------------
+  // A reasoning model's turn is a thinking block followed by text or a tool
+  // call. Keeping only one kind per message renders the history as though the
+  // model never reasoned.
+  const reasoned = transcript.parseTranscriptLine(JSON.stringify({
+    type: "message",
+    id: "m-reasoned",
+    timestamp: "2026-08-20T00:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "the failing test is the cache key" },
+        { type: "text", text: "Rewriting the cache key." }
+      ]
+    }
+  }), false);
+  assert.deepEqual(reasoned.map((item) => item.kind), ["thinking", "assistant"]);
+  assert.equal(reasoned[0].text, "the failing test is the cache key");
+  assert.equal(reasoned[1].text, "Rewriting the cache key.");
+  assert.equal(new Set(reasoned.map((item) => item.id)).size, 2, "two entries from one record need two keys");
+
+  const reasonedCall = transcript.parseTranscriptLine(JSON.stringify({
+    type: "message",
+    id: "m-call",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "read the file first" },
+        { type: "toolCall", name: "read_file" }
+      ]
+    }
+  }), false);
+  assert.deepEqual(reasonedCall.map((item) => item.kind), ["thinking", "tool"]);
+  assert.equal(reasonedCall[1].toolName, "read_file");
+  assert.deepEqual(transcript.parseTranscriptLine("{not json", false), [], "an unreadable line is dropped, not thrown");
+
   // A workspace is keyed by its directory, and the host reports its own
   // canonical spelling for every session it lists. A default cwd typed with a
-  // trailing or doubled slash has to reduce to that same key, or the first
-  // reconciliation discovers the canonical form as a second, duplicate
-  // workspace for the directory the user already configured.
+  // trailing or doubled slash, or with dot segments, has to reduce to that same
+  // key -- otherwise the first reconciliation discovers the canonical form as a
+  // second, duplicate workspace for the directory the user already configured.
   assert.equal(transcript.normalizeRemotePath("/srv/application/"), "/srv/application");
   assert.equal(transcript.normalizeRemotePath("/srv//application"), "/srv/application");
   assert.equal(transcript.normalizeRemotePath("  /srv/application//  "), "/srv/application");
+  assert.equal(transcript.normalizeRemotePath("/srv/./application"), "/srv/application");
+  assert.equal(transcript.normalizeRemotePath("/srv/app/../application"), "/srv/application");
   assert.equal(transcript.normalizeRemotePath("/"), "/", "the root keeps its only slash");
   assert.equal(transcript.normalizeRemotePath("//"), "/");
+  assert.equal(transcript.normalizeRemotePath("/.."), "/", "no spelling escapes above the root");
 
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),

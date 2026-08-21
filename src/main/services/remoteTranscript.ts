@@ -66,17 +66,7 @@ export type SessionSyncResult = {
 /** How far back a torn trailing record is searched for before giving up on the copy. */
 const RECORD_ALIGN_WINDOW_BYTES = 1024 * 1024;
 
-/**
- * Brings a local copy of a remote session file up to date.
- *
- * Every byte lands in a staging file that replaces the published copy only once
- * the whole range has arrived, so a read that fails halfway leaves the previous
- * copy exactly as it was. The resume point is taken from the staged bytes rather
- * than from a stored offset, which is what keeps a database that lags the file
- * from causing a duplicated range, and a torn trailing record is cut back to a
- * whole line before anything is appended after it.
- */
-export async function syncSessionFile(options: {
+type SessionSyncOptions = {
   transcriptPath: string;
   /** Zero starts over; any other value resumes from the local copy. */
   fromOffset: number;
@@ -88,7 +78,41 @@ export async function syncSessionFile(options: {
   maxSyncBytes: number;
   readChunk(fromOffset: number): Promise<SessionChunkLike>;
   onTooLarge(fetchedBytes: number): Error;
-}): Promise<SessionSyncResult> {
+};
+
+/** Syncs in progress, keyed by transcript path. See {@link syncSessionFile}. */
+const queuedSyncs = new Map<string, Promise<void>>();
+
+/**
+ * Brings a local copy of a remote session file up to date.
+ *
+ * Every byte lands in a staging file that replaces the published copy only once
+ * the whole range has arrived, so a read that fails halfway leaves the previous
+ * copy exactly as it was. The resume point is taken from the staged bytes rather
+ * than from a stored offset, which is what keeps a database that lags the file
+ * from causing a duplicated range, and a torn trailing record is cut back to a
+ * whole line before anything is appended after it.
+ */
+export function syncSessionFile(options: SessionSyncOptions): Promise<SessionSyncResult> {
+  // One session has one staging file, so two syncs of it cannot run at once:
+  // each removes, appends to, and renames that path, and interleaving them
+  // publishes a spliced transcript or fails an open whose staging file another
+  // call renamed away. Selecting a session, leaving, and selecting it again is
+  // enough to reach that, since neither request is cancelled.
+  const key = options.transcriptPath;
+  const previous = queuedSyncs.get(key);
+  const run = previous
+    ? previous.then(() => syncSessionFileExclusive(options), () => syncSessionFileExclusive(options))
+    : syncSessionFileExclusive(options);
+  const settled = run.then(() => {}, () => {});
+  queuedSyncs.set(key, settled);
+  void settled.then(() => {
+    if (queuedSyncs.get(key) === settled) queuedSyncs.delete(key);
+  });
+  return run;
+}
+
+async function syncSessionFileExclusive(options: SessionSyncOptions): Promise<SessionSyncResult> {
   const { transcriptPath } = options;
   await mkdir(path.dirname(transcriptPath), { recursive: true });
   const staging = `${transcriptPath}.partial`;
@@ -201,41 +225,57 @@ export function readTranscriptEntries(raw: string, appendedFromByte: number): Re
     const lineStart = byteCursor;
     byteCursor += Buffer.byteLength(line, "utf8") + 1;
     if (!line.trim()) continue;
-    const entry = parseTranscriptLine(line, lineStart >= appendedFromByte);
-    if (entry) entries.push(entry);
+    entries.push(...parseTranscriptLine(line, lineStart >= appendedFromByte));
   }
   return entries;
 }
 
-/** Anything Jasmine cannot name is dropped rather than shown as raw JSON. */
-export function parseTranscriptLine(line: string, appended: boolean): RemoteTranscriptEntry | null {
+/**
+ * Projects one JSONL record into the entries it is worth rendering. Anything
+ * Jasmine cannot name is dropped rather than shown as raw JSON.
+ *
+ * One assistant message can carry several kinds of content at once. A reasoning
+ * model's turn is typically a thinking block followed by text or a tool call, so
+ * the record becomes both entries: choosing one kind per message renders remote
+ * history as if the model never reasoned.
+ */
+export function parseTranscriptLine(line: string, appended: boolean): RemoteTranscriptEntry[] {
   let value: Record<string, unknown>;
   try {
     const parsed = JSON.parse(line) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
     value = parsed as Record<string, unknown>;
   } catch {
-    return null;
+    return [];
   }
   const id = typeof value.id === "string" ? value.id : null;
   const timestamp = typeof value.timestamp === "string" ? value.timestamp : null;
   if (value.type === "compaction") {
-    return entry(id, "compaction", timestamp, typeof value.summary === "string" ? value.summary : "", null, appended);
+    return present(entry(id, "compaction", timestamp, typeof value.summary === "string" ? value.summary : "", null, appended));
   }
-  if (value.type !== "message") return null;
+  if (value.type !== "message") return [];
   const message = value.message && typeof value.message === "object" ? value.message as Record<string, unknown> : null;
-  if (!message) return null;
+  if (!message) return [];
   const role = typeof message.role === "string" ? message.role : "";
   const parts = contentParts(message.content);
-  if (role === "user") return entry(id, "user", timestamp, parts.text, null, appended);
+  if (role === "user") return present(entry(id, "user", timestamp, parts.text, null, appended));
   if (role === "toolResult" || role === "tool") {
-    return entry(id, "tool", timestamp, parts.text, typeof message.toolName === "string" ? message.toolName : null, appended);
+    return present(entry(id, "tool", timestamp, parts.text, typeof message.toolName === "string" ? message.toolName : null, appended));
   }
-  if (role !== "assistant") return null;
-  if (parts.toolName) return entry(id, "tool", timestamp, parts.text, parts.toolName, appended);
-  if (parts.text) return entry(id, "assistant", timestamp, parts.text, null, appended);
-  if (parts.thinking) return entry(id, "thinking", timestamp, parts.thinking, null, appended);
-  return null;
+  if (role !== "assistant") return [];
+  // The thinking that produced the output is rendered before it. Its id is
+  // derived from the record's so two entries from one line stay distinct.
+  const thinking = parts.thinking
+    ? entry(id ? `${id}:thinking` : null, "thinking", timestamp, parts.thinking, null, appended)
+    : null;
+  const output = parts.toolName
+    ? entry(id, "tool", timestamp, parts.text, parts.toolName, appended)
+    : entry(id, "assistant", timestamp, parts.text, null, appended);
+  return present(thinking, output);
+}
+
+function present(...entries: Array<RemoteTranscriptEntry | null>): RemoteTranscriptEntry[] {
+  return entries.filter((value): value is RemoteTranscriptEntry => value !== null);
 }
 
 function entry(
@@ -267,10 +307,16 @@ function contentParts(content: unknown): { text: string; thinking: string; toolN
   return { text: text.join("\n").trim(), thinking: thinking.join("\n").trim(), toolName };
 }
 
+/**
+ * Reduces a remote directory to the single spelling it is keyed by. The host
+ * reports a canonical cwd for every session it lists, so a stored path that
+ * still carries `.`, `..`, doubled or trailing slashes can never match one --
+ * it becomes a second workspace for a directory that already has one.
+ */
 export function normalizeRemotePath(value: string): string {
   const trimmed = value.trim();
   if (!trimmed.startsWith("/")) return "/";
-  const collapsed = trimmed.replace(/\/{2,}/gu, "/");
+  const collapsed = path.posix.normalize(trimmed);
   return collapsed.length > 1 ? collapsed.replace(/\/$/u, "") : "/";
 }
 

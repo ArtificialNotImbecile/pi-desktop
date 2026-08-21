@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RemoteDirectoryListing, RemoteProfileSummary, RemoteWorkspace, RemoteWorkspaceAddRequest } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { useI18n } from "../../i18n";
@@ -26,6 +26,7 @@ export function AddRemoteWorkspaceDialog(props: {
   const [loading, setLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const requestRef = useRef(0);
 
   const profileId = props.profile?.id ?? null;
   useEffect(() => {
@@ -38,17 +39,24 @@ export function AddRemoteWorkspaceDialog(props: {
   }, [props.open, profileId]);
 
   async function browse(id: string, target: string) {
+    // A browse over SSH can be slow enough to land after the user moved on, or
+    // after the dialog was reopened for another host. Applying it then would put
+    // a directory on screen that Add does not persist, so only the newest
+    // request may write.
+    const request = ++requestRef.current;
     setLoading(true);
     setBrowseError(null);
     try {
       const result = await getBridge().listRemoteDirectory({ profileId: id, path: target });
+      if (request !== requestRef.current) return;
       setListing(result);
       setPath(result.path);
     } catch (caught) {
+      if (request !== requestRef.current) return;
       setListing(null);
       setBrowseError(errorMessage(caught, t("remote.workspace.loading")));
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
   }
 

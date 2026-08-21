@@ -400,10 +400,11 @@ function App(props: { initialAppSettings: AppSettings }) {
       resetWorkspaceState();
       closeFloatingSurfaces();
       clearErrors();
-      // The route-sync effect deliberately leaves the Working route alone, so a
-      // chat started from there has to carry the navigation itself. Without
-      // this, every New chat control on the Working page reads as inert.
-      if (navigation.route.name === "working") {
+      // The route-sync effect deliberately leaves the Working route and the
+      // remote pages alone, so a chat started from one of them has to carry the
+      // navigation itself. Without this, the thread is created behind a page
+      // that never changes and every New chat control there reads as inert.
+      if (navigation.route.name === "working" || isRemoteRouteName(navigation.route.name)) {
         navigation.navigate({ name: "thread", threadId: thread.id, projectId });
       }
       return thread;
