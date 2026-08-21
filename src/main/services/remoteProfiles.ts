@@ -37,7 +37,7 @@ import { PiRemoteError } from "../agent/extensions/piRemote/errors.js";
 import { ProfileStore } from "../agent/extensions/piRemote/profiles.js";
 import { ManagedRemoteRuntime } from "../agent/extensions/piRemote/runtime.js";
 import { shellQuote } from "../agent/extensions/piRemote/ssh.js";
-import type { RemoteProfile, RemoteSessionMetadata } from "../agent/extensions/piRemote/types.js";
+import type { RemoteProfile, RemoteSessionMetadata, RuntimeInfo } from "../agent/extensions/piRemote/types.js";
 
 /** Entries rendered for one session. Older ones are summarized rather than mounted. */
 const TRANSCRIPT_ENTRY_LIMIT = 400;
@@ -68,11 +68,15 @@ export class RemoteProfileService {
   }
 
   async createProfile(request: RemoteProfileCreateRequest): Promise<RemoteProfileSummary> {
+    // The directory is a workspace key, and the host reports its own canonical
+    // spelling for every session. Storing "/srv/app/" as typed would make the
+    // first reconciliation discover "/srv/app" as a second, duplicate workspace.
+    const defaultCwd = request.defaultCwd ? normalizeRemotePath(request.defaultCwd) : null;
     const profile = await this.store.add({
       name: request.name,
       sshHost: request.sshHost,
       ...(request.sshPort ? { sshPort: request.sshPort } : {}),
-      ...(request.defaultCwd ? { defaultCwd: request.defaultCwd } : {}),
+      ...(defaultCwd ? { defaultCwd } : {}),
       networkMode: request.networkMode,
       ...(request.noProxy ? { noProxy: request.noProxy } : {}),
       ...(request.allowedPorts ? { allowedPorts: request.allowedPorts } : {}),
@@ -89,7 +93,10 @@ export class RemoteProfileService {
 
   async updateProfile(request: RemoteProfileUpdateRequest): Promise<RemoteProfileSummary> {
     const { profileId, ...patch } = request;
-    const profile = await this.store.update(profileId, patch);
+    const profile = await this.store.update(profileId, {
+      ...patch,
+      ...(patch.defaultCwd ? { defaultCwd: normalizeRemotePath(patch.defaultCwd) } : {})
+    });
     if (profile.defaultCwd) {
       this.db.upsertRemoteWorkspace({ profileId: profile.id, cwd: profile.defaultCwd, source: "manual" });
     }
@@ -103,10 +110,13 @@ export class RemoteProfileService {
    */
   async removeProfile(profileId: string): Promise<void> {
     const profile = await this.store.get(profileId);
+    // profiles.json goes first. If that write fails the profile is still
+    // configured and the renderer keeps showing it, so deleting its history
+    // beforehand would destroy data for a profile the user still has.
+    await this.store.remove(profile.id);
     const transcripts = this.db.removeRemoteProfileData(profile.id);
     await Promise.all(transcripts.map((file) => rm(file, { force: true }).catch(() => {})));
     await rm(path.join(this.transcriptRoot, profile.id), { recursive: true, force: true }).catch(() => {});
-    await this.store.remove(profile.id);
     this.statuses.delete(profile.id);
   }
 
@@ -120,7 +130,7 @@ export class RemoteProfileService {
       // whether the host already has it unpacked. Without probing that, a host
       // that is reachable but has no runtime would report Connected here and
       // then flip to Runtime not installed on the first session refresh.
-      const installed = report.ok ? await this.runtime.requireRuntime(profile).catch(() => null) : null;
+      const installed = report.ok ? await this.probeRuntime(profile) : null;
       const runtimeMissing = report.checks.some((check) => check.id === "artifact" && check.status === "fail")
         || (report.ok && !installed);
       this.publishStatus({
@@ -150,6 +160,21 @@ export class RemoteProfileService {
       };
     } catch (error) {
       this.publishFailure(profile.id, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Answers whether the host already has the runtime, without installing one.
+   * Only an answered "not installed" becomes null: swallowing the rest would
+   * turn an unreachable host or malformed lifecycle output into "install the
+   * runtime", which is not the remediation that fixes it.
+   */
+  private async probeRuntime(profile: RemoteProfile): Promise<RuntimeInfo | null> {
+    try {
+      return await this.runtime.requireRuntime(profile);
+    } catch (error) {
+      if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return null;
       throw error;
     }
   }
@@ -196,7 +221,10 @@ export class RemoteProfileService {
 
   async listWorkspaces(profileId?: string): Promise<RemoteWorkspace[]> {
     const profiles = await this.store.list();
-    const defaultCwdByProfile = new Map(profiles.map((profile) => [profile.id, profile.defaultCwd ?? null]));
+    // profiles.json can also be written by the pi-remote CLI, so the stored
+    // spelling is compared in the same normalized form the workspaces use.
+    const defaultCwdByProfile = new Map(profiles.map((profile) =>
+      [profile.id, profile.defaultCwd ? normalizeRemotePath(profile.defaultCwd) : null]));
     // profiles.json is the owner of the profile list, so a workspace whose
     // profile is gone is stale local state rather than something to display.
     return this.db.listRemoteWorkspaces(profileId)
@@ -209,13 +237,14 @@ export class RemoteProfileService {
 
   async addWorkspace(request: RemoteWorkspaceAddRequest): Promise<RemoteWorkspace> {
     const profile = await this.store.get(request.profileId);
+    const cwd = normalizeRemotePath(request.cwd);
     const workspace = this.db.upsertRemoteWorkspace({
       profileId: profile.id,
-      cwd: request.cwd,
+      cwd,
       ...(request.name ? { name: request.name } : {}),
       source: "manual"
     });
-    if (request.setDefault) await this.store.update(profile.id, { defaultCwd: request.cwd });
+    if (request.setDefault) await this.store.update(profile.id, { defaultCwd: cwd });
     const [resolved] = await this.listWorkspaces(profile.id).then((all) => all.filter((item) => item.id === workspace.id));
     return resolved ?? workspace;
   }
@@ -269,7 +298,10 @@ export class RemoteProfileService {
     this.db.replaceRemoteSessionListing(profile.id, sessions.map((session) => ({
       profileId: profile.id,
       sessionId: session.id,
-      cwd: session.cwd || "",
+      // Same normalization the workspaces are keyed by, so a session and the
+      // directory it belongs to cannot end up as two different strings. A
+      // session with no cwd stays empty rather than becoming the root.
+      cwd: session.cwd ? normalizeRemotePath(session.cwd) : "",
       name: session.name ?? null,
       preview: session.preview ?? null,
       turnCount: session.turnCount ?? null,

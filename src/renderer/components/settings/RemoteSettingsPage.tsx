@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   RemoteDoctorReport,
   RemoteProfileStatus,
@@ -25,7 +25,10 @@ export function RemoteSettingsPage(props: {
   onStop(profileId: string): Promise<boolean>;
 }) {
   const { t } = useI18n();
-  const [report, setReport] = useState<RemoteDoctorReport | null>(null);
+  // The report carries the profile it describes. A check that is still in flight
+  // when another profile is selected would otherwise render one host's results
+  // under another host's details.
+  const [report, setReport] = useState<{ profileId: string; value: RemoteDoctorReport | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
@@ -35,10 +38,9 @@ export function RemoteSettingsPage(props: {
   const selectedId = selected?.id ?? null;
 
   // The report belongs to one profile; switching profiles must not leave the
-  // previous host's checks on screen.
-  useEffect(() => {
-    setReport(null);
-  }, [selectedId]);
+  // previous host's checks on screen, whether they arrived before the switch or
+  // land after it.
+  const visibleReport = report && report.profileId === selectedId ? report.value : null;
 
   const status = selectedId ? props.statuses[selectedId] : undefined;
   const workspaces = props.workspaces.filter((workspace) => workspace.profileId === selectedId);
@@ -110,14 +112,17 @@ export function RemoteSettingsPage(props: {
                     label={t(statusKey(status))}
                     description={status?.message ?? status?.remediation ?? undefined}
                     actions={
-                      <Button size="sm" leftIcon={<RefreshIcon />} loading={busy} onClick={() => void run(async () => setReport(await props.onCheck(selected.id)))}>
+                      <Button size="sm" leftIcon={<RefreshIcon />} loading={busy} onClick={() => void run(async () => {
+                        const profileId = selected.id;
+                        setReport({ profileId, value: await props.onCheck(profileId) });
+                      })}>
                         {t("remote.doctor.run")}
                       </Button>
                     }
                   />
-                  {report ? (
+                  {visibleReport ? (
                     <ul className="remote-doctor-list">
-                      {report.checks.map((check) => (
+                      {visibleReport.checks.map((check) => (
                         <li key={check.id}>
                           <StatePill tone={checkTone(check.status)}>{t(checkStatusKey(check.status))}</StatePill>
                           <span>{check.message}</span>

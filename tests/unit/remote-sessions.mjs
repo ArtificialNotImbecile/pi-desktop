@@ -403,6 +403,17 @@ try {
   }), (error) => error?.code === "session-too-large");
   assert.equal(await readFile(cappedPath, "utf8"), head, "refusing the range leaves the previous copy alone");
 
+  // A workspace is keyed by its directory, and the host reports its own
+  // canonical spelling for every session it lists. A default cwd typed with a
+  // trailing or doubled slash has to reduce to that same key, or the first
+  // reconciliation discovers the canonical form as a second, duplicate
+  // workspace for the directory the user already configured.
+  assert.equal(transcript.normalizeRemotePath("/srv/application/"), "/srv/application");
+  assert.equal(transcript.normalizeRemotePath("/srv//application"), "/srv/application");
+  assert.equal(transcript.normalizeRemotePath("  /srv/application//  "), "/srv/application");
+  assert.equal(transcript.normalizeRemotePath("/"), "/", "the root keeps its only slash");
+  assert.equal(transcript.normalizeRemotePath("//"), "/");
+
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),
     "a profile name pi-remote would reject must not reach the store");

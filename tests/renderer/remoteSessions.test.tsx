@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
+  RemoteDoctorReport,
   RemoteProfileStatus,
   RemoteProfileSummary,
   RemoteSessionSummary,
@@ -10,6 +11,7 @@ import type {
 } from "../../src/shared/ipc";
 import { RemoteSessionPage } from "../../src/renderer/components/remote/RemoteSessionPage";
 import { RemoteTree } from "../../src/renderer/components/remote/RemoteTree";
+import { RemoteSettingsPage } from "../../src/renderer/components/settings/RemoteSettingsPage";
 import { useRemotes } from "../../src/renderer/hooks/useRemotes";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { installFakeBridge, type FakeBridge } from "./fakeBridge";
@@ -247,7 +249,54 @@ describe("remote profile actions", () => {
     expect(errors).toEqual(["The remote daemon did not answer."]);
     expect(toasts).toEqual([]);
   });
+
+  test("a check that lands after another profile is selected does not describe it", async () => {
+    let answerDirect: ((report: RemoteDoctorReport) => void) | null = null;
+    const onCheck = async (profileId: string) => (profileId === DIRECT.id
+      ? new Promise<RemoteDoctorReport>((resolve) => { answerDirect = resolve; })
+      : doctorReport(profileId, `${profileId} answered`));
+
+    function Harness() {
+      const [selectedProfileId, setSelectedProfileId] = useState<string | null>(DIRECT.id);
+      return (
+        <RemoteSettingsPage
+          profiles={[DIRECT, PROXIED]}
+          workspaces={[]}
+          statuses={{}}
+          selectedProfileId={selectedProfileId}
+          onSelectProfile={setSelectedProfileId}
+          onAddProfile={() => {}}
+          onAddWorkspace={() => {}}
+          onRemoveProfile={async () => {}}
+          onCheck={onCheck}
+          onInstall={async () => true}
+          onStop={async () => true}
+        />
+      );
+    }
+
+    render(withI18n(<Harness />));
+    fireEvent.click(screen.getByRole("button", { name: "Run check" }));
+    // The profile list stays usable while a check runs, so its answer can arrive
+    // for a host that is no longer the one on screen.
+    fireEvent.click(screen.getByText(PROXIED.name));
+    await act(async () => {
+      answerDirect?.(doctorReport(DIRECT.id, `${DIRECT.id} answered`));
+    });
+
+    expect(screen.queryByText(`${DIRECT.id} answered`)).toBeNull();
+    expect(screen.getByText("Not run yet")).toBeTruthy();
+  });
 });
+
+function doctorReport(profileId: string, message: string): RemoteDoctorReport {
+  return {
+    profileId,
+    ok: true,
+    checks: [{ id: "ssh", status: "pass", message }],
+    checkedAt: "2026-08-19T10:00:00.000Z"
+  };
+}
 
 /** Mounts the reader with a selection the test drives, as the route does. */
 function PageHarness(props: { initialSessionId: string | null; sessions: RemoteSessionSummary[] }) {
