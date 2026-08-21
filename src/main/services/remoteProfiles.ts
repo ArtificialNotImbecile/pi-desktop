@@ -63,7 +63,9 @@ type ActiveRemoteOperation = {
   abortRequested: boolean;
   phase: "opening" | "attached" | "detached";
   state: "running" | "reconnecting" | "stopping";
+  promptDispatched: boolean;
   promptAccepted: boolean;
+  daemonId: string | null;
   detachedEgress: { close(): Promise<void> } | null;
   monitoring: boolean;
   done: Promise<void>;
@@ -403,6 +405,7 @@ export class RemoteProfileService {
         {
           onPort: async (port) => {
             operation.port = port;
+            operation.daemonId = port.daemonId;
             operation.phase = "attached";
             this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
@@ -417,6 +420,9 @@ export class RemoteProfileService {
               await port.abort().catch(() => {});
               throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
             }
+          },
+          onPromptDispatched: () => {
+            operation.promptDispatched = true;
           },
           onPromptAccepted: () => {
             operation.promptAccepted = true;
@@ -442,7 +448,8 @@ export class RemoteProfileService {
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
-      if (operation.promptAccepted && !isDefinitePromptRejection(error)) {
+      if ((operation.promptAccepted || operation.promptDispatched && isDetachedPromptFailure(error))
+        && !isDefinitePromptRejection(error)) {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
@@ -469,12 +476,16 @@ export class RemoteProfileService {
         {
           onPort: async (port) => {
             operation.port = port;
+            operation.daemonId = port.daemonId;
             operation.phase = "attached";
             this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
               await port.abort().catch(() => {});
               throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
             }
+          },
+          onPromptDispatched: () => {
+            operation.promptDispatched = true;
           },
           onPromptAccepted: () => {
             operation.promptAccepted = true;
@@ -491,7 +502,8 @@ export class RemoteProfileService {
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
       }
-      if (operation.promptAccepted && !isDefinitePromptRejection(error)) {
+      if ((operation.promptAccepted || operation.promptDispatched && isDetachedPromptFailure(error))
+        && !isDefinitePromptRejection(error)) {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
@@ -737,7 +749,8 @@ export class RemoteProfileService {
     sessionId: string | null,
     cwd: string,
     state: ActiveRemoteOperation["state"] = "running",
-    phase: ActiveRemoteOperation["phase"] = "opening"
+    phase: ActiveRemoteOperation["phase"] = "opening",
+    daemonId: string | null = null
   ): ActiveRemoteOperation {
     if (this.activeOperations.has(profileId)) {
       throw new PiRemoteError(
@@ -755,7 +768,9 @@ export class RemoteProfileService {
       abortRequested: false,
       phase,
       state,
+      promptDispatched: false,
       promptAccepted: false,
+      daemonId,
       detachedEgress: null,
       monitoring: false,
       done,
@@ -787,7 +802,8 @@ export class RemoteProfileService {
       active.sessionId,
       normalizeRemotePath(active.cwd),
       "reconnecting",
-      "detached"
+      "detached",
+      runtimeInfo.daemonId
     );
     this.monitorDetachedOperation(profile, operation, runtimeInfo);
   }
@@ -893,6 +909,13 @@ export class RemoteProfileService {
             continue;
           }
           const active = info.activeRpc;
+          if (operation.daemonId && info.daemonId !== operation.daemonId) {
+            throw new PiRemoteError(
+              "remote-daemon-restarted",
+              "The remote daemon restarted while this prompt was detached, so its completion cannot be confirmed.",
+              { phase: "session", remediation: "Open the remote session history to verify what was saved before retrying." }
+            );
+          }
           if (!active?.busy) {
             if (active) await this.runtime.stop(profile);
             await this.refreshSessions(profile.id);

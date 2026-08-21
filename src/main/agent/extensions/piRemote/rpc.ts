@@ -191,6 +191,7 @@ export interface ControlTransport {
 
 export class PiRpcSessionPort implements RemoteSessionPort {
   readonly capabilities: readonly string[];
+  readonly daemonId: string | null;
   sessionId?: string;
   private readonly listeners = new Set<(event: RemoteSessionEvent) => void>();
   private readonly bufferedEvents: RemoteSessionEvent[] = [];
@@ -204,9 +205,11 @@ export class PiRpcSessionPort implements RemoteSessionPort {
   constructor(
     private readonly client: DaemonClient,
     capabilities: readonly string[],
-    private readonly proxy?: { url: string; noProxy: string[] }
+    private readonly proxy?: { url: string; noProxy: string[] },
+    daemonId: string | null = null
   ) {
     this.capabilities = [...capabilities];
+    this.daemonId = daemonId;
     this.unsubscribe = client.subscribe((event) => this.receive(event));
     this.unsubscribeDisconnect = client.subscribeDisconnect((error) => this.disconnected(error));
   }

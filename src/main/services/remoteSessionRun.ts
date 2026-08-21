@@ -18,6 +18,7 @@ export async function startManagedRemoteSession(
   callbacks: {
     onPort?(port: RemoteSessionPort): void | Promise<void>;
     onSessionId?(sessionId: string, port: RemoteSessionPort): void | Promise<void>;
+    onPromptDispatched?(): void | Promise<void>;
     onPromptAccepted?(): void | Promise<void>;
     timeoutMs?: number;
   } = {}
@@ -31,6 +32,7 @@ export async function startManagedRemoteSession(
     const sessionId = await port.createSession(cwd);
     await callbacks.onSessionId?.(sessionId, port);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs);
+    await callbacks.onPromptDispatched?.();
     await port.prompt(text, [], callbacks.onPromptAccepted);
     await settled.promise;
     return sessionId;
@@ -52,6 +54,7 @@ export async function promptManagedRemoteSession(
   text: string,
   callbacks: {
     onPort?(port: RemoteSessionPort): void | Promise<void>;
+    onPromptDispatched?(): void | Promise<void>;
     onPromptAccepted?(): void | Promise<void>;
     timeoutMs?: number;
   } = {}
@@ -63,6 +66,7 @@ export async function promptManagedRemoteSession(
     port = await runtime.openSession(profile, { sessionId });
     await callbacks.onPort?.(port);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs ?? REMOTE_PROMPT_TIMEOUT_MS);
+    await callbacks.onPromptDispatched?.();
     await port.prompt(text, [], callbacks.onPromptAccepted);
     await settled.promise;
   } catch (error) {

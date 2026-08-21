@@ -146,11 +146,12 @@ test("Pi RPC port keeps the upstream wire private and resolves inner command res
     },
     close() {}
   };
-  const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl", "prompt-image"]);
+  const port = new PiRpcSessionPort(fakeClient, ["rpc-jsonl", "prompt-image"], undefined, "daemon-fixture");
   assert.deepEqual(await port.bash("pwd"), { accepted: "bash" });
   assert.deepEqual(await port.compact("focus"), { accepted: "compact" });
   assert.equal(requests.filter((entry) => entry.method === "rpc.send").length, 2);
   assert.equal(port.capabilities.includes("prompt-image"), true);
+  assert.equal(port.daemonId, "daemon-fixture");
 
   fakeClient.request = async (method, params) => {
     if (method === "rpc.send") {

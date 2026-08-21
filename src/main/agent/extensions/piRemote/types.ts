@@ -137,6 +137,7 @@ export interface RemoteSessionEvent {
 
 export interface RemoteSessionPort {
   readonly capabilities: readonly string[];
+  readonly daemonId: string | null;
   readonly sessionId?: string;
   readonly eventCursor: number;
   subscribe(listener: (event: RemoteSessionEvent) => void): () => void;

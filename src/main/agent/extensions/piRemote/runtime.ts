@@ -188,7 +188,12 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
         ...(resolvedSessionId ? { sessionId: resolvedSessionId, piArgs: ["--session", resolvedSessionId] } : {}),
         ...(egress ? { proxy: { url: egress.proxyUrl, noProxy: egress.noProxy } } : {})
       });
-      const port = new PiRpcSessionPort(client, remoteInfo.capabilities, egress ? { url: egress.proxyUrl, noProxy: egress.noProxy } : undefined);
+      const port = new PiRpcSessionPort(
+        client,
+        remoteInfo.capabilities,
+        egress ? { url: egress.proxyUrl, noProxy: egress.noProxy } : undefined,
+        remoteInfo.daemonId
+      );
       if (resolvedSessionId) port.sessionId = resolvedSessionId;
       return wrapPortResources(port, egress, child);
     } catch (error) {

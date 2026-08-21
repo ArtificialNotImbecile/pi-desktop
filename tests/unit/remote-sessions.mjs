@@ -654,6 +654,32 @@ try {
     ["detach"]
   ], "a transport disconnect after acceptance detaches without closing detached resources");
 
+  const ambiguousCalls = [];
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe() { return () => {}; },
+        async prompt() {
+          ambiguousCalls.push(["prompt"]);
+          const error = new Error("daemon acknowledgement was lost");
+          error.code = "daemon-disconnected";
+          throw error;
+        },
+        async detach() { ambiguousCalls.push(["detach"]); },
+        async close() { ambiguousCalls.push(["close"]); }
+      };
+    }
+  }, {}, "ambiguous-session", "may already be running", {
+    onPromptDispatched() { ambiguousCalls.push(["dispatched"]); },
+    onPromptAccepted() { ambiguousCalls.push(["accepted"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(ambiguousCalls, [
+    ["dispatched"],
+    ["prompt"],
+    ["detach"]
+  ], "a lost daemon acknowledgement preserves the distinct dispatched boundary");
+
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear
   // to probe itself repeatedly whenever the tree or route refreshed.
@@ -686,7 +712,7 @@ try {
   const detachedMonitorBody = remoteProfileServiceSource.slice(detachedMonitorStart, detachedMonitorEnd);
   assert.ok(detachedMonitorBody.indexOf("if (operation.abortRequested)") < detachedMonitorBody.indexOf('profile.network.mode === "client-proxy"'),
     "a detached Stop must run before any attempt to restore client-proxy egress");
-  assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted && !isDefinitePromptRejection\(error\)\)[\s\S]*pending: true/u,
+  assert.match(remoteProfileServiceSource, /operation\.promptDispatched && isDetachedPromptFailure\(error\)[\s\S]*pending: true/u,
     "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
   assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,
     "daemon-owned work must be discovered when the service starts, without waiting for navigation");
@@ -698,8 +724,10 @@ try {
     "profile removal must not race a startup recovery that can still reserve it");
   assert.doesNotMatch(remoteProfileServiceSource, /await Promise\.all\(profiles\.map/u,
     "one offline host must not globally gate unrelated profile operations");
-  assert.equal(remoteProfileServiceSource.match(/promptAccepted && !isDefinitePromptRejection\(error\)/gu)?.length, 2,
-    "both new and existing sessions must keep an explicit Pi rejection retryable in the composer");
+  assert.equal(remoteProfileServiceSource.match(/promptDispatched && isDetachedPromptFailure\(error\)/gu)?.length, 2,
+    "both new and existing sessions must treat a lost delivery acknowledgement as pending");
+  assert.match(detachedMonitorBody, /operation\.daemonId && info\.daemonId !== operation\.daemonId/u,
+    "a detached prompt must fail explicitly when its daemon epoch changes");
   assert.match(remoteProfileServiceSource, /void this\.retryStartupRecovery\(profile\)/u,
     "transient startup outages must hand off to an unbounded background recovery loop");
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
