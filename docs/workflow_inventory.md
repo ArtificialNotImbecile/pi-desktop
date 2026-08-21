@@ -17,6 +17,9 @@ pending new session opens when its row appears, while a pending existing turn
 refetches the transcript already on screen.
 Per-profile event versions keep a newer operation status from being overwritten
 by an older profile-list snapshot that was already in flight.
+An operation recovered at app startup also emits one renderer completion token:
+its new session row appears automatically, and an already-open matching session
+refetches its transcript.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

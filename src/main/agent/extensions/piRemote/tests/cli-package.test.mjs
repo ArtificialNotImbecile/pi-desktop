@@ -336,6 +336,17 @@ test("remote stop transport failures remain retryable for detached cancellation"
   );
 });
 
+test("egress lease transport failures remain retryable during startup recovery", async () => {
+  const manager = new ManagedRemoteRuntime({ ssh: { async run() { return { code: 255, stdout: "", stderr: "connection lost" }; } } });
+  const info = { controlVersion: 1, runtimeVersion: "0.1.2", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [], remoteRoot: "/r", profileRoot: "/p", sessionRoot: "/s", daemonId: "daemon", activeRpc: null };
+  const profile = { id: "00000000-0000-4000-8000-000000000001", name: "fixture", sshHost: "host", defaultCwd: "/work", network: { mode: "client-proxy", clientProxy: { noProxy: [], allowedPorts: [443] } }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+
+  await assert.rejects(
+    () => manager.startEgress(profile, info),
+    (error) => error?.code === "egress-lease-failed" && error.retryable === true
+  );
+});
+
 test("file download waits for stdout to drain after the SSH child exits", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-download-"));
   const target = path.join(root, "download.bin");

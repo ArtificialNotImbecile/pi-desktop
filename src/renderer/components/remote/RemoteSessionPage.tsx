@@ -21,6 +21,7 @@ export type RemoteSessionPageProps = {
   status: RemoteProfileStatus | undefined;
   sessions: RemoteSessionSummary[];
   activeSessionId: string | null;
+  recoveredCompletion?: { version: number; sessionId: string | null };
   refreshing: boolean;
   onRefresh(): void;
   onSelectSession(sessionId: string): void;
@@ -55,6 +56,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   } | null>(null);
   const requestRef = useRef(0);
   const promptRequestRef = useRef(0);
+  const recoveredCompletionVersionRef = useRef(props.recoveredCompletion?.version ?? 0);
   const activeSessionRef = useRef(props.activeSessionId);
   activeSessionRef.current = props.activeSessionId;
   const sessionOperation = props.status?.sessionOperation?.cwd === props.cwd ? props.status.sessionOperation : null;
@@ -70,6 +72,7 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     setStopping(false);
     setPendingStartSessionId(null);
     setPendingExistingSession(null);
+    recoveredCompletionVersionRef.current = props.recoveredCompletion?.version ?? 0;
     return () => { promptRequestRef.current += 1; };
   }, [props.profile?.id, props.cwd]);
 
@@ -123,6 +126,14 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     setPendingExistingSession(null);
     void refetch();
   }, [pendingExistingSession, props.sessions, sessionOperation, activeSessionId]);
+
+  useEffect(() => {
+    const completion = props.recoveredCompletion;
+    if (!completion || completion.version <= recoveredCompletionVersionRef.current) return;
+    recoveredCompletionVersionRef.current = completion.version;
+    if (!activeSessionId || (completion.sessionId && completion.sessionId !== activeSessionId)) return;
+    void refetch();
+  }, [props.recoveredCompletion?.version, activeSessionId]);
 
   async function refetch() {
     if (!activeSessionId) return;

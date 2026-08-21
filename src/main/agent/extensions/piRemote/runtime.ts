@@ -621,6 +621,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     const leaseResult = await this.ssh.run(profile, this.hostCommand(profile, info, ["egress", "lease"]));
     if (leaseResult.code !== 0) throw new PiRemoteError("egress-lease-failed", "Failed to acquire the profile egress lease.", {
       phase: "egress",
+      retryable: true,
       safeDetails: { exitCode: leaseResult.code }
     });
     const leaseValue = parseSecretLifecycle(leaseResult.stdout, "PI_REMOTE_EGRESS_CONFIG/1");

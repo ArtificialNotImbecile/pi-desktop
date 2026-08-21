@@ -27,11 +27,17 @@ export type RemoteHostGroup = {
  */
 type SessionsByProfile = Record<string, RemoteSessionSummary[]>;
 
+export type RecoveredRemoteCompletion = {
+  version: number;
+  sessionId: string | null;
+};
+
 export function useRemotes(options: { onError(message: string): void; onToast(message: string): void }) {
   const [profiles, setProfiles] = useState<RemoteProfileSummary[]>([]);
   const [workspaces, setWorkspaces] = useState<RemoteWorkspace[]>([]);
   const [sessions, setSessions] = useState<SessionsByProfile>({});
   const [statuses, setStatuses] = useState<Record<string, RemoteProfileStatus>>({});
+  const [recoveredCompletions, setRecoveredCompletions] = useState<Record<string, RecoveredRemoteCompletion>>({});
   const [refreshingProfileIds, setRefreshingProfileIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   // Refresh is time-boxed per profile so expanding the same tree repeatedly does
@@ -40,6 +46,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   const statusesRef = useRef<Record<string, RemoteProfileStatus>>({});
   const statusEventVersionsRef = useRef(new Map<string, number>());
   const submissionStateRef = useRef(new Map<string, "awaiting" | "pending" | "completed-before-result" | "synchronized" | "failed">());
+  const recoveredCompletionVersionRef = useRef(0);
   const onErrorRef = useRef(options.onError);
   const onToastRef = useRef(options.onToast);
   onErrorRef.current = options.onError;
@@ -301,6 +308,19 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
           // The event can outrun the invoke response. Let that response decide
           // whether this completed operation still needs reconciliation.
           submissionStateRef.current.set(status.profileId, "completed-before-result");
+        } else if (submissionState === undefined) {
+          // A daemon operation discovered during app startup has no renderer
+          // submission marker. Reconcile its projection and tell an open reader
+          // to fetch the recovered session's transcript once.
+          const sessionId = previous.sessionOperation?.sessionId ?? null;
+          void (async () => {
+            await refreshSessions(status.profileId, { force: true });
+            const version = ++recoveredCompletionVersionRef.current;
+            setRecoveredCompletions((current) => ({
+              ...current,
+              [status.profileId]: { version, sessionId }
+            }));
+          })();
         } else {
           submissionStateRef.current.delete(status.profileId);
         }
@@ -383,6 +403,7 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     workspaces,
     sessions,
     statuses,
+    recoveredCompletions,
     refreshingProfileIds,
     loadingRemotes: loading,
     refreshRemotes: loadProfiles,

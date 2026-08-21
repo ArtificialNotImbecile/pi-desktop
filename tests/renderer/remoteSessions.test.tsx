@@ -329,6 +329,7 @@ function PageHarness(props: { initialSessionId: string | null; sessions: RemoteS
       status={remotes.statuses[DIRECT.id]}
       sessions={remotes.sessions[DIRECT.id] ?? props.sessions}
       activeSessionId={selected}
+      recoveredCompletion={remotes.recoveredCompletions[DIRECT.id]}
       refreshing={false}
       onRefresh={() => void remotes.refreshSessions(DIRECT.id, { force: true })}
       onSelectSession={setSelected}
@@ -679,6 +680,60 @@ describe("remote session reader", () => {
     await fake.emitRemoteStatus(status("ready"));
     expect(await screen.findByText("snapshot-safe work")).toBeDefined();
     expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
+  });
+
+  test("a startup-recovered first session appears after its unknown operation settles", async () => {
+    fake = installFakeBridge();
+    const created = session({ sessionId: "startup-created", title: "recovered first session" });
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [status("ready")], sessions: { [DIRECT.id]: [] } });
+    render(withI18n(<SubmissionTrackingHarness />));
+
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: created.sessionId, cwd: WORKSPACE.cwd, state: "reconnecting" }
+    });
+    fake.setRemoteState({ refreshed: { [DIRECT.id]: [created] } });
+    await fake.emitRemoteStatus(status("ready"));
+
+    expect(await screen.findByText("recovered first session")).toBeDefined();
+    expect(fake.calls.refreshRemoteSessions).toContain(DIRECT.id);
+  });
+
+  test("a startup-recovered existing session refetches its open transcript after settlement", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "startup-existing", title: "recovered existing session" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { [row.sessionId]: transcript({ sessionId: row.sessionId, title: row.title }) }
+    });
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} />));
+    await screen.findByText("refactor the auth middleware");
+
+    await fake.emitRemoteStatus({
+      ...status("ready"),
+      sessionOperation: { sessionId: row.sessionId, cwd: WORKSPACE.cwd, state: "reconnecting" }
+    });
+    fake.setRemoteState({
+      refreshed: { [DIRECT.id]: [row] },
+      transcripts: {
+        [row.sessionId]: transcript({
+          sessionId: row.sessionId,
+          title: row.title,
+          entries: [{ id: "recovered", kind: "assistant", timestamp: null, text: "recovered transcript complete", toolName: null, appended: true }]
+        })
+      }
+    });
+    await fake.emitRemoteStatus(status("ready"));
+
+    expect(await screen.findByText("recovered transcript complete")).toBeDefined();
+    expect(fake.calls.openRemoteSession).toContainEqual({
+      profileId: DIRECT.id,
+      sessionId: row.sessionId,
+      refetch: true
+    });
   });
 
   test("a pending first prompt automatically appears and opens when the operation settles", async () => {

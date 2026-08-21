@@ -716,6 +716,7 @@ function App(props: { initialAppSettings: AppSettings }) {
           status={remotes.statuses[remoteRoute.profileId]}
           sessions={(remotes.sessions[remoteRoute.profileId] ?? []).filter((session) => session.cwd === remoteRoute.cwd)}
           activeSessionId={remoteRoute.sessionId}
+          recoveredCompletion={remotes.recoveredCompletions[remoteRoute.profileId]}
           refreshing={remotes.refreshingProfileIds.includes(remoteRoute.profileId)}
           onRefresh={() => void remotes.refreshSessions(remoteRoute.profileId, { force: true })}
           onSelectSession={(sessionId) => navigateToRoute({ name: "remoteSession", profileId: remoteRoute.profileId, sessionId })}
