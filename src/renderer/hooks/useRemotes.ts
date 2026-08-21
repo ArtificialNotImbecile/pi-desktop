@@ -6,6 +6,7 @@ import type {
   RemoteProfileSummary,
   RemoteProfileUpdateRequest,
   RemoteSessionSummary,
+  RemoteSessionStartResult,
   RemoteSessionTranscript,
   RemoteWorkspace,
   RemoteWorkspaceAddRequest
@@ -235,6 +236,53 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     }
   }, [loadSessions]);
 
+  const startSession = useCallback(async (profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | null> => {
+    try {
+      const result = await getBridge().startRemoteSession({ profileId, cwd, text });
+      lastRefreshRef.current[profileId] = Date.now();
+      setSessions((current) => ({
+        ...current,
+        [profileId]: upsertSession(current[profileId] ?? [], result.session)
+      }));
+      setWorkspaces(await getBridge().listRemoteWorkspaces());
+      onToastRef.current("Remote session created");
+      return result;
+    } catch (caught) {
+      onErrorRef.current(errorMessage(caught, "Failed to create the remote session."));
+      return null;
+    }
+  }, []);
+
+  const promptSession = useCallback(async (
+    profileId: string,
+    sessionId: string,
+    text: string
+  ): Promise<RemoteSessionTranscript | null> => {
+    try {
+      const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text });
+      lastRefreshRef.current[profileId] = Date.now();
+      await Promise.all([
+        loadSessions(profileId),
+        getBridge().listRemoteWorkspaces().then(setWorkspaces)
+      ]);
+      return transcript;
+    } catch (caught) {
+      onErrorRef.current(errorMessage(caught, "The remote prompt failed."));
+      return null;
+    }
+  }, [loadSessions]);
+
+  const abortSession = useCallback(async (profileId: string, sessionId?: string): Promise<boolean> => {
+    try {
+      const aborted = await getBridge().abortRemoteSession({ profileId, ...(sessionId ? { sessionId } : {}) });
+      if (!aborted) onErrorRef.current("The remote session is no longer running.");
+      return aborted;
+    } catch (caught) {
+      onErrorRef.current(errorMessage(caught, "Failed to stop the remote response."));
+      return false;
+    }
+  }, []);
+
   const hostGroups = useMemo<RemoteHostGroup[]>(() => groupProfilesByHost(profiles), [profiles]);
 
   return {
@@ -258,7 +306,10 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     addWorkspace,
     updateWorkspace,
     removeWorkspace,
-    openSession
+    openSession,
+    startSession,
+    promptSession,
+    abortSession
   };
 }
 
@@ -272,4 +323,10 @@ export function groupProfilesByHost(profiles: RemoteProfileSummary[]): RemoteHos
   return [...groups.entries()]
     .map(([sshHost, hostProfiles]) => ({ sshHost, profiles: hostProfiles }))
     .sort((left, right) => left.sshHost.localeCompare(right.sshHost));
+}
+
+function upsertSession(rows: RemoteSessionSummary[], next: RemoteSessionSummary): RemoteSessionSummary[] {
+  const index = rows.findIndex((row) => row.sessionId === next.sessionId);
+  if (index < 0) return [next, ...rows];
+  return rows.map((row, rowIndex) => rowIndex === index ? next : row);
 }

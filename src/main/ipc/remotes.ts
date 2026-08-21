@@ -10,6 +10,10 @@ import type {
   RemoteProfileUpdateRequest,
   RemoteSessionListRequest,
   RemoteSessionOpenRequest,
+  RemoteSessionStartRequest,
+  RemoteSessionStartResult,
+  RemoteSessionPromptRequest,
+  RemoteSessionAbortRequest,
   RemoteSessionSummary,
   RemoteSessionTranscript,
   RemoteWorkspace,
@@ -24,6 +28,9 @@ import {
   remoteProfileUpdateSchema,
   remoteSessionListSchema,
   remoteSessionOpenSchema,
+  remoteSessionStartSchema,
+  remoteSessionPromptSchema,
+  remoteSessionAbortSchema,
   remoteWorkspaceAddSchema,
   remoteWorkspaceIdSchema,
   remoteWorkspaceUpdateSchema
@@ -96,5 +103,20 @@ export function registerRemoteIpc(context: IpcContext): void {
   ipcMain.handle("remotes:openSession", (_event, request: RemoteSessionOpenRequest): Promise<RemoteSessionTranscript> => {
     const parsed = remoteSessionOpenSchema.parse(request);
     return service().openSession(parsed.profileId, parsed.sessionId, parsed.refetch ?? false);
+  });
+
+  ipcMain.handle("remotes:startSession", (_event, request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult> => {
+    const parsed = remoteSessionStartSchema.parse(request);
+    return service().startSession(parsed.profileId, parsed.cwd, parsed.text);
+  });
+
+  ipcMain.handle("remotes:promptSession", (_event, request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript> => {
+    const parsed = remoteSessionPromptSchema.parse(request);
+    return service().promptSession(parsed.profileId, parsed.sessionId, parsed.text);
+  });
+
+  ipcMain.handle("remotes:abortSession", (_event, request: RemoteSessionAbortRequest): Promise<boolean> => {
+    const parsed = remoteSessionAbortSchema.parse(request);
+    return service().abortSession(parsed.profileId, parsed.sessionId);
   });
 }

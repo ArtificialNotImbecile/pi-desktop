@@ -10457,9 +10457,13 @@ button.memory-used-line > .ui-button-icon:last-child svg {
 }
 
 .remote-page-header-actions {
+  position: relative;
+  z-index: 30;
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
 }
 
 .remote-page-note {
@@ -10587,6 +10591,12 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   border-color: var(--accent-line);
 }
 
+.remote-entry.pending {
+  border-style: dashed;
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
 .remote-entry.thinking,
 .remote-entry.tool,
 .remote-entry.compaction {
@@ -10624,6 +10634,36 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.remote-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 0 0 316px;
+  border-top: 1px solid var(--line);
+}
+
+.remote-composer .ui-field {
+  width: 100%;
+}
+
+.remote-composer .ui-textarea {
+  min-height: 70px;
+  max-height: 180px;
+  resize: vertical;
+}
+
+.remote-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.remote-composer-actions .remote-transcript-status {
+  margin-right: auto;
 }
 
 /* Wizard and workspace picker */
@@ -10883,6 +10923,10 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   .remote-page-body,
   .remote-settings-body {
     grid-template-columns: 1fr;
+  }
+
+  .remote-composer {
+    padding-left: 0;
   }
 }
 

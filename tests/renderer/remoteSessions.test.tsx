@@ -325,17 +325,73 @@ function PageHarness(props: { initialSessionId: string | null; sessions: RemoteS
       workspace={WORKSPACE}
       cwd={WORKSPACE.cwd}
       status={remotes.statuses[DIRECT.id]}
-      sessions={props.sessions}
+      sessions={remotes.sessions[DIRECT.id] ?? props.sessions}
       activeSessionId={selected}
       refreshing={false}
       onRefresh={() => void remotes.refreshSessions(DIRECT.id, { force: true })}
       onSelectSession={setSelected}
       onOpenSession={(sessionId, options) => remotes.openSession(DIRECT.id, sessionId, options)}
+      onBeginSession={() => setSelected(null)}
+      onStartSession={(text) => remotes.startSession(DIRECT.id, WORKSPACE.cwd, text)}
+      onPromptSession={(sessionId, text) => remotes.promptSession(DIRECT.id, sessionId, text)}
+      onAbortSession={(sessionId) => remotes.abortSession(DIRECT.id, sessionId)}
     />
   );
 }
 
 describe("remote session reader", () => {
+  test("an empty workspace creates a real session and can run its first prompt", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [{ ...WORKSPACE, sessionCount: 0 }],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [] }
+    });
+
+    const view = render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    const header = view.container.querySelector(".remote-page-header") as HTMLElement;
+    fireEvent.click(within(header).getByRole("button", { name: "New session" }));
+
+    const prompt = screen.getByRole("textbox", { name: "Remote prompt" });
+    fireEvent.change(prompt, { target: { value: "inspect the remote workspace" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(fake.calls.startRemoteSession).toEqual([{
+      profileId: DIRECT.id,
+      cwd: WORKSPACE.cwd,
+      text: "inspect the remote workspace"
+    }]));
+    expect(await screen.findByText("Remote response complete.")).toBeDefined();
+  });
+
+  test("an active remote prompt exposes an explicit stop action", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-running", title: "remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { "session-running": transcript({ sessionId: "session-running", title: "remote work" }) }
+    });
+    fake.bridge.promptRemoteSession = async (request) => {
+      fake.calls.promptRemoteSession.push(request);
+      return new Promise<RemoteSessionTranscript>(() => {});
+    };
+
+    render(withI18n(<PageHarness initialSessionId="session-running" sessions={[row]} />));
+    await screen.findByText("refactor the auth middleware");
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "long remote task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(fake.calls.abortRemoteSession).toEqual([{
+      profileId: DIRECT.id,
+      sessionId: "session-running"
+    }]));
+  });
+
   test("a cached session opens from the local copy and reports no fetch", async () => {
     fake = installFakeBridge();
     const cached = session({ sessionId: "session-cached", title: "fix CI cache", state: "cached", cachedBytes: 4096 });

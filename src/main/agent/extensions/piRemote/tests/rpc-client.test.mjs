@@ -9,7 +9,7 @@ test("daemon client correlates framed requests and replays sequenced events over
   const decoder = new JsonFrameDecoder();
   const runtimeInfo = {
     controlVersion: 1,
-    runtimeVersion: "0.1.0",
+    runtimeVersion: "0.1.1",
     piVersion: "0.84.2",
     nodeVersion: "bun-compiled",
     platform: "linux",
@@ -95,7 +95,7 @@ test("daemon client rejects pending requests and closes transport on an oversize
           type: "hello_ok",
           seq: 0,
           info: {
-            controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+            controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun-compiled",
             platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
             remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
           }

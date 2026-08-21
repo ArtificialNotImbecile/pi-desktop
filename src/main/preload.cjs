@@ -100,6 +100,15 @@ contextBridge.exposeInMainWorld("jasmine", {
   openRemoteSession(request) {
     return ipcRenderer.invoke("remotes:openSession", request);
   },
+  startRemoteSession(request) {
+    return ipcRenderer.invoke("remotes:startSession", request);
+  },
+  promptRemoteSession(request) {
+    return ipcRenderer.invoke("remotes:promptSession", request);
+  },
+  abortRemoteSession(request) {
+    return ipcRenderer.invoke("remotes:abortSession", request);
+  },
   onRemoteStatusChanged(callback) {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("remotes:status-changed", listener);

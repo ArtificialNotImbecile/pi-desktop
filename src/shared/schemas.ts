@@ -126,6 +126,23 @@ export const remoteSessionOpenSchema = z.object({
   refetch: z.boolean().optional()
 });
 
+export const remoteSessionStartSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  cwd: remotePathSchema,
+  text: z.string().trim().min(1).max(1_000_000)
+});
+
+export const remoteSessionPromptSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  sessionId: remoteSessionIdSchema,
+  text: z.string().trim().min(1).max(1_000_000)
+});
+
+export const remoteSessionAbortSchema = z.object({
+  profileId: remoteProfileIdValueSchema,
+  sessionId: remoteSessionIdSchema.optional()
+});
+
 export const remoteDirectoryListSchema = z.object({
   profileId: remoteProfileIdValueSchema,
   path: remotePathSchema.optional()

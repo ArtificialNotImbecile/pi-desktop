@@ -45,7 +45,7 @@ test("daemon status rejects a live PID whose process identity does not match", a
   const paths = { statusPath: path.join(root, "status.json"), socketPath: path.join(root, "daemon.sock") };
   try {
     await mkdir(root, { recursive: true });
-    await writeFile(paths.statusPath, JSON.stringify({ pid: process.pid, processIdentity: "not-this-process", runtimeVersion: "0.1.0" }));
+    await writeFile(paths.statusPath, JSON.stringify({ pid: process.pid, processIdentity: "not-this-process", runtimeVersion: "0.1.1" }));
     assert.deepEqual(await daemonStatus(paths), { running: false });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

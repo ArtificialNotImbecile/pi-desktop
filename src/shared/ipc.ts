@@ -1494,6 +1494,28 @@ export type RemoteSessionOpenRequest = {
   refetch?: boolean;
 };
 
+export type RemoteSessionStartRequest = {
+  profileId: string;
+  cwd: string;
+  text: string;
+};
+
+export type RemoteSessionStartResult = {
+  session: RemoteSessionSummary;
+  transcript: RemoteSessionTranscript;
+};
+
+export type RemoteSessionPromptRequest = {
+  profileId: string;
+  sessionId: string;
+  text: string;
+};
+
+export type RemoteSessionAbortRequest = {
+  profileId: string;
+  sessionId?: string;
+};
+
 export type RemoteDirectoryListRequest = {
   profileId: string;
   path?: string;
@@ -1533,6 +1555,9 @@ export type JasmineApi = {
   listRemoteSessions(request: RemoteSessionListRequest): Promise<RemoteSessionSummary[]>;
   refreshRemoteSessions(request: RemoteProfileIdRequest): Promise<RemoteSessionSummary[]>;
   openRemoteSession(request: RemoteSessionOpenRequest): Promise<RemoteSessionTranscript>;
+  startRemoteSession(request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult>;
+  promptRemoteSession(request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript>;
+  abortRemoteSession(request: RemoteSessionAbortRequest): Promise<boolean>;
   onRemoteStatusChanged(callback: (status: RemoteProfileStatus) => void): () => void;
   getWorkingSnapshot(): Promise<WorkingSnapshot>;
   markWorkingRead(requestId: string): Promise<WorkingSnapshot>;

@@ -214,7 +214,7 @@ test("runtime manager rejects a locally corrupted artifact before opening SSH", 
   try {
     await writeFile(path.join(root, "corrupt.tar.gz"), "corrupt", "utf8");
     await writeFile(path.join(root, "artifact.json"), JSON.stringify({
-      version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.0", piVersion: "0.84.2",
+      version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.1", piVersion: "0.84.2",
       archive: "corrupt.tar.gz", archiveSha256: "0".repeat(64)
     }), "utf8");
     const profile = {
@@ -243,12 +243,12 @@ test("ensureRuntime atomically activates an already installed package artifact",
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString()
   };
   const info = {
-    controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64",
+    controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64",
     artifactSha256: "a".repeat(64), capabilities: [], remoteRoot: "/remote", profileRoot: "/profile", sessionRoot: "/sessions"
   };
   let activated = false;
   manager.readArtifact = async () => ({
-    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.0", piVersion: "0.84.2",
+    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.1", piVersion: "0.84.2",
     archive: "fixture.tar.gz", archiveSha256: "a".repeat(64), archivePath: "fixture.tar.gz"
   });
   manager.runtimeInfo = async () => info;
@@ -260,7 +260,7 @@ test("ensureRuntime atomically activates an already installed package artifact",
 test("TUI setup closes egress when descriptor upload fails", async () => {
   let closed = false;
   const manager = new ManagedRemoteRuntime();
-  manager.ensureRuntime = async () => ({ controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [], remoteRoot: "/r", profileRoot: "/p", sessionRoot: "/s" });
+  manager.ensureRuntime = async () => ({ controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [], remoteRoot: "/r", profileRoot: "/p", sessionRoot: "/s" });
   manager.startEgress = async () => ({ mode: "client-proxy", proxyUrl: "http://pi:token@127.0.0.1:1", noProxy: [], remotePort: 1, token: "token", async close() { closed = true; } });
   manager.putDescriptor = async () => { throw new Error("fixture descriptor failure"); };
   const profile = { id: "00000000-0000-4000-8000-000000000001", name: "fixture", sshHost: "host", defaultCwd: "/work", network: { mode: "client-proxy", clientProxy: { noProxy: [], allowedPorts: [443] } }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
@@ -290,7 +290,7 @@ test("file download waits for stdout to drain after the SSH child exits", async 
   };
   const manager = new ManagedRemoteRuntime({ ssh: fakeSsh });
   manager.ensureRuntime = async () => ({
-    controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+    controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun-compiled",
     platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
     remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
   });
@@ -325,7 +325,7 @@ test("concurrent no-clobber downloads use unique temporaries so exactly one publ
   };
   const manager = new ManagedRemoteRuntime({ ssh: fakeSsh });
   manager.ensureRuntime = async () => ({
-    controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+    controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun-compiled",
     platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
     remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
   });
@@ -360,7 +360,7 @@ test("file upload turns a local read failure into a structured error and termina
   };
   const manager = new ManagedRemoteRuntime({ ssh: { spawn() { return child; } } });
   manager.ensureRuntime = async () => ({
-    controlVersion: 1, runtimeVersion: "0.1.0", piVersion: "0.84.2", nodeVersion: "bun-compiled",
+    controlVersion: 1, runtimeVersion: "0.1.1", piVersion: "0.84.2", nodeVersion: "bun-compiled",
     platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [],
     remoteRoot: "/remote", profileRoot: "/remote/profile", sessionRoot: "/remote/sessions"
   });
@@ -390,7 +390,7 @@ test("runtime installer contains local archive read failures", async () => {
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString()
   };
   await assert.rejects(() => manager.installArtifact(profile, {
-    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.0", piVersion: "0.84.2",
+    version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.1", piVersion: "0.84.2",
     archive: "missing.tar.gz", archiveSha256: "a".repeat(64), archivePath: path.join(os.tmpdir(), `missing-runtime-${Date.now()}.tar.gz`)
   }), (error) => error?.code === "remote-install-failed");
   assert.equal(killed, true);
@@ -424,7 +424,7 @@ test("runtime installer drains an upload when a concurrent publisher wins the ra
   };
   try {
     await manager.installArtifact(profile, {
-      version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.0", piVersion: "0.84.2",
+      version: 1, platform: "linux", arch: "x64", libcMinimum: "2.27", runtimeVersion: "0.1.1", piVersion: "0.84.2",
       archive: "runtime.tar.gz", archiveSha256: "a".repeat(64), archivePath
     });
     assert.match(command, /then cat >\/dev\/null;/u);

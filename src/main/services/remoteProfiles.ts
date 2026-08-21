@@ -11,6 +11,7 @@ import type {
   RemoteProfileSummary,
   RemoteProfileUpdateRequest,
   RemoteSessionSummary,
+  RemoteSessionStartResult,
   RemoteSessionTranscript,
   RemoteTranscriptEntry,
   RemoteWorkspace,
@@ -27,6 +28,7 @@ import {
   resolveSessionSyncPlan,
   syncSessionFile
 } from "./remoteTranscript.js";
+import { promptManagedRemoteSession, startManagedRemoteSession } from "./remoteSessionRun.js";
 // Imported module by module rather than through the package barrel: the barrel
 // also exports the upstream compatibility baseline, whose only purpose is
 // development-time protocol tests and whose `@earendil-works/pi-protocol` import
@@ -37,7 +39,12 @@ import { PiRemoteError } from "../agent/extensions/piRemote/errors.js";
 import { ProfileStore } from "../agent/extensions/piRemote/profiles.js";
 import { ManagedRemoteRuntime } from "../agent/extensions/piRemote/runtime.js";
 import { shellQuote } from "../agent/extensions/piRemote/ssh.js";
-import type { RemoteProfile, RemoteSessionMetadata, RuntimeInfo } from "../agent/extensions/piRemote/types.js";
+import type {
+  RemoteProfile,
+  RemoteSessionMetadata,
+  RemoteSessionPort,
+  RuntimeInfo
+} from "../agent/extensions/piRemote/types.js";
 
 /** Entries rendered for one session. Older ones are summarized rather than mounted. */
 const TRANSCRIPT_ENTRY_LIMIT = 400;
@@ -46,10 +53,17 @@ const DIRECTORY_ENTRY_LIMIT = 300;
 const SESSION_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_SESSION_SYNC_BYTES = 64 * 1024 * 1024;
 
+type ActiveRemoteOperation = {
+  sessionId: string | null;
+  port: RemoteSessionPort | null;
+  abortRequested: boolean;
+};
+
 export class RemoteProfileService {
   private readonly store: ProfileStore;
   private readonly runtime: ManagedRemoteRuntime;
   private readonly statuses = new Map<string, RemoteProfileStatus>();
+  private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
   private readonly transcriptRoot: string;
 
   constructor(
@@ -109,6 +123,13 @@ export class RemoteProfileService {
    * says so, and this is what makes that promise true.
    */
   async removeProfile(profileId: string): Promise<void> {
+    if (this.activeOperations.has(profileId)) {
+      throw new PiRemoteError(
+        "remote-profile-busy",
+        "The remote profile has an active session operation.",
+        { phase: "session", retryable: true, remediation: "Wait for it to finish or stop the remote runtime first." }
+      );
+    }
     const profile = await this.store.get(profileId);
     // profiles.json goes first. If that write fails the profile is still
     // configured and the renderer keeps showing it, so deleting its history
@@ -208,6 +229,9 @@ export class RemoteProfileService {
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {
+      const active = this.activeOperations.get(profile.id);
+      if (active?.port) await active.port.close({ abort: true }).catch(() => {});
+      this.activeOperations.delete(profile.id);
       await this.runtime.stop(profile);
       return this.publishStatus({ profileId: profile.id, state: "disconnected", message: null, busy: false });
     } catch (error) {
@@ -275,7 +299,6 @@ export class RemoteProfileService {
    */
   async refreshSessions(profileId: string): Promise<RemoteSessionSummary[]> {
     const profile = await this.store.get(profileId);
-    this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     let sessions: RemoteSessionMetadata[];
     try {
       sessions = await this.runtime.listSessions(profile, { install: false });
@@ -328,6 +351,86 @@ export class RemoteProfileService {
       busy: false
     });
     return this.listSessions(profile.id);
+  }
+
+  /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
+  async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult> {
+    const profile = await this.store.get(profileId);
+    const normalizedCwd = normalizeRemotePath(cwd);
+    const operation = this.reserveOperation(profile.id, null);
+    try {
+      operation.sessionId = await startManagedRemoteSession(
+        this.runtime,
+        profile,
+        normalizedCwd,
+        text,
+        {
+          onPort: async (port) => {
+            operation.port = port;
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          },
+          onSessionId: async (sessionId, port) => {
+            operation.sessionId = sessionId;
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          }
+        }
+      );
+      operation.port = null;
+      const rows = await this.refreshSessions(profile.id);
+      const created = rows.find((row) => row.sessionId === operation.sessionId);
+      if (!created) {
+        throw new PiRemoteError(
+          "remote-session-not-listed",
+          "The remote session was created but did not appear in the host's session listing.",
+          { phase: "session", retryable: true, remediation: "Refresh the session list and open the new session." }
+        );
+      }
+      const transcript = await this.openSession(profile.id, created.sessionId, true);
+      return { session: created, transcript };
+    } finally {
+      this.releaseOperation(profile.id, operation);
+    }
+  }
+
+  /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
+  async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript> {
+    const profile = await this.store.get(profileId);
+    const operation = this.reserveOperation(profile.id, sessionId);
+    try {
+      await promptManagedRemoteSession(
+        this.runtime,
+        profile,
+        sessionId,
+        text,
+        async (port) => {
+          operation.port = port;
+          if (operation.abortRequested) {
+            await port.abort().catch(() => {});
+            throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+          }
+        }
+      );
+      operation.port = null;
+      await this.refreshSessions(profile.id);
+      return await this.openSession(profile.id, sessionId, true);
+    } finally {
+      this.releaseOperation(profile.id, operation);
+    }
+  }
+
+  /** Explicit cancellation is the only renderer action that aborts active remote work. */
+  async abortSession(profileId: string, sessionId?: string): Promise<boolean> {
+    const operation = this.activeOperations.get(profileId);
+    if (!operation || sessionId && operation.sessionId !== sessionId) return false;
+    operation.abortRequested = true;
+    if (operation.port) await operation.port.abort();
+    return true;
   }
 
   /**
@@ -531,6 +634,23 @@ export class RemoteProfileService {
       if (!win.isDestroyed()) win.webContents.send("remotes:status-changed", next);
     }
     return next;
+  }
+
+  private reserveOperation(profileId: string, sessionId: string | null): ActiveRemoteOperation {
+    if (this.activeOperations.has(profileId)) {
+      throw new PiRemoteError(
+        "remote-profile-busy",
+        "Another session operation is already active for this remote profile.",
+        { phase: "session", retryable: true, remediation: "Wait for it to finish or stop it before starting another session." }
+      );
+    }
+    const operation: ActiveRemoteOperation = { sessionId, port: null, abortRequested: false };
+    this.activeOperations.set(profileId, operation);
+    return operation;
+  }
+
+  private releaseOperation(profileId: string, operation: ActiveRemoteOperation): void {
+    if (this.activeOperations.get(profileId) === operation) this.activeOperations.delete(profileId);
   }
 }
 

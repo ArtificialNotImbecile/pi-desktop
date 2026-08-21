@@ -16,8 +16,8 @@ test("TUI reattach accepts an implicit reconnect but rejects changed cwd, sessio
 
 test("daemon reuse requires both the current runtime version and exact artifact", () => {
   const artifactSha256 = "a".repeat(64);
-  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.0", artifactSha256 }, { artifactSha256 }), true);
+  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.1", artifactSha256 }, { artifactSha256 }), true);
   assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.0.9", artifactSha256 }, { artifactSha256 }), false);
-  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.0", artifactSha256: "b".repeat(64) }, { artifactSha256 }), false);
-  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.0" }, { artifactSha256 }), false);
+  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.1", artifactSha256: "b".repeat(64) }, { artifactSha256 }), false);
+  assert.equal(daemonMatchesRuntime({ runtimeVersion: "0.1.1" }, { artifactSha256 }), false);
 });

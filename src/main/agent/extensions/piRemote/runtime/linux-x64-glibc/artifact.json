@@ -3,10 +3,10 @@
   "platform": "linux",
   "arch": "x64",
   "libcMinimum": "2.27",
-  "runtimeVersion": "0.1.0",
+  "runtimeVersion": "0.1.1",
   "piVersion": "0.84.2",
   "archive": "pi-remote-runtime-linux-x64-glibc.tar.gz",
-  "archiveSha256": "0e2c0b5961cb3c3db39771dcd4ca6e3d13b40c2d5b88b4791096a23734e56514",
-  "archiveUrl": "https://github.com/ArtificialNotImbecile/pi-desktop/releases/download/pi-remote-runtime-0.1.0/pi-remote-runtime-linux-x64-glibc.tar.gz",
+  "archiveSha256": "30b486d503b178c6c1e79bbc4bb2589d28dc28fc91245fadc61bf9ceb7958d43",
+  "archiveUrl": "https://github.com/ArtificialNotImbecile/pi-desktop/releases/download/pi-remote-runtime-0.1.1/pi-remote-runtime-linux-x64-glibc.tar.gz",
   "upstreamPiSha256": "906fbe787fd225c4ac624fe7ebd5b1d55a60e0f5c7ef51795d231564f9ee1c13"
 }

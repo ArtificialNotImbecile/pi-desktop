@@ -50,6 +50,9 @@ import type {
   RemoteProfileUpdateRequest,
   RemoteSessionListRequest,
   RemoteSessionOpenRequest,
+  RemoteSessionStartRequest,
+  RemoteSessionPromptRequest,
+  RemoteSessionAbortRequest,
   RemoteWorkspaceAddRequest,
   RemoteWorkspaceIdRequest,
   RemoteWorkspaceUpdateRequest,
@@ -170,6 +173,15 @@ const api: JasmineApi = {
   },
   openRemoteSession(request: RemoteSessionOpenRequest) {
     return ipcRenderer.invoke("remotes:openSession", request);
+  },
+  startRemoteSession(request: RemoteSessionStartRequest) {
+    return ipcRenderer.invoke("remotes:startSession", request);
+  },
+  promptRemoteSession(request: RemoteSessionPromptRequest) {
+    return ipcRenderer.invoke("remotes:promptSession", request);
+  },
+  abortRemoteSession(request: RemoteSessionAbortRequest) {
+    return ipcRenderer.invoke("remotes:abortSession", request);
   },
   onRemoteStatusChanged(callback) {
     const listener = (_event: Electron.IpcRendererEvent, payload: RemoteProfileStatus) => callback(payload);

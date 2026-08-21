@@ -561,7 +561,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     onToggleRemoteWorkspacePinned: (workspace: RemoteWorkspace) =>
       void remotes.updateWorkspace(workspace.id, { pinned: !workspace.pinned }),
     onOpenRemoteWorkspace: (profileId: string, cwd: string) => {
-      void remotes.openProfile(profileId);
       navigateToRoute({ name: "remoteWorkspace", profileId, cwd });
     },
     onOpenRemoteSession: (profileId: string, sessionId: string) => {
@@ -721,6 +720,10 @@ function App(props: { initialAppSettings: AppSettings }) {
           onRefresh={() => void remotes.refreshSessions(remoteRoute.profileId, { force: true })}
           onSelectSession={(sessionId) => navigateToRoute({ name: "remoteSession", profileId: remoteRoute.profileId, sessionId })}
           onOpenSession={(sessionId, options) => remotes.openSession(remoteRoute.profileId, sessionId, options)}
+          onBeginSession={() => navigateToRoute({ name: "remoteWorkspace", profileId: remoteRoute.profileId, cwd: remoteRoute.cwd })}
+          onStartSession={(text) => remotes.startSession(remoteRoute.profileId, remoteRoute.cwd, text)}
+          onPromptSession={(sessionId, text) => remotes.promptSession(remoteRoute.profileId, sessionId, text)}
+          onAbortSession={(sessionId) => remotes.abortSession(remoteRoute.profileId, sessionId)}
         />
       ) : navigation.route.name === "working" ? (
         <WorkingPage

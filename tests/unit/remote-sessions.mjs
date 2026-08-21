@@ -36,6 +36,7 @@ function listing(overrides) {
 try {
   const remotes = await import("../../dist/main/main/db/repositories/remotes.js");
   const transcript = await import("../../dist/main/main/services/remoteTranscript.js");
+  const remoteRun = await import("../../dist/main/main/services/remoteSessionRun.js");
   const migrations = await import("../../dist/main/main/db/migrations.js");
   const schemas = await import("../../dist/main/shared/schemas.js");
 
@@ -514,12 +515,113 @@ try {
   assert.equal(transcript.normalizeRemotePath("//"), "/");
   assert.equal(transcript.normalizeRemotePath("/.."), "/", "no spelling escapes above the root");
 
+  // A prompt waiter subscribes before send, ignores buffered history, and only
+  // settles for the new agent run. This is the lifecycle the renderer's single
+  // long-running IPC request depends on.
+  let promptListener;
+  let promptUnsubscribed = false;
+  const promptWaiter = remoteRun.waitForRemotePromptSettled({
+    eventCursor: 4,
+    subscribe(listener) {
+      promptListener = listener;
+      return () => { promptUnsubscribed = true; };
+    }
+  }, 1_000);
+  promptListener({ seq: 4, type: "rpc.message", data: { type: "agent_settled" } });
+  assert.equal(promptUnsubscribed, false, "a buffered settlement cannot finish the new prompt");
+  promptListener({ seq: 5, type: "rpc.message", data: { type: "agent_settled" } });
+  await promptWaiter.promise;
+  assert.equal(promptUnsubscribed, true);
+
+  let disconnectListener;
+  const disconnected = remoteRun.waitForRemotePromptSettled({
+    eventCursor: 0,
+    subscribe(listener) {
+      disconnectListener = listener;
+      return () => {};
+    }
+  }, 1_000);
+  disconnectListener({ seq: 1, type: "transport.disconnected" });
+  await assert.rejects(disconnected.promise, (error) => error?.code === "daemon-disconnected");
+
+  const startCalls = [];
+  let startListener;
+  const startedSessionId = await remoteRun.startManagedRemoteSession({
+    async openSession(_profile, options) {
+      startCalls.push(["open", options]);
+      return {
+        eventCursor: 0,
+        subscribe(listener) { startListener = listener; return () => { startCalls.push(["unsubscribe"]); }; },
+        async createSession(cwd) { startCalls.push(["create", cwd]); return "created-session"; },
+        async prompt(text) {
+          startCalls.push(["prompt", text]);
+          queueMicrotask(() => startListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
+        },
+        async close(options) { startCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "/srv/application", "inspect the workspace");
+  assert.equal(startedSessionId, "created-session");
+  assert.deepEqual(startCalls, [
+    ["open", { cwd: "/srv/application" }],
+    ["create", "/srv/application"],
+    ["prompt", "inspect the workspace"],
+    ["unsubscribe"],
+    ["close", { abort: false }]
+  ], "the first prompt creates and settles the new session before normal non-aborting cleanup");
+
+  const promptCalls = [];
+  let runListener;
+  await remoteRun.promptManagedRemoteSession({
+    async openSession(_profile, options) {
+      promptCalls.push(["open", options]);
+      return {
+        eventCursor: 0,
+        subscribe(listener) { runListener = listener; return () => { promptCalls.push(["unsubscribe"]); }; },
+        async prompt(text) {
+          promptCalls.push(["prompt", text]);
+          queueMicrotask(() => runListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
+        },
+        async close(options) { promptCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "created-session", "inspect the workspace");
+  assert.deepEqual(promptCalls, [
+    ["open", { sessionId: "created-session" }],
+    ["prompt", "inspect the workspace"],
+    ["unsubscribe"],
+    ["close", { abort: false }]
+  ], "a prompt waits for settlement before closing the managed port without aborting remote work");
+
+  // Session reconciliation has its own renderer spinner. Reusing the profile's
+  // connection-checking state here is what made an idle Connected host appear
+  // to probe itself repeatedly whenever the tree or route refreshed.
+  const remoteProfileServiceSource = await readFile(path.join(process.cwd(), "src/main/services/remoteProfiles.ts"), "utf8");
+  const refreshSessionsBody = /async refreshSessions[\s\S]*?(?=\n  \/\*\* Creates the session)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.ok(refreshSessionsBody, "refreshSessions implementation must remain visible to the regression guard");
+  assert.doesNotMatch(refreshSessionsBody, /state:\s*"checking"/u,
+    "background session sync must not masquerade as a connection check");
+
+  const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
+  const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";
+  assert.ok(openWorkspaceHandler, "the remote workspace route handler must remain covered");
+  assert.doesNotMatch(openWorkspaceHandler, /openProfile/u,
+    "workspace navigation must let the route effect own the one background refresh");
+
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),
     "a profile name pi-remote would reject must not reach the store");
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops-box", sshHost: "-oProxyCommand=evil", networkMode: "remote-direct" }),
     "a host that reads as an ssh option must be refused before an argument is built");
   assert.throws(() => schemas.remoteWorkspaceAddSchema.parse({ profileId: PROFILE, cwd: "relative/path" }));
+  assert.throws(() => schemas.remoteSessionStartSchema.parse({ profileId: PROFILE, cwd: "relative/path", text: "inspect" }));
+  assert.throws(() => schemas.remoteSessionStartSchema.parse({ profileId: PROFILE, cwd: "/srv/application", text: "   " }));
+  assert.throws(() => schemas.remoteSessionPromptSchema.parse({ profileId: PROFILE, sessionId: "session-a", text: "   " }));
+  assert.deepEqual(schemas.remoteSessionPromptSchema.parse({
+    profileId: PROFILE,
+    sessionId: "session-a",
+    text: "  inspect the workspace  "
+  }), { profileId: PROFILE, sessionId: "session-a", text: "inspect the workspace" });
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops-box", sshHost: "ops-box", networkMode: "sideways" }));
   const parsed = schemas.remoteProfileCreateSchema.parse({
     name: "ops-box",

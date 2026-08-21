@@ -19,7 +19,7 @@ It never replaces Pi's tools or local `SessionManager`.
 - client: Windows, macOS, or Linux with a system `ssh` executable;
 - authentication: `IdentityFile`, ssh-agent, `ProxyJump`, and other OpenSSH config;
 - remote: Linux x64, glibc 2.27 or later, POSIX `sh`, `tar`, `sha256sum`, and a writable home;
-- managed Pi: exactly `0.84.2` for runtime release `0.1.0`.
+- managed Pi: exactly `0.84.2` for runtime release `0.1.1`.
 
 The runtime uses an official Bun-compiled Pi release plus a Bun-compiled host;
 the target does not execute a system Node binary. `fd`, `rg`, tmux, required

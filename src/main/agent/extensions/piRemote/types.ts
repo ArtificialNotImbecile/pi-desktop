@@ -1,5 +1,5 @@
 export const CONTROL_PROTOCOL_VERSION = 1;
-export const RUNTIME_VERSION = "0.1.0";
+export const RUNTIME_VERSION = "0.1.1";
 export const RUNTIME_PI_VERSION = "0.84.2";
 export const RUNTIME_NODE_VERSION = "bun-1.3.14-compiled";
 export const DEFAULT_REMOTE_ROOT = "${XDG_DATA_HOME:-$HOME/.local/share}/pi-remote";

@@ -64,7 +64,7 @@ Normal E2E commands create transparent, non-focusable Electron windows outside t
 - `composer.spec.ts`: rich editing, commands, attachments, paste, and render isolation.
 - `providers.spec.ts`: real menu/settings geometry, direct-secret persistence, and runtime model labels.
 - `chat-runtime.spec.ts`: streaming, queueing, stop, traces, search, edit, and recovery.
-- `settings.spec.ts`: settings shell geometry, brand restart persistence, language/executables, and minimum-window layout.
+- `settings.spec.ts`: settings shell geometry, brand restart persistence, language/executables, remote-profile restart plus the real remote-workspace draft control, and minimum-window layout.
 - `updater.spec.ts`: the real About-to-main update check, download, restart-to-install bridge, and manual browser hand-off.
 - `panels.spec.ts`: memory, activity, command routing, terminal, deterministic file-change artifacts/diffs/previews, and context.
 - `integrations.spec.ts`: skills, prompts, Pi packages, and retired built-in migration.
