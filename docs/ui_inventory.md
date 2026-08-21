@@ -1,5 +1,9 @@
 # UI Inventory
 
+Remote prompt drafts are restored only when submission fails before the remote
+process accepts them. A later session/transcript sync failure leaves the prompt
+accepted, so the composer never suggests submitting the same turn twice.
+
 Checked rows have reproducible automated evidence. Add a new row for a new major surface and link incomplete rows to the current issue register.
 
 Cross-cutting language contract: static accessible copy on chat-panel

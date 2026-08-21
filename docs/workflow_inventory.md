@@ -1,5 +1,11 @@
 # Workflow Inventory
 
+Remote prompt lifecycle contract: acceptance and local reconciliation are
+separate outcomes. Only a failure before acceptance restores a draft; a later
+sync failure cannot invite a duplicate turn. Detached client-proxy work keeps
+its reverse tunnel until settlement and reacquires the stable lease after an
+app restart.
+
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |
 | [x] | WF-001 | Configure a provider and send the first chat | Provider state persists, a selected model responds, Pi JSONL stores the canonical turn, and SQLite projects it for the UI. | `tests/e2e/providers.spec.ts`, `tests/e2e/chat-runtime.spec.ts` |

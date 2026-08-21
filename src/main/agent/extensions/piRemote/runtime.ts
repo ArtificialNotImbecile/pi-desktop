@@ -203,6 +203,16 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     return (await this.listSessionsWithRuntime(profile, options)).sessions;
   }
 
+  /** Reopens the stable client-proxy lease after Jasmine itself restarts. */
+  async reconnectDetachedEgress(profile: RemoteProfile, info?: RuntimeInfo): Promise<EgressSession> {
+    const runtimeInfo = info ?? await this.requireRuntime(profile);
+    const egress = await this.startEgress(profile, runtimeInfo);
+    if (!egress) {
+      throw new PiRemoteError("egress-mode-invalid", "Detached egress can only be reconnected for a client-proxy profile.", { phase: "egress" });
+    }
+    return egress;
+  }
+
   async listSessionsWithRuntime(profile: RemoteProfile, options: RuntimeUseOptions = {}): Promise<{
     sessions: RemoteSessionMetadata[];
     runtimeInfo: RuntimeInfo;
@@ -686,12 +696,26 @@ function profileSummary(profile: RemoteProfile): Pick<RemoteProfile, "id" | "nam
 
 function wrapPortResources(port: PiRpcSessionPort, egress: EgressSession | undefined, child: ChildProcessWithoutNullStreams): RemoteSessionPort {
   const originalDetach = port.detach.bind(port);
+  const originalClose = port.close.bind(port);
+  let released = false;
+  const releaseDetachedResources = async () => {
+    if (released) return;
+    released = true;
+    child.kill();
+    await egress?.close();
+  };
   port.detach = async () => {
     try { await originalDetach(); }
     finally {
+      // The daemon connection is disposable, but client-proxy egress is part
+      // of the remote process' environment and survives until turn settlement.
       child.kill();
-      await egress?.close();
     }
+  };
+  port.releaseDetachedResources = releaseDetachedResources;
+  port.close = async (options) => {
+    try { await originalClose(options); }
+    finally { await releaseDetachedResources(); }
   };
   return port;
 }

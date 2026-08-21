@@ -285,6 +285,12 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     this.client.close();
   }
 
+  async releaseDetachedResources(): Promise<void> {
+    // A bare RPC port owns only its daemon client, which detach() already
+    // releases. ManagedRemoteRuntime decorates this method with the SSH and
+    // client-proxy resources that must outlive a detached control connection.
+  }
+
   private async rpc(command: Record<string, unknown>): Promise<unknown> {
     const id = typeof command.id === "string" ? command.id : randomUUID();
     const message = { ...command, id };

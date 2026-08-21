@@ -12,6 +12,7 @@ import type {
   RemoteSessionOpenRequest,
   RemoteSessionStartRequest,
   RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionPromptRequest,
   RemoteSessionAbortRequest,
   RemoteSessionSummary,
@@ -105,12 +106,12 @@ export function registerRemoteIpc(context: IpcContext): void {
     return service().openSession(parsed.profileId, parsed.sessionId, parsed.refetch ?? false);
   });
 
-  ipcMain.handle("remotes:startSession", (_event, request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult> => {
+  ipcMain.handle("remotes:startSession", (_event, request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> => {
     const parsed = remoteSessionStartSchema.parse(request);
     return service().startSession(parsed.profileId, parsed.cwd, parsed.text);
   });
 
-  ipcMain.handle("remotes:promptSession", (_event, request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript> => {
+  ipcMain.handle("remotes:promptSession", (_event, request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> => {
     const parsed = remoteSessionPromptSchema.parse(request);
     return service().promptSession(parsed.profileId, parsed.sessionId, parsed.text);
   });

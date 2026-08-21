@@ -7,6 +7,7 @@ import type {
   RemoteProfileUpdateRequest,
   RemoteSessionSummary,
   RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionTranscript,
   RemoteWorkspace,
   RemoteWorkspaceAddRequest
@@ -236,15 +237,29 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     }
   }, [loadSessions]);
 
-  const startSession = useCallback(async (profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | null> => {
+  const startSession = useCallback(async (
+    profileId: string,
+    cwd: string,
+    text: string
+  ): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null> => {
     try {
       const result = await getBridge().startRemoteSession({ profileId, cwd, text });
+      if ("pending" in result) {
+        onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
+        return result;
+      }
       lastRefreshRef.current[profileId] = Date.now();
       setSessions((current) => ({
         ...current,
         [profileId]: upsertSession(current[profileId] ?? [], result.session)
       }));
-      setWorkspaces(await getBridge().listRemoteWorkspaces());
+      try {
+        setWorkspaces(await getBridge().listRemoteWorkspaces());
+      } catch (caught) {
+        // The prompt is already durable. A projection refresh failure must not
+        // turn its successful submission into a retryable composer failure.
+        onErrorRef.current(errorMessage(caught, "Remote session created, but workspaces could not be refreshed."));
+      }
       onToastRef.current("Remote session created");
       return result;
     } catch (caught) {
@@ -257,14 +272,24 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     profileId: string,
     sessionId: string,
     text: string
-  ): Promise<RemoteSessionTranscript | null> => {
+  ): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null> => {
     try {
       const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text });
+      if ("pending" in transcript) {
+        onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
+        return transcript;
+      }
       lastRefreshRef.current[profileId] = Date.now();
-      await Promise.all([
-        loadSessions(profileId),
-        getBridge().listRemoteWorkspaces().then(setWorkspaces)
-      ]);
+      try {
+        await Promise.all([
+          loadSessions(profileId),
+          getBridge().listRemoteWorkspaces().then(setWorkspaces)
+        ]);
+      } catch (caught) {
+        // The remote turn settled before these local projections were asked
+        // for. Preserve the accepted result so the UI cannot submit it twice.
+        onErrorRef.current(errorMessage(caught, "Remote prompt completed, but workspaces could not be refreshed."));
+      }
       return transcript;
     } catch (caught) {
       onErrorRef.current(errorMessage(caught, "The remote prompt failed."));

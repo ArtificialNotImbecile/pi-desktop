@@ -560,13 +560,16 @@ try {
         async close(options) { startCalls.push(["close", options]); }
       };
     }
-  }, {}, "/srv/application", "inspect the workspace");
+  }, {}, "/srv/application", "inspect the workspace", {
+    onPromptAccepted() { startCalls.push(["accepted"]); }
+  });
   assert.equal(startedSessionId, "created-session");
   assert.deepEqual(startCalls, [
     ["open", { cwd: "/srv/application" }],
     ["create", "/srv/application"],
     ["prompt", "inspect the workspace"],
     ["unsubscribe"],
+    ["accepted"],
     ["close", { abort: false }]
   ], "the first prompt creates and settles the new session before normal non-aborting cleanup");
 
@@ -607,16 +610,45 @@ try {
           async close() { timeoutCalls.push(["close"]); }
         };
       }
-    }, {}, "slow-session", "long task", () => {}, 5), (error) => error?.code === "prompt-timeout");
+    }, {}, "slow-session", "long task", {
+      timeoutMs: 5,
+      onPromptAccepted() { timeoutCalls.push(["accepted"]); }
+    }), (error) => error?.code === "prompt-timeout");
   } finally {
     clearTimeout(keepAlive);
   }
   assert.deepEqual(timeoutCalls, [
     ["open", { sessionId: "slow-session" }],
     ["prompt"],
+    ["accepted"],
     ["unsubscribe"],
     ["detach"]
   ], "a local timeout detaches without stopping the daemon-owned remote process");
+
+  const disconnectCalls = [];
+  let transportListener;
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe(listener) { transportListener = listener; return () => { disconnectCalls.push(["unsubscribe"]); }; },
+        async prompt() {
+          disconnectCalls.push(["prompt"]);
+          queueMicrotask(() => transportListener({ seq: 1, type: "transport.disconnected" }));
+        },
+        async detach() { disconnectCalls.push(["detach"]); },
+        async close() { disconnectCalls.push(["close"]); }
+      };
+    }
+  }, {}, "disconnect-session", "long task", {
+    onPromptAccepted() { disconnectCalls.push(["accepted"]); }
+  }), (error) => error?.code === "daemon-disconnected");
+  assert.deepEqual(disconnectCalls, [
+    ["prompt"],
+    ["unsubscribe"],
+    ["accepted"],
+    ["detach"]
+  ], "a transport disconnect after acceptance detaches without closing detached resources");
 
   // Session reconciliation has its own renderer spinner. Reusing the profile's
   // connection-checking state here is what made an idle Connected host appear
@@ -639,6 +671,12 @@ try {
     "a detached Stop hands ownership to the daemon monitor");
   assert.match(remoteProfileServiceSource, /inspectRuntime\(profile, \{ install: false \}\)/u,
     "detached work must stay monitored from daemon state rather than a stale client sequence");
+  assert.match(remoteProfileServiceSource, /reconnectDetachedEgress\(profile, recoveredRuntimeInfo\)/u,
+    "a recovered client-proxy operation must restore its stable egress lease");
+  assert.match(remoteProfileServiceSource, /releaseDetachedResources/u,
+    "the detached monitor owns final release of retained local egress resources");
+  assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted\)[\s\S]*pending: true/u,
+    "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
 
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";

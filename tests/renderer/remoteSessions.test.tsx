@@ -452,6 +452,93 @@ describe("remote session reader", () => {
     await waitFor(() => expect(onAbortSession).toHaveBeenCalledWith("detached-session"));
   });
 
+  test("an accepted first prompt is not restored when post-settlement session sync is pending", async () => {
+    const onSelectSession = vi.fn();
+    render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={status("ready")}
+        sessions={[]}
+        activeSessionId={null}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={onSelectSession}
+        onOpenSession={async () => null}
+        onBeginSession={() => {}}
+        onStartSession={async () => ({ pending: true, sessionId: "accepted-session" })}
+        onPromptSession={async () => null}
+        onAbortSession={async () => true}
+      />
+    ));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "New session" })[0]!);
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "do not submit me twice" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Remote prompt" })).toBeNull());
+    expect(onSelectSession).not.toHaveBeenCalled();
+    expect(screen.queryByDisplayValue("do not submit me twice")).toBeNull();
+  });
+
+  test("an accepted existing-session prompt is not restored when transcript sync is pending", async () => {
+    const row = session({ sessionId: "accepted-existing", title: "remote work" });
+    render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={status("ready")}
+        sessions={[row]}
+        activeSessionId={row.sessionId}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={() => {}}
+        onOpenSession={async () => transcript({ sessionId: row.sessionId, title: row.title })}
+        onBeginSession={() => {}}
+        onStartSession={async () => null}
+        onPromptSession={async () => ({ pending: true, sessionId: row.sessionId })}
+        onAbortSession={async () => true}
+      />
+    ));
+
+    await screen.findByText("refactor the auth middleware");
+    const prompt = screen.getByRole("textbox", { name: "Remote prompt" }) as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "do not repeat this turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(prompt.value).toBe(""));
+    expect(screen.queryByDisplayValue("do not repeat this turn")).toBeNull();
+  });
+
+  test("a prompt rejected before acceptance remains in the draft for retry", async () => {
+    render(withI18n(
+      <RemoteSessionPage
+        profile={DIRECT}
+        workspace={WORKSPACE}
+        cwd={WORKSPACE.cwd}
+        status={status("ready")}
+        sessions={[]}
+        activeSessionId={null}
+        refreshing={false}
+        onRefresh={() => {}}
+        onSelectSession={() => {}}
+        onOpenSession={async () => null}
+        onBeginSession={() => {}}
+        onStartSession={async () => null}
+        onPromptSession={async () => null}
+        onAbortSession={async () => true}
+      />
+    ));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "New session" })[0]!);
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "retry after opening fails" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByDisplayValue("retry after opening fails")).toBeDefined();
+  });
+
   test("an empty workspace creates a real session and can run its first prompt", async () => {
     fake = installFakeBridge();
     fake.setRemoteState({
@@ -475,6 +562,57 @@ describe("remote session reader", () => {
       text: "inspect the remote workspace"
     }]));
     expect(await screen.findByText("Remote response complete.")).toBeDefined();
+  });
+
+  test("a completed first prompt stays accepted when the hook's workspace refresh fails", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [{ ...WORKSPACE, sessionCount: 0 }],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [] }
+    });
+    const originalStart = fake.bridge.startRemoteSession;
+    fake.bridge.startRemoteSession = async (request) => {
+      const result = await originalStart(request);
+      fake.bridge.listRemoteWorkspaces = async () => { throw new Error("projection refresh failed"); };
+      return result;
+    };
+
+    const view = render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    fireEvent.click(within(view.container.querySelector(".remote-page-header") as HTMLElement).getByRole("button", { name: "New session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "accepted first turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Remote response complete.")).toBeDefined();
+    expect(screen.queryByDisplayValue("accepted first turn")).toBeNull();
+  });
+
+  test("a completed existing-session prompt stays accepted when the hook's workspace refresh fails", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-sync-warning", title: "remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { [row.sessionId]: transcript({ sessionId: row.sessionId, title: row.title }) }
+    });
+    const originalPrompt = fake.bridge.promptRemoteSession;
+    fake.bridge.promptRemoteSession = async (request) => {
+      const result = await originalPrompt(request);
+      fake.bridge.listRemoteWorkspaces = async () => { throw new Error("projection refresh failed"); };
+      return result;
+    };
+
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} />));
+    await screen.findByText("refactor the auth middleware");
+    const prompt = screen.getByRole("textbox", { name: "Remote prompt" }) as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "accepted existing turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Remote response complete.")).toBeDefined();
+    expect(prompt.value).toBe("");
   });
 
   test("an active remote prompt exposes an explicit stop action", async () => {

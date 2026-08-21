@@ -12,6 +12,7 @@ import type {
   RemoteProfileUpdateRequest,
   RemoteSessionSummary,
   RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionTranscript,
   RemoteTranscriptEntry,
   RemoteWorkspace,
@@ -61,6 +62,8 @@ type ActiveRemoteOperation = {
   abortRequested: boolean;
   phase: "opening" | "attached" | "detached";
   state: "running" | "reconnecting" | "stopping";
+  promptAccepted: boolean;
+  detachedEgress: { close(): Promise<void> } | null;
   monitoring: boolean;
   done: Promise<void>;
   resolveDone(): void;
@@ -368,7 +371,7 @@ export class RemoteProfileService {
   }
 
   /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
-  async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult> {
+  async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
     const operation = this.reserveOperation(profile.id, null, normalizedCwd);
@@ -396,6 +399,9 @@ export class RemoteProfileService {
               await port.abort().catch(() => {});
               throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
             }
+          },
+          onPromptAccepted: () => {
+            operation.promptAccepted = true;
           }
         }
       );
@@ -414,10 +420,13 @@ export class RemoteProfileService {
     } catch (error) {
       if (isDetachedPromptFailure(error)) {
         detached = true;
-        operation.port = null;
         operation.phase = "detached";
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
+      }
+      if (operation.promptAccepted) {
+        if (!detached) this.publishFailure(profile.id, error);
+        return { pending: true, sessionId: operation.sessionId };
       }
       throw error;
     } finally {
@@ -426,7 +435,7 @@ export class RemoteProfileService {
   }
 
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
-  async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript> {
+  async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
     const profile = await this.store.get(profileId);
     const record = this.db.getRemoteSession(profile.id, sessionId);
     if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
@@ -438,13 +447,18 @@ export class RemoteProfileService {
         profile,
         sessionId,
         text,
-        async (port) => {
-          operation.port = port;
-          operation.phase = "attached";
-          this.updateOperationStatus(profile.id, operation, "running");
-          if (operation.abortRequested) {
-            await port.abort().catch(() => {});
-            throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+        {
+          onPort: async (port) => {
+            operation.port = port;
+            operation.phase = "attached";
+            this.updateOperationStatus(profile.id, operation, "running");
+            if (operation.abortRequested) {
+              await port.abort().catch(() => {});
+              throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+            }
+          },
+          onPromptAccepted: () => {
+            operation.promptAccepted = true;
           }
         }
       );
@@ -454,10 +468,13 @@ export class RemoteProfileService {
     } catch (error) {
       if (isDetachedPromptFailure(error)) {
         detached = true;
-        operation.port = null;
         operation.phase = "detached";
         this.updateOperationStatus(profile.id, operation, "reconnecting");
         this.monitorDetachedOperation(profile, operation);
+      }
+      if (operation.promptAccepted) {
+        if (!detached) this.publishFailure(profile.id, error);
+        return { pending: true, sessionId: operation.sessionId };
       }
       throw error;
     } finally {
@@ -471,7 +488,7 @@ export class RemoteProfileService {
     if (!operation || sessionId && operation.sessionId !== sessionId) return false;
     operation.abortRequested = true;
     this.updateOperationStatus(profileId, operation, "stopping");
-    if (operation.port) {
+    if (operation.phase === "attached" && operation.port) {
       try {
         await operation.port.abort();
       } catch {
@@ -717,6 +734,8 @@ export class RemoteProfileService {
       abortRequested: false,
       phase,
       state,
+      promptAccepted: false,
+      detachedEgress: null,
       monitoring: false,
       done,
       resolveDone
@@ -749,15 +768,26 @@ export class RemoteProfileService {
       "reconnecting",
       "detached"
     );
-    this.monitorDetachedOperation(profile, operation);
+    this.monitorDetachedOperation(profile, operation, runtimeInfo);
   }
 
-  private monitorDetachedOperation(profile: RemoteProfile, operation: ActiveRemoteOperation): void {
+  private monitorDetachedOperation(profile: RemoteProfile, operation: ActiveRemoteOperation, recoveredRuntimeInfo?: RuntimeInfo): void {
     if (operation.monitoring || this.activeOperations.get(profile.id) !== operation) return;
     operation.monitoring = true;
     void (async () => {
       try {
         while (this.activeOperations.get(profile.id) === operation) {
+          if (profile.network.mode === "client-proxy" && !operation.port && !operation.detachedEgress) {
+            try {
+              operation.detachedEgress = await this.runtime.reconnectDetachedEgress(profile, recoveredRuntimeInfo);
+              recoveredRuntimeInfo = undefined;
+            } catch (error) {
+              if (!isRetryableError(error)) throw error;
+              this.updateOperationStatus(profile.id, operation, "reconnecting");
+              await new Promise((resolve) => setTimeout(resolve, DETACHED_OPERATION_POLL_MS));
+              continue;
+            }
+          }
           if (operation.abortRequested) {
             try {
               await this.runtime.stop(profile);
@@ -799,6 +829,14 @@ export class RemoteProfileService {
         }
       } finally {
         operation.monitoring = false;
+        const cleanup = await Promise.allSettled([
+          operation.port?.releaseDetachedResources(),
+          operation.detachedEgress?.close()
+        ].filter((entry): entry is Promise<void> => Boolean(entry)));
+        const failedCleanup = cleanup.find((entry) => entry.status === "rejected");
+        if (failedCleanup?.status === "rejected" && this.activeOperations.get(profile.id) === operation) {
+          this.publishFailure(profile.id, failedCleanup.reason);
+        }
         this.releaseOperation(profile.id, operation);
       }
     })();

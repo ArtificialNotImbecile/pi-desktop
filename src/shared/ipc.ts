@@ -1512,6 +1512,16 @@ export type RemoteSessionStartResult = {
   transcript: RemoteSessionTranscript;
 };
 
+/**
+ * The prompt reached the managed Pi process, but Jasmine could not yet mirror
+ * the resulting session. This is deliberately distinct from a rejected IPC
+ * request: retrying an accepted prompt could run the same work twice.
+ */
+export type RemoteSessionSubmissionPending = {
+  pending: true;
+  sessionId: string | null;
+};
+
 export type RemoteSessionPromptRequest = {
   profileId: string;
   sessionId: string;
@@ -1562,8 +1572,8 @@ export type JasmineApi = {
   listRemoteSessions(request: RemoteSessionListRequest): Promise<RemoteSessionSummary[]>;
   refreshRemoteSessions(request: RemoteProfileIdRequest): Promise<RemoteSessionSummary[]>;
   openRemoteSession(request: RemoteSessionOpenRequest): Promise<RemoteSessionTranscript>;
-  startRemoteSession(request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult>;
-  promptRemoteSession(request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript>;
+  startRemoteSession(request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending>;
+  promptRemoteSession(request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending>;
   abortRemoteSession(request: RemoteSessionAbortRequest): Promise<boolean>;
   onRemoteStatusChanged(callback: (status: RemoteProfileStatus) => void): () => void;
   getWorkingSnapshot(): Promise<WorkingSnapshot>;

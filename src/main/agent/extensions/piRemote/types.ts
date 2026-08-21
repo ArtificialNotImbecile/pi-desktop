@@ -157,6 +157,8 @@ export interface RemoteSessionPort {
   respondToExtensionUi(id: string, value: unknown): Promise<void>;
   /** Drops only the client transport; the remote RPC process keeps running. */
   detach(): Promise<void>;
+  /** Releases local resources deliberately retained for detached remote work. */
+  releaseDetachedResources(): Promise<void>;
   close(options?: { abort?: boolean }): Promise<void>;
 }
 

@@ -5,6 +5,7 @@ import type {
   RemoteProfileSummary,
   RemoteSessionSummary,
   RemoteSessionStartResult,
+  RemoteSessionSubmissionPending,
   RemoteSessionTranscript,
   RemoteWorkspace
 } from "../../../shared/ipc";
@@ -25,8 +26,8 @@ export type RemoteSessionPageProps = {
   onSelectSession(sessionId: string): void;
   onOpenSession(sessionId: string, options?: { refetch?: boolean }): Promise<RemoteSessionTranscript | null>;
   onBeginSession(): void;
-  onStartSession(text: string): Promise<RemoteSessionStartResult | null>;
-  onPromptSession(sessionId: string, text: string): Promise<RemoteSessionTranscript | null>;
+  onStartSession(text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null>;
+  onPromptSession(sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null>;
   onAbortSession(sessionId?: string): Promise<boolean>;
 };
 
@@ -125,15 +126,21 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     if (drafting) setStarting(true);
     else setSendingSessionId(sessionId);
     const started = drafting ? await props.onStartSession(text) : null;
-    const result = drafting ? started?.transcript ?? null : await props.onPromptSession(sessionId!, text);
+    const prompted = drafting ? null : await props.onPromptSession(sessionId!, text);
+    const submission = drafting ? started : prompted;
+    const pending = isSubmissionPending(submission);
+    const result: RemoteSessionTranscript | null = drafting
+      ? started && !isSubmissionPending(started) ? started.transcript : null
+      : prompted && !isSubmissionPending(prompted) ? prompted : null;
     if (request !== promptRequestRef.current) return;
     if (result && activeSessionRef.current === sessionId) setTranscript(result);
-    if (started && activeSessionRef.current === null) {
+    if (started && !isSubmissionPending(started) && activeSessionRef.current === null) {
       setTranscript(started.transcript);
       setDrafting(false);
       props.onSelectSession(started.session.sessionId);
     }
-    if (!result) setDraft(text);
+    if (drafting && pending) setDrafting(false);
+    if (!submission) setDraft(text);
     setOptimisticPrompt(null);
     setStarting(false);
     setSendingSessionId(null);
@@ -332,6 +339,12 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
       ) : null}
     </div>
   );
+}
+
+function isSubmissionPending(
+  value: RemoteSessionStartResult | RemoteSessionTranscript | RemoteSessionSubmissionPending | null
+): value is RemoteSessionSubmissionPending {
+  return Boolean(value && "pending" in value);
 }
 
 function entryKindKey(kind: RemoteSessionTranscript["entries"][number]["kind"]): I18nKey {

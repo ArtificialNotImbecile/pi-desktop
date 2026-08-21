@@ -268,6 +268,37 @@ test("TUI setup closes egress when descriptor upload fails", async () => {
   assert.equal(closed, true);
 });
 
+test("detaching a managed session retains client-proxy egress until the detached monitor releases it", async () => {
+  let egressClosed = 0;
+  let childKilled = 0;
+  let clientClosed = 0;
+  const manager = new ManagedRemoteRuntime();
+  const info = { controlVersion: 1, runtimeVersion: "0.1.2", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: ["client-proxy"], remoteRoot: "/r", profileRoot: "/p", sessionRoot: "/s", daemonId: "daemon", activeRpc: null };
+  manager.ensureRuntime = async () => info;
+  manager.startEgress = async () => ({ mode: "client-proxy", proxyUrl: "http://pi:token@127.0.0.1:50123", noProxy: [], remotePort: 50123, token: "token", async close() { egressClosed += 1; } });
+  manager.connectDaemon = async () => ({
+    child: { kill() { childKilled += 1; } },
+    client: {
+      async request() {},
+      subscribe() { return () => {}; },
+      subscribeDisconnect() { return () => {}; },
+      close() { clientClosed += 1; }
+    },
+    remoteInfo: info
+  });
+  const profile = { id: "00000000-0000-4000-8000-000000000001", name: "fixture", sshHost: "host", defaultCwd: "/work", network: { mode: "client-proxy", clientProxy: { noProxy: [], allowedPorts: [443] } }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+
+  const port = await manager.openSession(profile);
+  await port.detach();
+  assert.equal(clientClosed, 1);
+  assert.ok(childKilled >= 1, "the disposable daemon proxy child is closed");
+  assert.equal(egressClosed, 0, "the remote process keeps its reverse tunnel after control detaches");
+
+  await port.releaseDetachedResources();
+  await port.releaseDetachedResources();
+  assert.equal(egressClosed, 1, "detached resource release is idempotent");
+});
+
 test("file download waits for stdout to drain after the SSH child exits", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-download-"));
   const target = path.join(root, "download.bin");
