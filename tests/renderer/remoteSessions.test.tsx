@@ -376,6 +376,48 @@ describe("remote session reader", () => {
     expect(onSelectSession).not.toHaveBeenCalled();
   });
 
+  test("switching remote workspaces clears stale run controls without aborting the old prompt", async () => {
+    const created = session({ sessionId: "created-in-old-workspace", title: "remote work" });
+    const started: RemoteSessionStartResult = {
+      session: created,
+      transcript: transcript({ sessionId: created.sessionId, title: created.title })
+    };
+    let resolveStart!: (result: RemoteSessionStartResult | null) => void;
+    const onSelectSession = vi.fn();
+    const common = {
+      profile: DIRECT,
+      status: status("ready"),
+      sessions: [] as RemoteSessionSummary[],
+      activeSessionId: null,
+      refreshing: false,
+      onRefresh: () => {},
+      onSelectSession,
+      onOpenSession: async () => null,
+      onBeginSession: () => {},
+      onStartSession: () => new Promise<RemoteSessionStartResult | null>((resolve) => { resolveStart = resolve; }),
+      onPromptSession: async () => null,
+      onAbortSession: async () => true
+    };
+    const view = render(withI18n(
+      <RemoteSessionPage {...common} workspace={WORKSPACE} cwd={WORKSPACE.cwd} />
+    ));
+    fireEvent.click(screen.getAllByRole("button", { name: "New session" })[0]!);
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "long remote task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeDefined();
+
+    const otherWorkspace: RemoteWorkspace = { ...WORKSPACE, id: "workspace-2", cwd: "/srv/other", name: "other" };
+    view.rerender(withI18n(
+      <RemoteSessionPage {...common} workspace={otherWorkspace} cwd={otherWorkspace.cwd} />
+    ));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(screen.queryByRole("textbox", { name: "Remote prompt" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "New session" })[0]).toHaveProperty("disabled", false);
+    await act(async () => { resolveStart(started); });
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
   test("an empty workspace creates a real session and can run its first prompt", async () => {
     fake = installFakeBridge();
     fake.setRemoteState({

@@ -57,6 +57,9 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
     setDrafting(false);
     setDraft("");
     setOptimisticPrompt(null);
+    setStarting(false);
+    setSendingSessionId(null);
+    setStopping(false);
     return () => { promptRequestRef.current += 1; };
   }, [props.profile?.id, props.cwd]);
 
