@@ -54,6 +54,7 @@ const DIRECTORY_ENTRY_LIMIT = 300;
 const SESSION_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_SESSION_SYNC_BYTES = 64 * 1024 * 1024;
 const DETACHED_OPERATION_POLL_MS = 5_000;
+const STARTUP_RECOVERY_ATTEMPTS = 3;
 
 type ActiveRemoteOperation = {
   sessionId: string | null;
@@ -75,6 +76,7 @@ export class RemoteProfileService {
   private readonly statuses = new Map<string, RemoteProfileStatus>();
   private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
   private readonly transcriptRoot: string;
+  private readonly startupRecovery: Promise<void>;
 
   constructor(
     private readonly db: JasmineDatabase,
@@ -83,6 +85,10 @@ export class RemoteProfileService {
     this.store = options.store ?? new ProfileStore();
     this.runtime = options.runtime ?? new ManagedRemoteRuntime({ artifactDirectory: resolveArtifactDirectory() });
     this.transcriptRoot = options.transcriptRoot ?? path.join(app.getPath("userData"), "remote-sessions");
+    // Recovery starts with the service, not with navigation. A client-proxy
+    // prompt loses its local egress when the old Jasmine process exits, so
+    // waiting for the user to expand its profile can already be too late.
+    this.startupRecovery = this.recoverActiveOperationsOnStartup();
   }
 
   async listProfiles(): Promise<RemoteProfileSummary[]> {
@@ -236,6 +242,7 @@ export class RemoteProfileService {
    * connection, which leaves remote work running.
    */
   async stopProfile(profileId: string): Promise<RemoteProfileStatus> {
+    await this.startupRecovery;
     const profile = await this.store.get(profileId);
     this.publishStatus({ profileId: profile.id, state: "checking", busy: true });
     try {
@@ -372,6 +379,7 @@ export class RemoteProfileService {
 
   /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
   async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
+    await this.startupRecovery;
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
     const operation = this.reserveOperation(profile.id, null, normalizedCwd);
@@ -436,6 +444,7 @@ export class RemoteProfileService {
 
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
   async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
+    await this.startupRecovery;
     const profile = await this.store.get(profileId);
     const record = this.db.getRemoteSession(profile.id, sessionId);
     if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
@@ -769,6 +778,28 @@ export class RemoteProfileService {
       "detached"
     );
     this.monitorDetachedOperation(profile, operation, runtimeInfo);
+  }
+
+  private async recoverActiveOperationsOnStartup(): Promise<void> {
+    let profiles: RemoteProfile[];
+    try {
+      profiles = await this.store.list();
+    } catch {
+      return;
+    }
+    await Promise.all(profiles.map(async (profile) => {
+      for (let attempt = 0; attempt < STARTUP_RECOVERY_ATTEMPTS; attempt += 1) {
+        try {
+          const info = await this.runtime.inspectRuntime(profile, { install: false });
+          this.recoverActiveOperation(profile, info);
+          return;
+        } catch (error) {
+          if (error instanceof PiRemoteError && error.code === "runtime-not-installed") return;
+          if (!isRetryableError(error) || attempt === STARTUP_RECOVERY_ATTEMPTS - 1) return;
+          await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+        }
+      }
+    }));
   }
 
   private monitorDetachedOperation(profile: RemoteProfile, operation: ActiveRemoteOperation, recoveredRuntimeInfo?: RuntimeInfo): void {

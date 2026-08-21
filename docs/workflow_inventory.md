@@ -3,8 +3,9 @@
 Remote prompt lifecycle contract: acceptance and local reconciliation are
 separate outcomes. Only a failure before acceptance restores a draft; a later
 sync failure cannot invite a duplicate turn. Detached client-proxy work keeps
-its reverse tunnel until settlement and reacquires the stable lease after an
-app restart.
+its reverse tunnel until settlement. Service startup discovers daemon-owned
+work without waiting for navigation, reacquires the stable egress lease after
+an app restart, and retains it through transient daemon-proxy failures.
 
 | Status | ID | Workflow | Success criteria | Evidence |
 | --- | --- | --- | --- | --- |

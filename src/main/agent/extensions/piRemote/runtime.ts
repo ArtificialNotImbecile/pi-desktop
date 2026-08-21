@@ -273,6 +273,7 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
       child.kill();
       throw new PiRemoteError("daemon-proxy-failed", "Failed to establish the remote daemon protocol.", {
         phase: "protocol",
+        retryable: true,
         safeDetails: { diagnostic: redactDiagnostic(stderr).slice(0, 400) },
         cause: error
       });

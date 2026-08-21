@@ -299,6 +299,33 @@ test("detaching a managed session retains client-proxy egress until the detached
   assert.equal(egressClosed, 1, "detached resource release is idempotent");
 });
 
+test("daemon proxy handshake failures remain retryable for detached monitoring", async () => {
+  const fakeSsh = {
+    spawn() {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stdin = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => {
+        child.stdout.destroy();
+        child.stdin.destroy();
+        child.stderr.destroy();
+      };
+      queueMicrotask(() => child.stdout.end());
+      return child;
+    }
+  };
+  const manager = new ManagedRemoteRuntime({ ssh: fakeSsh });
+  manager.ensureDaemon = async () => {};
+  const info = { controlVersion: 1, runtimeVersion: "0.1.2", piVersion: "0.84.2", nodeVersion: "bun", platform: "linux", arch: "x64", artifactSha256: "a".repeat(64), capabilities: [], remoteRoot: "/r", profileRoot: "/p", sessionRoot: "/s", daemonId: "daemon", activeRpc: null };
+  const profile = { id: "00000000-0000-4000-8000-000000000001", name: "fixture", sshHost: "host", defaultCwd: "/work", network: { mode: "remote-direct", clientProxy: { noProxy: [], allowedPorts: [443] } }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+
+  await assert.rejects(
+    () => manager.connectDaemon(profile, info),
+    (error) => error?.code === "daemon-proxy-failed" && error.retryable === true
+  );
+});
+
 test("file download waits for stdout to drain after the SSH child exits", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-remote-download-"));
   const target = path.join(root, "download.bin");

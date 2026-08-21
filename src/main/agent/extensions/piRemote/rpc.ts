@@ -247,8 +247,8 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     this.sessionId = session.id;
   }
 
-  prompt(text: string, images: RemoteImageInput[] = []): Promise<void> {
-    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }).then(() => undefined);
+  prompt(text: string, images: RemoteImageInput[] = [], onAccepted?: () => void): Promise<void> {
+    return this.rpc({ type: "prompt", message: text, ...(images.length ? { images } : {}) }, onAccepted).then(() => undefined);
   }
 
   steer(text: string, images: RemoteImageInput[] = []): Promise<void> {
@@ -291,12 +291,16 @@ export class PiRpcSessionPort implements RemoteSessionPort {
     // client-proxy resources that must outlive a detached control connection.
   }
 
-  private async rpc(command: Record<string, unknown>): Promise<unknown> {
+  private async rpc(command: Record<string, unknown>, onAccepted?: () => void): Promise<unknown> {
     const id = typeof command.id === "string" ? command.id : randomUUID();
     const message = { ...command, id };
     const result = new Promise<unknown>((resolve, reject) => this.rpcPending.set(id, { resolve, reject }));
     try {
       await this.client.request("rpc.send", { command: message });
+      // rpc.send resolves after the daemon has written the command into Pi's
+      // stdin. The later inner RPC response may be lost with the transport, but
+      // at this point retrying the prompt is already unsafe.
+      try { onAccepted?.(); } catch { /* observers cannot revoke daemon acceptance */ }
     } catch (error) {
       this.rpcPending.get(id)?.reject(error);
       this.rpcPending.delete(id);

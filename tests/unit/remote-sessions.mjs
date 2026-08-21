@@ -553,8 +553,9 @@ try {
         eventCursor: 0,
         subscribe(listener) { startListener = listener; return () => { startCalls.push(["unsubscribe"]); }; },
         async createSession(cwd) { startCalls.push(["create", cwd]); return "created-session"; },
-        async prompt(text) {
+        async prompt(text, _images, onAccepted) {
           startCalls.push(["prompt", text]);
+          onAccepted?.();
           queueMicrotask(() => startListener({ seq: 1, type: "rpc.message", data: { type: "agent_settled" } }));
         },
         async close(options) { startCalls.push(["close", options]); }
@@ -568,8 +569,8 @@ try {
     ["open", { cwd: "/srv/application" }],
     ["create", "/srv/application"],
     ["prompt", "inspect the workspace"],
-    ["unsubscribe"],
     ["accepted"],
+    ["unsubscribe"],
     ["close", { abort: false }]
   ], "the first prompt creates and settles the new session before normal non-aborting cleanup");
 
@@ -605,7 +606,7 @@ try {
         return {
           eventCursor: 0,
           subscribe() { return () => { timeoutCalls.push(["unsubscribe"]); }; },
-          async prompt() { timeoutCalls.push(["prompt"]); },
+          async prompt(_text, _images, onAccepted) { timeoutCalls.push(["prompt"]); onAccepted?.(); },
           async detach() { timeoutCalls.push(["detach"]); },
           async close() { timeoutCalls.push(["close"]); }
         };
@@ -632,8 +633,9 @@ try {
       return {
         eventCursor: 0,
         subscribe(listener) { transportListener = listener; return () => { disconnectCalls.push(["unsubscribe"]); }; },
-        async prompt() {
+        async prompt(_text, _images, onAccepted) {
           disconnectCalls.push(["prompt"]);
+          onAccepted?.();
           queueMicrotask(() => transportListener({ seq: 1, type: "transport.disconnected" }));
         },
         async detach() { disconnectCalls.push(["detach"]); },
@@ -645,8 +647,8 @@ try {
   }), (error) => error?.code === "daemon-disconnected");
   assert.deepEqual(disconnectCalls, [
     ["prompt"],
-    ["unsubscribe"],
     ["accepted"],
+    ["unsubscribe"],
     ["detach"]
   ], "a transport disconnect after acceptance detaches without closing detached resources");
 
@@ -677,6 +679,12 @@ try {
     "the detached monitor owns final release of retained local egress resources");
   assert.match(remoteProfileServiceSource, /if \(operation\.promptAccepted\)[\s\S]*pending: true/u,
     "post-acceptance synchronization failures must not be exposed as retryable pre-send failures");
+  assert.match(remoteProfileServiceSource, /this\.startupRecovery = this\.recoverActiveOperationsOnStartup\(\)/u,
+    "daemon-owned work must be discovered when the service starts, without waiting for navigation");
+  assert.match(remoteProfileServiceSource, /async startSession[\s\S]*?await this\.startupRecovery/u,
+    "new sessions must wait for startup recovery to reserve any daemon-owned operation");
+  assert.match(remoteProfileServiceSource, /async promptSession[\s\S]*?await this\.startupRecovery/u,
+    "existing-session prompts must wait for startup recovery to reserve any daemon-owned operation");
 
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";
