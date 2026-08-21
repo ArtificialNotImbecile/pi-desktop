@@ -698,6 +698,10 @@ try {
     "explicit Stop must cancel persistent startup recovery for its profile");
   assert.doesNotMatch(stopProfileBody, /await this\.awaitProfileStartupRecovery/u,
     "explicit Stop must not wait for an unbounded offline recovery gate");
+  assert.match(stopProfileBody, /catch \(error\)[\s\S]*recoveryResumeRequested\.add\(profile\.id\)[\s\S]*resumeProfileStartupRecovery/u,
+    "a failed Stop must resume the cancelled client-proxy recovery chain");
+  assert.match(remoteProfileServiceSource, /while \(true\)[\s\S]*startupRecoveryByProfile\.get\(profileId\) === recovery/u,
+    "Send must follow a recovery promise that is replaced after a failed Stop");
   const abortSessionBody = /async abortSession[\s\S]*?(?=\n  async openSession)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
   assert.doesNotMatch(abortSessionBody, /releaseOperation/u,
     "the abort handler must never release an opening or attached operation owned by its request");

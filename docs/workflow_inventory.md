@@ -14,6 +14,9 @@ gate, while removal cancels it before waiting; direct profiles do not acquire a
 hidden polling loop.
 Explicit Stop supersedes and cancels that gate, so it never waits for an offline
 recovery loop before issuing its own bounded stop command.
+If that stop command fails, recovery is reattached after the previous probe
+finishes so a still-running client-proxy task is not abandoned. Send rechecks
+the per-profile gate after that handoff; removal cancels a queued resume.
 The bounded startup gate is per profile, so an offline saved host never delays
 work or Stop on another host.
 The operation-completed status edge drives one session/workspace refresh; a

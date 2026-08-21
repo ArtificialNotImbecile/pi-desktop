@@ -78,6 +78,7 @@ export class RemoteProfileService {
   private readonly statuses = new Map<string, RemoteProfileStatus>();
   private readonly activeOperations = new Map<string, ActiveRemoteOperation>();
   private readonly cancelledStartupRecovery = new Set<string>();
+  private readonly recoveryResumeRequested = new Set<string>();
   private readonly startupRecoveryByProfile = new Map<string, Promise<void>>();
   private readonly transcriptRoot: string;
   private readonly startupRecovery: Promise<void>;
@@ -143,6 +144,7 @@ export class RemoteProfileService {
    * says so, and this is what makes that promise true.
   */
   async removeProfile(profileId: string): Promise<void> {
+    this.recoveryResumeRequested.delete(profileId);
     this.cancelledStartupRecovery.add(profileId);
     let removed = false;
     try {
@@ -272,6 +274,10 @@ export class RemoteProfileService {
       await this.runtime.stop(profile);
       return this.publishStatus({ profileId: profile.id, state: "disconnected", message: null, busy: false });
     } catch (error) {
+      // A failed stop means remote work may still exist. Restore the cancelled
+      // recovery chain so client-proxy egress is reacquired when SSH returns.
+      this.recoveryResumeRequested.add(profile.id);
+      void this.resumeProfileStartupRecovery(profile, this.startupRecoveryByProfile.get(profile.id));
       return this.publishFailure(profile.id, error);
     }
   }
@@ -821,21 +827,52 @@ export class RemoteProfileService {
       return;
     }
     for (const profile of profiles) {
-      const recovery = this.recoverProfileOnStartup(profile);
-      this.startupRecoveryByProfile.set(profile.id, recovery);
-      void recovery.then(() => {
-        if (this.startupRecoveryByProfile.get(profile.id) === recovery) {
-          this.startupRecoveryByProfile.delete(profile.id);
-        }
-      });
+      this.scheduleProfileStartupRecovery(profile);
     }
+  }
+
+  private scheduleProfileStartupRecovery(profile: RemoteProfile, previous?: Promise<void>): void {
+    const recovery = previous
+      ? previous.then(async () => {
+          if (this.cancelledStartupRecovery.has(profile.id)) return;
+          let currentProfile: RemoteProfile;
+          try { currentProfile = await this.store.get(profile.id); }
+          catch { return; }
+          await this.recoverProfileOnStartup(currentProfile);
+        })
+      : this.recoverProfileOnStartup(profile);
+    this.startupRecoveryByProfile.set(profile.id, recovery);
+    void recovery.then(() => {
+      if (this.startupRecoveryByProfile.get(profile.id) === recovery) {
+        this.startupRecoveryByProfile.delete(profile.id);
+      }
+    });
+  }
+
+  private async resumeProfileStartupRecovery(profile: RemoteProfile, previous?: Promise<void>): Promise<void> {
+    await previous;
+    // Removal wins over a failed Stop that was waiting for the old probe to
+    // leave. Multiple failed Stops coalesce into one resumed recovery.
+    if (!this.recoveryResumeRequested.delete(profile.id)) return;
+    let currentProfile: RemoteProfile;
+    try { currentProfile = await this.store.get(profile.id); }
+    catch { return; }
+    this.cancelledStartupRecovery.delete(profile.id);
+    this.scheduleProfileStartupRecovery(currentProfile);
   }
 
   private async awaitProfileStartupRecovery(profileId: string): Promise<void> {
     // The first promise only discovers and schedules profiles from local JSON.
     // An operation waits for its own SSH probe, never for an unrelated host.
     await this.startupRecovery;
-    await this.startupRecoveryByProfile.get(profileId);
+    while (true) {
+      const recovery = this.startupRecoveryByProfile.get(profileId);
+      if (!recovery) return;
+      await recovery;
+      // A failed Stop can replace the recovery as the previous promise settles.
+      // Re-read the map so Send cannot slip between those two generations.
+      if (this.startupRecoveryByProfile.get(profileId) === recovery) return;
+    }
   }
 
   private async recoverProfileOnStartup(profile: RemoteProfile): Promise<void> {
