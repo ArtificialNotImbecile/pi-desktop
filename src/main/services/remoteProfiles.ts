@@ -424,10 +424,10 @@ export class RemoteProfileService {
           maxBytes: SESSION_READ_CHUNK_BYTES,
           install: false
         }),
-        onTooLarge: (fetchedBytes) => new PiRemoteError("session-too-large", "This remote session is too large to mirror locally.", {
+        onTooLarge: (totalBytes) => new PiRemoteError("session-too-large", "This remote session is too large to mirror locally.", {
           phase: "session",
           remediation: "Open it in the remote terminal instead.",
-          safeDetails: { fetchedBytes }
+          safeDetails: { totalBytes, limitBytes: MAX_SESSION_SYNC_BYTES }
         })
       });
     } catch (error) {

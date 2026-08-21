@@ -32,6 +32,9 @@ import {
   type RuntimeInfo
 } from "./types.js";
 
+/** Printed by the probe when the host answers that no runtime is installed. */
+const RUNTIME_ABSENT_MARKER = "PI_REMOTE_RUNTIME_ABSENT";
+
 interface ArtifactDescriptor {
   version: 1;
   platform: "linux";
@@ -116,7 +119,10 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
    */
   async requireRuntime(profile: RemoteProfile): Promise<RuntimeInfo> {
     const artifact = await this.readArtifact();
-    const existing = await this.runtimeInfo(profile, artifact).catch(() => null);
+    // Only an answered "not installed" becomes this code. A host that could not
+    // be reached keeps its own error, so the caller does not report a missing
+    // runtime when the real problem is the connection.
+    const existing = await this.probeInstalledRuntime(profile, artifact);
     if (!existing) {
       throw new PiRemoteError("runtime-not-installed", "The managed runtime is not installed on this host yet.", {
         phase: "runtime",
@@ -412,7 +418,46 @@ export class ManagedRemoteRuntime implements RemoteRuntimeManager {
     ].join("; ");
     const result = await this.ssh.run(profile, command, undefined, 20_000);
     if (result.code !== 0) throw new PiRemoteError("remote-runtime-missing", "Managed remote runtime is not installed.", { phase: "runtime", retryable: true });
-    const value = parseLifecycle(result.stdout, "PI_REMOTE_RUNTIME/1");
+    return this.toRuntimeInfo(profile, artifact, parseLifecycle(result.stdout, "PI_REMOTE_RUNTIME/1"));
+  }
+
+  /**
+   * Asks whether the runtime is installed in a way that separates "the host
+   * says no" from "the host did not answer". A non-zero exit here is a
+   * connection or protocol failure and keeps its own remediation, because
+   * telling someone to install a runtime when the real problem is an
+   * unreachable host sends them to the wrong place.
+   */
+  private async probeInstalledRuntime(
+    profile: RemoteProfile,
+    artifact: ArtifactDescriptor & { archivePath: string }
+  ): Promise<RuntimeInfo | null> {
+    const remoteRoot = remoteRootShellExpression(profile);
+    const command = [
+      "set -eu",
+      `root=${remoteRoot}`,
+      `runtime=\"$root/runtimes/${artifact.archiveSha256}\"`,
+      `if [ ! -x \"$runtime/bin/pi-remote-host\" ]; then printf '%s\\n' '${RUNTIME_ABSENT_MARKER}'; exit 0; fi`,
+      `exec \"$runtime/bin/pi-remote-host\" runtime info --runtime-root \"$runtime\" --artifact-sha ${artifact.archiveSha256} --remote-root \"$root\" --profile ${shellQuote(profile.id)}`
+    ].join("; ");
+    const result = await this.ssh.run(profile, command, undefined, 20_000);
+    if (result.code !== 0) {
+      throw new PiRemoteError("remote-runtime-probe-failed", "The host did not answer whether the managed runtime is installed.", {
+        phase: "runtime",
+        retryable: true,
+        remediation: "Check that the host is reachable over SSH, then try again.",
+        safeDetails: { exitCode: result.code, diagnostic: redactDiagnostic(result.stderr).slice(0, 400) }
+      });
+    }
+    if (result.stdout.includes(RUNTIME_ABSENT_MARKER)) return null;
+    return this.toRuntimeInfo(profile, artifact, parseLifecycle(result.stdout, "PI_REMOTE_RUNTIME/1"));
+  }
+
+  private toRuntimeInfo(
+    profile: RemoteProfile,
+    artifact: ArtifactDescriptor & { archivePath: string },
+    value: Record<string, unknown>
+  ): RuntimeInfo {
     const rootValue = typeof value.remoteRoot === "string" ? value.remoteRoot : profile.remoteRoot ?? DEFAULT_REMOTE_ROOT_DISPLAY;
     const profileRoot = typeof value.profileRoot === "string" ? value.profileRoot : `${rootValue}/profiles/${profile.id}`;
     const sessionRoot = typeof value.sessionRoot === "string" ? value.sessionRoot : `${profileRoot}/sessions`;

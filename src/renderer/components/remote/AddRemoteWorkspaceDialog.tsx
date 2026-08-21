@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { RemoteDirectoryListing, RemoteProfileSummary, RemoteWorkspaceAddRequest } from "../../../shared/ipc";
+import type { RemoteDirectoryListing, RemoteProfileSummary, RemoteWorkspace, RemoteWorkspaceAddRequest } from "../../../shared/ipc";
 import { getBridge } from "../../desktopApi";
 import { useI18n } from "../../i18n";
 import { errorMessage } from "../../utils/errors";
@@ -15,7 +15,8 @@ export function AddRemoteWorkspaceDialog(props: {
   open: boolean;
   profile: RemoteProfileSummary | null;
   onClose(): void;
-  onAdd(request: RemoteWorkspaceAddRequest): Promise<unknown>;
+  /** Resolves with the workspace, or with nothing when the add was refused. */
+  onAdd(request: RemoteWorkspaceAddRequest): Promise<RemoteWorkspace | null>;
 }) {
   const { t } = useI18n();
   const [listing, setListing] = useState<RemoteDirectoryListing | null>(null);
@@ -55,13 +56,16 @@ export function AddRemoteWorkspaceDialog(props: {
     if (!profileId) return;
     setSubmitting(true);
     try {
-      await props.onAdd({
+      // A rejected add resolves with nothing rather than throwing, so closing
+      // unconditionally would throw away the path and name the user typed for a
+      // workspace that was never created.
+      const added = await props.onAdd({
         profileId,
         cwd: path,
         ...(name.trim() ? { name: name.trim() } : {}),
         ...(setDefault ? { setDefault: true } : {})
       });
-      props.onClose();
+      if (added) props.onClose();
     } finally {
       setSubmitting(false);
     }

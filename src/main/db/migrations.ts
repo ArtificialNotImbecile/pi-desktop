@@ -421,6 +421,10 @@ export function migrateDatabase(db: SqlDatabase, now: Clock): void {
     CREATE INDEX IF NOT EXISTS idx_remote_sessions_workspace
       ON remote_sessions(profile_id, cwd, remote_updated_at DESC);
   `);
+  // Removing a workspace has to survive the next reconciliation. Sessions still
+  // point at that directory, so rediscovery would recreate the row a moment
+  // after the user deleted it; the decision is kept instead of the row.
+  addColumnIfMissing(db, "remote_workspaces", "removed_at", "TEXT");
   markMigration(db, 43, "remote profile workspaces and session projections", now);
 }
 

@@ -142,13 +142,18 @@ export async function syncSessionFile(options: {
       }
       fingerprint = chunk.headerFingerprint;
       remoteSize = chunk.size;
+      // The cap is on the size of the mirror, not on one visit's download.
+      // Checking only what this call fetched would let a session that grows a
+      // little at a time pass every open and still end up unbounded on disk and
+      // in memory when it is read back. Checked before the write so the limit
+      // holds for the final chunk too.
+      if (offset + chunk.bytes > options.maxSyncBytes) throw options.onTooLarge(offset + chunk.bytes);
       if (chunk.bytes > 0) {
         await appendFile(staging, Buffer.from(chunk.data, "base64"));
         offset += chunk.bytes;
         fetchedBytes += chunk.bytes;
       }
       if (chunk.eof || chunk.bytes === 0) break;
-      if (fetchedBytes > options.maxSyncBytes) throw options.onTooLarge(fetchedBytes);
     }
 
     await rename(staging, transcriptPath);

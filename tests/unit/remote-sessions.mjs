@@ -127,6 +127,25 @@ try {
   assert.equal(remotes.getRemoteWorkspace(db, promoted.id).id, promoted.id,
     "a directory the user added by hand is a stated intention and survives");
 
+  // Removing a workspace has to outlive the next reconciliation. The host still
+  // has sessions in that directory, so a plain delete would be undone -- along
+  // with the name and pinned state the user had set.
+  const removable = remotes.upsertRemoteWorkspace(db, { profileId: PROFILE, cwd: "/srv/application", source: "discovered" }, "2026-08-20T00:12:40.000Z");
+  remotes.updateRemoteWorkspace(db, { id: removable.id, pinned: true, name: "Pinned name" }, "2026-08-20T00:12:41.000Z");
+  remotes.removeRemoteWorkspace(db, removable.id, "2026-08-20T00:12:42.000Z");
+  assert.equal(remotes.getRemoteWorkspace(db, removable.id), null);
+  remotes.upsertRemoteWorkspace(db, { profileId: PROFILE, cwd: "/srv/application", source: "discovered" }, "2026-08-20T00:12:43.000Z");
+  assert.equal(remotes.getRemoteWorkspace(db, removable.id), null,
+    "rediscovery must not undo a removal the user performed");
+  assert.equal(remotes.listRemoteWorkspaces(db, PROFILE).some((workspace) => workspace.cwd === "/srv/application"), false);
+
+  // Adding the same directory by hand is the user reversing that decision, and
+  // restores the row they had configured rather than starting a new one.
+  const restored = remotes.upsertRemoteWorkspace(db, { profileId: PROFILE, cwd: "/srv/application", source: "manual" }, "2026-08-20T00:12:44.000Z");
+  assert.equal(restored.id, removable.id);
+  assert.equal(restored.pinned, true, "the pinned state the user set survives the round trip");
+  assert.equal(restored.name, "Pinned name");
+
   // The same directory on a different profile is a different workspace: two
   // profiles for one host own separate remote trees.
   const otherWorkspace = remotes.upsertRemoteWorkspace(db, { profileId: OTHER_PROFILE, cwd: "/srv/application", source: "manual" }, "2026-08-20T00:13:00.000Z");
@@ -368,6 +387,21 @@ try {
   });
   assert.deepEqual(requested, [0]);
   assert.equal(unverifiable.restarted, true);
+
+  // The size cap is on the mirror, not on one visit's download: a session that
+  // grows a little at a time would otherwise pass every open and still end up
+  // unbounded on disk and in memory when it is read back.
+  const cappedPath = path.join(syncDir, "capped.jsonl");
+  await writeFile(cappedPath, head, "utf8");
+  await assert.rejects(() => transcript.syncSessionFile({
+    transcriptPath: cappedPath,
+    fromOffset: headBytes,
+    expectedFingerprint: "fp-a",
+    maxSyncBytes: headBytes + 4,
+    onTooLarge: tooLarge,
+    readChunk: async (offset) => chunk(tailOne, offset, headBytes + oneBytes, "fp-a", true)
+  }), (error) => error?.code === "session-too-large");
+  assert.equal(await readFile(cappedPath, "utf8"), head, "refusing the range leaves the previous copy alone");
 
   // --- request validation ---------------------------------------------------
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops box", sshHost: "ops-box", networkMode: "remote-direct" }),

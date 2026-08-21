@@ -168,11 +168,14 @@ test("reading a host's sessions never installs the runtime by itself", async () 
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString()
   };
-  // A host with no runtime: every probe and lifecycle command fails the way an
-  // uninstalled remote root does.
+  // A host with no runtime answers the probe rather than failing it: the script
+  // finds no runtime binary and says so, which is what separates this case from
+  // a host that could not be reached at all.
   const manager = new ManagedRemoteRuntime({
     ssh: {
-      run: async () => ({ code: 1, stdout: "", stderr: "no runtime" }),
+      run: async (_profile, command) => (command.includes("PI_REMOTE_RUNTIME_ABSENT")
+        ? { code: 0, stdout: "PI_REMOTE_RUNTIME_ABSENT\n", stderr: "" }
+        : { code: 1, stdout: "", stderr: "no runtime" }),
       spawn() { throw new Error("browsing must not spawn an upload"); },
       probe: async () => { throw new Error("browsing must not probe for an install"); }
     }
@@ -188,6 +191,35 @@ test("reading a host's sessions never installs the runtime by itself", async () 
       return true;
     });
   }
+});
+
+test("a host that cannot answer is a connection failure, not a missing runtime", async () => {
+  const { ManagedRemoteRuntime } = await import("../dist/runtime.js");
+  const profile = {
+    id: "00000000-0000-4000-8000-000000000003",
+    name: "fixture",
+    sshHost: "host",
+    network: { mode: "remote-direct", clientProxy: { noProxy: [], allowedPorts: [80, 443] } },
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString()
+  };
+  // ssh itself failed, so the host never said whether a runtime is there.
+  // Reporting "not installed" would send the user to reinstall something when
+  // the real problem is that the machine is unreachable.
+  const manager = new ManagedRemoteRuntime({
+    ssh: {
+      run: async () => ({ code: 255, stdout: "", stderr: "ssh: connect to host port 22: Connection refused" }),
+      spawn() { throw new Error("a failed probe must not spawn anything"); },
+      probe: async () => { throw new Error("a failed probe must not fall through to an install"); }
+    }
+  });
+
+  await assert.rejects(() => manager.requireRuntime(profile), (error) => {
+    assert.equal(error.code, "remote-runtime-probe-failed");
+    assert.match(error.remediation, /reachable over SSH/u);
+    assert.equal(error.retryable, true);
+    return true;
+  });
 });
 
 async function sessionFixture() {

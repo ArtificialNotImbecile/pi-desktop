@@ -80,7 +80,7 @@ export function listRemoteWorkspaces(db: SqlDatabase, profileId?: string): Remot
       ON remote_sessions.profile_id = remote_workspaces.profile_id
       AND remote_sessions.cwd = remote_workspaces.cwd
       AND remote_sessions.missing_since IS NULL
-    ${profileId ? "WHERE remote_workspaces.profile_id = ?" : ""}
+    WHERE remote_workspaces.removed_at IS NULL${profileId ? " AND remote_workspaces.profile_id = ?" : ""}
     GROUP BY remote_workspaces.id
     ORDER BY remote_workspaces.pinned DESC, latest_session_at DESC, remote_workspaces.name ASC
   `).all(...(profileId ? [profileId] : [])) as WorkspaceRow[];
@@ -98,7 +98,7 @@ export function getRemoteWorkspace(db: SqlDatabase, id: string): RemoteWorkspace
       ON remote_sessions.profile_id = remote_workspaces.profile_id
       AND remote_sessions.cwd = remote_workspaces.cwd
       AND remote_sessions.missing_since IS NULL
-    WHERE remote_workspaces.id = ?
+    WHERE remote_workspaces.id = ? AND remote_workspaces.removed_at IS NULL
     GROUP BY remote_workspaces.id
   `).get(id) as WorkspaceRow | undefined;
   return row ? mapWorkspace(row) : null;
@@ -115,9 +115,15 @@ export function upsertRemoteWorkspace(
   timestamp: string
 ): RemoteWorkspace {
   const existing = db
-    .prepare("SELECT id, source FROM remote_workspaces WHERE profile_id = ? AND cwd = ?")
-    .get(input.profileId, input.cwd) as { id: string; source: RemoteWorkspaceSource } | undefined;
+    .prepare("SELECT id, source, removed_at FROM remote_workspaces WHERE profile_id = ? AND cwd = ?")
+    .get(input.profileId, input.cwd) as { id: string; source: RemoteWorkspaceSource; removed_at: string | null } | undefined;
   if (existing) {
+    // Rediscovery leaves a removal alone; adding the directory by hand is the
+    // user reversing that decision, so it restores the row they configured.
+    if (existing.removed_at && input.source !== "manual") return removedWorkspacePlaceholder(existing.id, input);
+    if (existing.removed_at) {
+      db.prepare("UPDATE remote_workspaces SET removed_at = NULL, updated_at = ? WHERE id = ?").run(timestamp, existing.id);
+    }
     if (input.source === "manual" && existing.source !== "manual") {
       db.prepare("UPDATE remote_workspaces SET source = 'manual', updated_at = ? WHERE id = ?").run(timestamp, existing.id);
     }
@@ -163,8 +169,14 @@ export function updateRemoteWorkspace(
   return workspace;
 }
 
-export function removeRemoteWorkspace(db: SqlDatabase, id: string): void {
-  db.prepare("DELETE FROM remote_workspaces WHERE id = ?").run(id);
+/**
+ * Records that the user removed this workspace rather than deleting the row.
+ * The host still has sessions in that directory, so a plain delete would be
+ * undone by the next reconciliation -- along with the name and pinned state the
+ * user had set on it.
+ */
+export function removeRemoteWorkspace(db: SqlDatabase, id: string, timestamp: string): void {
+  db.prepare("UPDATE remote_workspaces SET removed_at = ?, updated_at = ? WHERE id = ?").run(timestamp, timestamp, id);
 }
 
 export function listRemoteSessions(db: SqlDatabase, profileId: string, cwd?: string): RemoteSessionRecord[] {
@@ -275,7 +287,7 @@ export function updateRemoteSessionCache(db: SqlDatabase, update: RemoteSessionC
  */
 export function pruneDiscoveredRemoteWorkspaces(db: SqlDatabase, profileId: string, keepCwds: string[]): void {
   const rows = db
-    .prepare("SELECT id, cwd FROM remote_workspaces WHERE profile_id = ? AND source = 'discovered'")
+    .prepare("SELECT id, cwd FROM remote_workspaces WHERE profile_id = ? AND source = 'discovered' AND removed_at IS NULL")
     .all(profileId) as Array<{ id: string; cwd: string }>;
   const keep = new Set(keepCwds);
   const drop = db.prepare("DELETE FROM remote_workspaces WHERE id = ?");
@@ -300,6 +312,26 @@ export function removeRemoteProfileData(db: SqlDatabase, profileId: string): str
   db.prepare("DELETE FROM remote_sessions WHERE profile_id = ?").run(profileId);
   db.prepare("DELETE FROM remote_workspaces WHERE profile_id = ?").run(profileId);
   return rows.map((row) => row.transcript_path);
+}
+
+/** A removed workspace still answers as itself so callers have something to return. */
+function removedWorkspacePlaceholder(
+  id: string,
+  input: { profileId: string; cwd: string; name?: string }
+): RemoteWorkspace {
+  return {
+    id,
+    profileId: input.profileId,
+    cwd: input.cwd,
+    name: input.name?.trim() || defaultWorkspaceName(input.cwd),
+    pinned: false,
+    source: "discovered",
+    isDefaultCwd: false,
+    sessionCount: 0,
+    latestSessionAt: null,
+    createdAt: "",
+    updatedAt: ""
+  };
 }
 
 export function defaultWorkspaceName(cwd: string): string {

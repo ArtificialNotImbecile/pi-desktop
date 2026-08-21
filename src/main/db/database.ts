@@ -298,7 +298,7 @@ export class JasmineDatabase {
 
   removeRemoteWorkspace(id: string): void {
     if (!this.getRemoteWorkspace(id)) throw new Error("Remote workspace does not exist.");
-    removeRemoteWorkspaceRow(this.db, id);
+    removeRemoteWorkspaceRow(this.db, id, now());
   }
 
   listRemoteSessions(profileId: string, cwd?: string): RemoteSessionRecord[] {
