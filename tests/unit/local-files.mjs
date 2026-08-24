@@ -29,7 +29,10 @@ assert.equal(
 );
 
 // A Windows request carries a leading slash before the drive letter.
-assert.equal(localPathFromRequestUrl("jasmine-file://local/C%3A/work/a.png"), path.resolve("C:/work/a.png"));
+assert.equal(
+  localPathFromRequestUrl("jasmine-file://local/C%3A/work/a.png"),
+  path.resolve(process.platform === "win32" ? "C:/work/a.png" : "/C:/work/a.png")
+);
 
 // Anything that is not this scheme and host is not ours to serve.
 for (const url of [
@@ -97,6 +100,19 @@ assert.equal(image.kind, "file");
 assert.equal(image.isImage, true);
 assert.equal(image.mediaType, "image/png");
 assert.equal(image.name, "chart.png");
+
+// Some models copy the POSIX absolute-path example onto a Windows drive path
+// and emit `/C:/Users/...`. The metadata lookup happens before the custom image
+// protocol, so this spelling must resolve to the same file instead of the
+// nonexistent `C:\\C:\\Users\\...`.
+if (process.platform === "win32") {
+  const slashDrivePath = `/${imagePath.replace(/\\/g, "/")}`;
+  const [slashDriveImage] = await describeLocalFiles([slashDrivePath]);
+  assert.equal(expandLocalPath(slashDrivePath), imagePath);
+  assert.equal(slashDriveImage.path, imagePath);
+  assert.equal(slashDriveImage.exists, true);
+  assert.equal(slashDriveImage.isImage, true);
+}
 
 const doc = byPath.get(docPath);
 assert.equal(doc.exists, true);
