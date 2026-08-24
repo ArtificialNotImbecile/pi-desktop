@@ -1533,7 +1533,22 @@ function userTextFromSessionEntry(entry: SessionEntry): string | null {
   if (entry.type !== "message") return null;
   const message = entry.message as unknown as Record<string, unknown>;
   if (message.role !== "user") return null;
-  return contentToText(message.content).trim();
+  // An image-carrying prompt is stored as a text block plus one block per image,
+  // so the generic renderer would append "[Image]" placeholders to the text. Both
+  // the prompt-identity match and the persisted bubble want the prompt text
+  // alone: attachments travel with the message row, and a text mismatch here
+  // makes the run persist the current prompt a second time.
+  return userContentToText(message.content).trim();
+}
+
+function userContentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return "";
+    const value = block as Record<string, unknown>;
+    return value.type === "text" ? stringValue(value.text, "") : "";
+  }).filter(Boolean).join("\n");
 }
 
 function shiftDeliveredQueuedMessage(deliveredQueuedMessages: TrackedQueuedMessage[], userText: string): TrackedQueuedMessage | undefined {

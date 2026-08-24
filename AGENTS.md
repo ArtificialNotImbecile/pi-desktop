@@ -87,28 +87,13 @@ For app-level changes, launch Electron and confirm the page is nonblank. For per
 
 Land every change through a pull request; do not commit to `main` directly.
 
-1. Open the PR, then request a review by commenting `@codex review`.
-2. Fix what the review finds, push, and request another review.
-3. Repeat until a review reports no findings on the current head commit.
-4. Once a review reports no findings on the current head commit and every CI check is green, report that the PR is ready to merge and leave the merge to the user by default.
+1. Open the PR.
+2. Watch CI on the head commit; fix what it reports and push again.
+3. Once every CI check is green on the current head commit, report that the PR is ready to merge and leave the merge to the user by default.
 
-Do not merge a pull request unless the user explicitly asks the agent to merge that specific PR. When the user does explicitly request a merge, merge only after the clean review and every CI check are green.
+No automated reviewer runs on this repository. Green CI on the current head is the bar, so self-review the diff before opening the PR rather than waiting for a bot to find what a read would have.
 
-### Reading Codex review results
-
-Codex reports through two different GitHub surfaces, and which one it uses depends on the outcome. Check both, every time:
-
-| Outcome | Where it lands | API |
-| --- | --- | --- |
-| Findings | a PR review whose findings are inline comments | `/pulls/:n/reviews` and `/pulls/:n/comments` |
-| No findings | an issue comment, `Codex Review: Didn't find any major issues` | `/issues/:n/comments` |
-
-Two failure modes follow from that split, and both have caused wrong conclusions:
-
-- A review's own body is boilerplate ("Here are some automated review suggestions"). Its findings live only in the inline comments, so a review is not clean just because its body says nothing.
-- A clean pass never adds an entry to the reviews list. Waiting for the review count to grow means waiting for a signal that cannot arrive.
-
-Decide by the `Reviewed commit:` SHA in the comment body, which tells you which head the result applies to. Never decide by a counter.
+Do not merge a pull request unless the user explicitly asks the agent to merge that specific PR. When the user does explicitly request a merge, merge only after every CI check is green.
 
 ## Compatibility
 

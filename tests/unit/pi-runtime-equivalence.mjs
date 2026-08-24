@@ -3408,6 +3408,67 @@ try {
   assert.match(nonSecretError(new Error(`${fakeProviderSecret} does not support image input`)), /sk-\.\.\. does not support image input/);
   assert.doesNotMatch(nonSecretError(new Error(`${fakeProviderSecret} does not support image input`)), /test-fixture/);
 
+  // An image prompt is stored as a text block plus one block per image. Reading
+  // that entry as text used to append "[Image]" placeholders, so the current
+  // prompt no longer matched the row Jasmine already had and the run painted and
+  // persisted the user turn a second time.
+  const visionProvider = {
+    providerName: "jasmine-mock",
+    apiKey: "test-key",
+    baseUrl,
+    modelId: "jasmine-test",
+    capabilities: {
+      vision: true,
+      imageOutput: false,
+      toolCalling: true,
+      reasoning: false,
+      embedding: false
+    },
+    contextWindow: 128000,
+    maxOutputTokens: 1200,
+    providerOptionsJson: "{}"
+  };
+  const onePixelPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64"
+  );
+  const firstImagePath = path.join(tempDir, "duplicate-regression-1.png");
+  const secondImagePath = path.join(tempDir, "duplicate-regression-2.png");
+  await writeFile(firstImagePath, onePixelPng);
+  await writeFile(secondImagePath, onePixelPng);
+  const imageAttachments = [
+    { kind: "file", name: "duplicate-regression-1.png", path: firstImagePath, isImage: true, mediaType: "image/png" },
+    { kind: "file", name: "duplicate-regression-2.png", path: secondImagePath, isImage: true, mediaType: "image/png" }
+  ];
+  const imagePromptText = "image attachment single bubble regression";
+  const imagePromptLinks = [];
+  const imagePromptLiveRoles = [];
+  const imagePromptReply = await runPiCodingAgentChat({
+    provider: visionProvider,
+    messages: [{ role: "user", content: imagePromptText, attachments: imageAttachments }],
+    content: imagePromptText,
+    attachments: imageAttachments,
+    currentMessageId: "image-prompt-message",
+    onSessionEntriesLinked: (links) => {
+      imagePromptLinks.push(...links);
+    },
+    onUpdate: (update) => {
+      if (update.liveMessages) imagePromptLiveRoles.push(...update.liveMessages.map((message) => message.role));
+    },
+    jasminePromptAppend: systemPrompt,
+    agentDir,
+    toolsEnabled: true
+  });
+  assert.deepEqual((imagePromptReply.generatedMessages ?? []).map((message) => message.role), ["assistant"]);
+  assert.equal(JSON.stringify(imagePromptReply.generatedMessages ?? []).includes(imagePromptText), false);
+  // The streaming snapshot shares the same skip, so the duplicate was painted
+  // live before it was ever persisted.
+  assert.equal(imagePromptLiveRoles.length > 0, true);
+  assert.equal(imagePromptLiveRoles.includes("user"), false);
+  // The same text match links the prompt to its Pi entry, so a missed match also
+  // left the image turn unbranchable.
+  assert.equal(imagePromptLinks.some((link) => link.messageId === "image-prompt-message"), true);
+
   const previousMockFlag = process.env.JASMINE_E2E_MOCK_AI;
   process.env.JASMINE_E2E_MOCK_AI = "1";
   try {
