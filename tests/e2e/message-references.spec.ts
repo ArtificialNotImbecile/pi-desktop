@@ -33,12 +33,16 @@ test.describe("references in an assistant answer", () => {
   test("paints a local image over the app's own protocol and opens it in a lightbox", async () => {
     const { page, userDataDir } = harness;
     const imagePath = await createRedSquarePng(userDataDir);
+    const markdownImagePath = imagePath.replace(/\\/g, "/");
+    // Reproduce the model output observed on Windows: it copied the POSIX
+    // leading slash onto a drive path and wrote `/C:/Users/...`.
+    const modelImagePath = process.platform === "win32" ? `/${markdownImagePath}` : markdownImagePath;
     const thread = await page.evaluate(() => window.jasmine.createThread({ title: "Image reference" }));
     seedAssistantAnswer(
       userDataDir,
       thread.id,
       "reference-image",
-      `Here is the chart.\n\n![Revenue chart](${imagePath.replace(/\\/g, "/")})`
+      `Here is the chart.\n\n![Revenue chart](${modelImagePath})`
     );
     await page.reload();
     await page.waitForSelector(".app-shell");

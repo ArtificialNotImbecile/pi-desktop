@@ -52,9 +52,10 @@ export function localPathFromRequestUrl(requestUrl: string): string | null {
   }
   if (!decoded || decoded.includes("\0")) return null;
 
-  // On Windows the encoded form carries a leading slash before the drive letter
-  // (`/C:/Users/...`), which has to come off before the path resolves.
-  const candidate = /^\/[A-Za-z]:[\\/]/.test(decoded) ? decoded.slice(1) : decoded;
+  // A standard URL pathname carries a leading slash before a Windows drive
+  // letter. The same normalizer also accepts that spelling when a model writes
+  // it directly in Markdown.
+  const candidate = normalizeLocalPathInput(decoded);
   const resolved = path.resolve(candidate);
   return path.isAbsolute(resolved) ? resolved : null;
 }
@@ -64,7 +65,13 @@ export function imageMediaType(filePath: string): string | undefined {
 }
 
 export function expandLocalPath(value: string): string {
-  return path.resolve(value.trim().replace(/^~(?=$|[\\/])/, os.homedir()));
+  const expandedHome = value.trim().replace(/^~(?=$|[\\/])/, os.homedir());
+  return path.resolve(normalizeLocalPathInput(expandedHome));
+}
+
+function normalizeLocalPathInput(value: string): string {
+  if (process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(value)) return value.slice(1);
+  return value;
 }
 
 /**
