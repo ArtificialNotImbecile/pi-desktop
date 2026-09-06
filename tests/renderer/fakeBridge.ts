@@ -2,6 +2,7 @@ import { act } from "@testing-library/react";
 import { LOCAL_FILE_DESCRIBE_LIMIT } from "../../src/shared/ipc";
 import type {
   AppUpdateState,
+  RemoteLiveTurn,
   RemoteProfileStatus,
   RemoteProfileSummary,
   RemoteSessionAbortRequest,
@@ -83,6 +84,7 @@ type ModeledBridgeApi = Pick<
   | "promptRemoteSession"
   | "abortRemoteSession"
   | "onRemoteStatusChanged"
+  | "onRemoteLiveTurnChanged"
   | "createRemoteProfile"
   | "updateRemoteProfile"
   | "removeRemoteProfile"
@@ -161,6 +163,8 @@ export type FakeBridge = {
   setRemoteState(state: Partial<FakeRemoteState>): void;
   /** Delivers a status change the way the main process broadcasts one. */
   emitRemoteStatus(status: RemoteProfileStatus): Promise<void>;
+  /** Delivers one live-turn snapshot the way the main process streams them. */
+  emitRemoteLiveTurn(turn: RemoteLiveTurn): Promise<void>;
   /**
    * Declares what the main process would report for paths an assistant answer
    * references. Unlisted paths describe as missing, which is what the renderer
@@ -230,6 +234,7 @@ export function createFakeBridge(): FakeBridge {
 
   const localFiles = new Map<string, LocalFileDescription>();
   const remoteStatusListeners = new Set<(status: RemoteProfileStatus) => void>();
+  const remoteLiveTurnListeners = new Set<(turn: RemoteLiveTurn) => void>();
   const remote: FakeRemoteState = {
     profiles: [],
     workspaces: [],
@@ -495,8 +500,8 @@ export function createFakeBridge(): FakeBridge {
         cwd: request.cwd,
         state: "cached",
         entries: [
-          { id: "start-prompt", kind: "user", timestamp: null, text: request.text, toolName: null, appended: true },
-          { id: "start-reply", kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, appended: true }
+          { id: "start-prompt", kind: "user", timestamp: null, text: request.text, toolName: null, toolArgs: null, isError: false, notice: null, appended: true },
+          { id: "start-reply", kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, toolArgs: null, isError: false, notice: null, appended: true }
         ],
         omittedEntryCount: 0,
         cachedBytes: 1024,
@@ -516,8 +521,8 @@ export function createFakeBridge(): FakeBridge {
         ...current,
         entries: [
           ...current.entries,
-          { id: `prompt-${calls.promptRemoteSession.length}`, kind: "user", timestamp: null, text: request.text, toolName: null, appended: true },
-          { id: `reply-${calls.promptRemoteSession.length}`, kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, appended: true }
+          { id: `prompt-${calls.promptRemoteSession.length}`, kind: "user", timestamp: null, text: request.text, toolName: null, toolArgs: null, isError: false, notice: null, appended: true },
+          { id: `reply-${calls.promptRemoteSession.length}`, kind: "assistant", timestamp: null, text: "Remote response complete.", toolName: null, toolArgs: null, isError: false, notice: null, appended: true }
         ],
         syncedAt: "2026-08-21T00:00:01.000Z"
       };
@@ -531,6 +536,10 @@ export function createFakeBridge(): FakeBridge {
     onRemoteStatusChanged(callback) {
       remoteStatusListeners.add(callback);
       return () => remoteStatusListeners.delete(callback);
+    },
+    onRemoteLiveTurnChanged(callback) {
+      remoteLiveTurnListeners.add(callback);
+      return () => remoteLiveTurnListeners.delete(callback);
     },
     createRemoteProfile(request) {
       const profile: RemoteProfileSummary = {
@@ -738,6 +747,11 @@ export function createFakeBridge(): FakeBridge {
       ];
       await act(async () => {
         for (const listener of remoteStatusListeners) listener(status);
+      });
+    },
+    async emitRemoteLiveTurn(turn) {
+      await act(async () => {
+        for (const listener of remoteLiveTurnListeners) listener(turn);
       });
     },
     setLocalFiles(files) {

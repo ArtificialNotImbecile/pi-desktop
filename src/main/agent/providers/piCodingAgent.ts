@@ -1148,6 +1148,24 @@ function sameAttachments(first: PickedPath[], second: PickedPath[]): boolean {
   });
 }
 
+let catalogRuntimePromise: Promise<ModelRuntime> | null = null;
+
+/**
+ * The Pi model definition Jasmine registers for a provider, resolved the same
+ * way a local chat turn resolves it. A remote host runs the same Pi and gets
+ * this exact definition pushed into its isolated profile, so a model behaves
+ * identically whether the turn runs here or over SSH.
+ */
+export async function describePiModelForProvider(provider: RuntimeProviderConfig): Promise<Model<"openai-completions">> {
+  catalogRuntimePromise ??= ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false
+  });
+  const modelRuntime = await catalogRuntimePromise;
+  return toPiModel(provider, findPiCatalogModel(modelRuntime, provider));
+}
+
 function findPiCatalogModel(modelRuntime: ModelRuntime, provider: RuntimeProviderConfig): Model<"openai-completions"> | undefined {
   const providerId = isMoonshotProvider(provider) ? "moonshotai-cn" : provider.providerName;
   const model = modelRuntime.getModel(providerId, provider.modelId);

@@ -126,16 +126,24 @@ export const remoteSessionOpenSchema = z.object({
   refetch: z.boolean().optional()
 });
 
+const remoteModelSelectionFields = {
+  providerId: z.string().min(1).max(128).optional(),
+  modelId: z.string().min(1).max(256).optional(),
+  reasoningEffort: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional()
+};
+
 export const remoteSessionStartSchema = z.object({
   profileId: remoteProfileIdValueSchema,
   cwd: remotePathSchema,
-  text: z.string().trim().min(1).max(1_000_000)
+  text: z.string().trim().min(1).max(1_000_000),
+  ...remoteModelSelectionFields
 });
 
 export const remoteSessionPromptSchema = z.object({
   profileId: remoteProfileIdValueSchema,
   sessionId: remoteSessionIdSchema,
-  text: z.string().trim().min(1).max(1_000_000)
+  text: z.string().trim().min(1).max(1_000_000),
+  ...remoteModelSelectionFields
 });
 
 export const remoteSessionAbortSchema = z.object({

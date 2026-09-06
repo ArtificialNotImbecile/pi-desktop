@@ -10287,6 +10287,26 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+/* The profile's egress and status take a second line: on one line they took
+   the room the name needed, and a name cut to four letters told two profiles
+   on the same host apart by nothing. */
+.remote-profile-item {
+  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  row-gap: 0;
+  padding: 4px 8px 4px 0;
+}
+
+.remote-profile-item .remote-status-dot {
+  grid-row: 1 / span 2;
+}
+
+.remote-profile-item small {
+  grid-column: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .remote-host-item span,
 .remote-profile-item span:not(.remote-status-dot),
 .remote-workspace-item span {
@@ -10431,7 +10451,9 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   gap: 14px;
   min-width: 0;
   min-height: 0;
-  padding: 20px 24px 24px;
+  /* The shell draws its 44px drag strip and window controls over the top of
+     every route; the header starts below them instead of underneath them. */
+  padding: 44px 24px 20px;
   overflow: hidden;
 }
 
@@ -10497,6 +10519,15 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   min-height: 0;
   padding-right: 4px;
   overflow-y: auto;
+}
+
+.remote-session-list-empty {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--faint);
+  font-size: 12.5px;
 }
 
 .remote-session-card {
@@ -10597,9 +10628,9 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   background: var(--accent-soft);
 }
 
-.remote-entry.thinking,
-.remote-entry.tool,
-.remote-entry.compaction {
+.remote-entry.kind-thinking,
+.remote-entry.kind-tool,
+.remote-entry.kind-compaction {
   background: var(--soft);
 }
 
@@ -10628,11 +10659,153 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   font-size: 11px;
 }
 
-.remote-entry p {
+.remote-entry-text {
   margin: 0;
   font-size: 13.5px;
   line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remote-entry-text.muted {
+  color: var(--muted);
+}
+
+/* Answers are Markdown like everywhere else in the app, at the reader's size. */
+.remote-entry .markdown-message p,
+.remote-entry .markdown-message ul,
+.remote-entry .markdown-message ol {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.remote-entry.is-error {
+  border-color: var(--border-danger);
+}
+
+.remote-entry.kind-notice {
+  background: var(--danger-soft);
+  border-color: var(--border-danger);
+}
+
+.remote-entry.kind-notice .remote-entry-kind,
+.remote-entry.kind-notice .remote-entry-text {
+  color: var(--danger-ink);
+}
+
+/* A stop is the user's decision, not a failure, so it does not read as one. */
+.remote-entry.kind-notice.stopped {
+  background: var(--soft);
+  border-color: var(--line);
+}
+
+.remote-entry.kind-notice.stopped .remote-entry-kind,
+.remote-entry.kind-notice.stopped .remote-entry-text {
+  color: var(--muted);
+}
+
+.remote-entry-args {
+  min-width: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--syntax-inline-bg);
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-entry-running {
+  display: inline-flex;
+  color: var(--faint);
+}
+
+.remote-entry-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.remote-entry-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.remote-entry-disclosure summary::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--faint);
+  transition: transform 120ms ease;
+}
+
+.remote-entry-disclosure[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.remote-entry-disclosure .remote-entry-text {
+  margin-top: 6px;
+}
+
+.remote-entry-output {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--syntax-code-bg);
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+/* A path that lives on the remote host: information, not a control. */
+.markdown-remote-path {
+  overflow-wrap: anywhere;
+}
+
+.remote-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.remote-entry.live.kind-assistant {
+  border-color: var(--accent-line);
+}
+
+.remote-entry header {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.remote-entry header .remote-entry-kind,
+.remote-entry header .remote-entry-tool,
+.remote-entry header time,
+.remote-entry header .ui-status-pill {
+  flex: none;
+}
+
+.remote-submission-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-submission-error span {
   overflow-wrap: anywhere;
 }
 
@@ -10662,8 +10835,18 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   gap: 10px;
 }
 
-.remote-composer-actions .remote-transcript-status {
-  margin-right: auto;
+.remote-composer-spacer {
+  flex: 1;
+}
+
+.remote-model-pill {
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.remote-model-pill .icon {
+  color: var(--faint);
 }
 
 /* Wizard and workspace picker */

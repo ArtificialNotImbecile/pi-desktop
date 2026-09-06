@@ -6,6 +6,8 @@ import type {
   RemoteDirectoryEntry,
   RemoteDirectoryListing,
   RemoteDoctorReport,
+  RemoteLiveTurn,
+  RemoteModelSelectionRequest,
   RemoteProfileCreateRequest,
   RemoteProfileStatus,
   RemoteProfileSummary,
@@ -21,6 +23,10 @@ import type {
 } from "../../shared/ipc.js";
 import type { JasmineDatabase } from "../db/database.js";
 import type { RemoteSessionRecord } from "../db/repositories/remotes.js";
+import { describePiModelForProvider } from "../agent/providers/piCodingAgent.js";
+import { getRuntimeProvider } from "./providers.js";
+import { RemoteLiveTurnAggregator } from "./remoteLiveTurn.js";
+import { buildRemoteModelPayload, type RemoteModelSelection } from "./remoteModelConfig.js";
 import {
   joinRemotePath,
   normalizeRemotePath,
@@ -57,6 +63,8 @@ const DETACHED_OPERATION_POLL_MS = 5_000;
 const STARTUP_RECOVERY_ATTEMPTS = 3;
 /** Bounds one full detached stop cycle (SSH command cap plus reconciliation). */
 const STOP_CONFIRMATION_TIMEOUT_MS = 90_000;
+/** Live snapshots coalesce at this rate; a token stream would otherwise be one IPC message per delta. */
+const LIVE_TURN_PUBLISH_MS = 80;
 
 type ActiveRemoteOperation = {
   sessionId: string | null;
@@ -83,6 +91,8 @@ export class RemoteProfileService {
   private readonly recoveryResumeRequested = new Set<string>();
   private readonly startupRecoveryWaiters = new Map<string, Set<() => void>>();
   private readonly startupRecoveryByProfile = new Map<string, Promise<void>>();
+  /** What each host was last given; an unchanged model is not uploaded again this run. */
+  private readonly syncedModelFingerprints = new Map<string, string>();
   private readonly transcriptRoot: string;
   private readonly startupRecovery: Promise<void>;
 
@@ -412,21 +422,30 @@ export class RemoteProfileService {
   }
 
   /** Creates the session and runs its first prompt on one RPC port, then publishes the durable result. */
-  async startSession(profileId: string, cwd: string, text: string): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
+  async startSession(
+    profileId: string,
+    cwd: string,
+    text: string,
+    selection: RemoteModelSelectionRequest = {}
+  ): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> {
     if (!await this.awaitProfileStartupRecovery(profileId, true)) {
       throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
     }
     const profile = await this.store.get(profileId);
     const normalizedCwd = normalizeRemotePath(cwd);
     const operation = this.reserveOperation(profile.id, null, normalizedCwd);
+    const live = this.beginLiveTurn({ profileId: profile.id, sessionId: null, cwd: normalizedCwd, prompt: text });
     let detached = false;
     try {
+      const model = await this.ensureRemoteModel(profile, selection, operation);
       operation.sessionId = await startManagedRemoteSession(
         this.runtime,
         profile,
         normalizedCwd,
         text,
         {
+          model,
+          onRpcMessage: live.handle,
           onPort: async (port) => {
             operation.port = port;
             operation.daemonId = port.daemonId;
@@ -439,6 +458,7 @@ export class RemoteProfileService {
           },
           onSessionId: async (sessionId, port) => {
             operation.sessionId = sessionId;
+            live.setSessionId(sessionId);
             this.updateOperationStatus(profile.id, operation, "running");
             if (operation.abortRequested) {
               await port.abort().catch(() => {});
@@ -454,6 +474,7 @@ export class RemoteProfileService {
         }
       );
       operation.port = null;
+      live.settle();
       const rows = await this.refreshSessions(profile.id);
       const created = rows.find((row) => row.sessionId === operation.sessionId);
       if (!created) {
@@ -477,14 +498,21 @@ export class RemoteProfileService {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
+      live.fail(describeError(error).message);
       throw error;
     } finally {
+      live.close();
       if (!detached) this.releaseOperation(profile.id, operation);
     }
   }
 
   /** Runs one prompt through the managed RPC session, then returns the reconciled transcript. */
-  async promptSession(profileId: string, sessionId: string, text: string): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
+  async promptSession(
+    profileId: string,
+    sessionId: string,
+    text: string,
+    selection: RemoteModelSelectionRequest = {}
+  ): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> {
     if (!await this.awaitProfileStartupRecovery(profileId, true)) {
       throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped while Jasmine was reconnecting.", { phase: "session" });
     }
@@ -492,14 +520,18 @@ export class RemoteProfileService {
     const record = this.db.getRemoteSession(profile.id, sessionId);
     if (!record) throw new PiRemoteError("session-not-found", `Remote session ${sessionId} is not in the local index.`, { phase: "session", retryable: true });
     const operation = this.reserveOperation(profile.id, sessionId, record.cwd);
+    const live = this.beginLiveTurn({ profileId: profile.id, sessionId, cwd: record.cwd, prompt: text });
     let detached = false;
     try {
+      const model = await this.ensureRemoteModel(profile, selection, operation);
       await promptManagedRemoteSession(
         this.runtime,
         profile,
         sessionId,
         text,
         {
+          model,
+          onRpcMessage: live.handle,
           onPort: async (port) => {
             operation.port = port;
             operation.daemonId = port.daemonId;
@@ -519,6 +551,7 @@ export class RemoteProfileService {
         }
       );
       operation.port = null;
+      live.settle();
       await this.refreshSessions(profile.id);
       return await this.openSession(profile.id, sessionId, true);
     } catch (error) {
@@ -533,9 +566,84 @@ export class RemoteProfileService {
         if (!detached) this.publishFailure(profile.id, error);
         return { pending: true, sessionId: operation.sessionId };
       }
+      live.fail(describeError(error).message);
       throw error;
     } finally {
+      live.close();
       if (!detached) this.releaseOperation(profile.id, operation);
+    }
+  }
+
+  /**
+   * Makes sure the host can run the model this turn asks for. The remote Pi
+   * has its own isolated profile with no providers of its own, so the provider
+   * Jasmine would use locally is pushed there -- model definition, defaults,
+   * and credential -- before the first prompt, and again only when it changes.
+   */
+  private async ensureRemoteModel(
+    profile: RemoteProfile,
+    selection: RemoteModelSelectionRequest,
+    operation: ActiveRemoteOperation
+  ): Promise<RemoteModelSelection> {
+    const provider = getRuntimeProvider(this.db, selection.providerId, selection.modelId);
+    const payload = buildRemoteModelPayload(provider, await describePiModelForProvider(provider), selection.reasoningEffort);
+    if (this.syncedModelFingerprints.get(profile.id) !== payload.fingerprint) {
+      if (operation.abortRequested) {
+        throw new PiRemoteError("remote-prompt-aborted", "The remote prompt was stopped before it started.", { phase: "session" });
+      }
+      await this.runtime.syncModelConfig(profile, payload.config);
+      await this.runtime.authImport(profile, payload.selection.providerId, payload.credential);
+      this.syncedModelFingerprints.set(profile.id, payload.fingerprint);
+    }
+    return payload.selection;
+  }
+
+  /**
+   * Projects Pi's event stream for one turn into snapshots the renderer draws
+   * while the turn runs. Snapshots coalesce on a short timer; settlement and
+   * failure flush immediately so the last state is never left on the timer.
+   */
+  private beginLiveTurn(
+    seed: { profileId: string; sessionId: string | null; cwd: string; prompt: string }
+  ): { handle(message: unknown): void; setSessionId(sessionId: string): void; settle(): void; fail(message: string): void; close(): void } {
+    const aggregator = new RemoteLiveTurnAggregator(seed);
+    let timer: NodeJS.Timeout | null = null;
+    let closed = false;
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (closed) return;
+      this.publishLiveTurn(aggregator.snapshot());
+    };
+    const schedule = () => {
+      if (closed || timer) return;
+      timer = setTimeout(flush, LIVE_TURN_PUBLISH_MS);
+    };
+    flush();
+    return {
+      handle: (message) => {
+        if (aggregator.handle(message)) schedule();
+      },
+      setSessionId: (sessionId) => {
+        if (aggregator.setSessionId(sessionId)) schedule();
+      },
+      settle: () => {
+        if (aggregator.settle()) flush();
+      },
+      fail: (message) => {
+        aggregator.fail(message);
+        flush();
+      },
+      close: () => {
+        if (timer) flush();
+        closed = true;
+      }
+    };
+  }
+
+  private publishLiveTurn(turn: RemoteLiveTurn): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("remotes:live-turn-changed", turn);
     }
   }
 

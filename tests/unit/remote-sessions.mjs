@@ -501,6 +501,160 @@ try {
   assert.deepEqual(split.map((item) => item.text), ["one\ntwo"]);
   assert.equal(split[0].id, "m-split", "a single entry keeps the record's own id");
 
+  // A tool call and its result are two records but one thing that happened:
+  // the reader shows one row carrying what the tool was asked and what came
+  // back, and a failed result is marked rather than read as ordinary output.
+  const toolRows = transcript.readTranscriptEntries([
+    JSON.stringify({ type: "message", id: "m-ask", message: { role: "user", content: "list the directory" } }),
+    JSON.stringify({ type: "message", id: "m-do", message: { role: "assistant", content: [
+      { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls -la /srv" } },
+      { type: "toolCall", id: "call-2", name: "read", arguments: { path: "/srv/app/README.md" } }
+    ] } }),
+    JSON.stringify({ type: "message", id: "m-result-1", message: { role: "toolResult", toolCallId: "call-1", toolName: "bash", isError: false, content: [{ type: "text", text: "total 0" }] } }),
+    JSON.stringify({ type: "message", id: "m-result-2", message: { role: "toolResult", toolCallId: "call-2", toolName: "read", isError: true, content: [{ type: "text", text: "ENOENT" }] } }),
+    JSON.stringify({ type: "message", id: "m-fail", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401 invalid api key" } }),
+    JSON.stringify({ type: "message", id: "m-stopped", message: { role: "assistant", content: [{ type: "text", text: "1 2 3" }], stopReason: "aborted" } })
+  ].join("\n"), Number.POSITIVE_INFINITY);
+  assert.deepEqual(toolRows.map((row) => row.kind), ["user", "tool", "tool", "notice", "assistant", "notice"],
+    "each result folds into the call it answers instead of standing as a second row");
+  assert.equal(toolRows[1].toolArgs, "ls -la /srv", "a shell call is summarized by its command");
+  assert.equal(toolRows[1].text, "total 0");
+  assert.equal(toolRows[1].isError, false);
+  assert.equal(toolRows[2].toolArgs, "/srv/app/README.md", "a file tool is summarized by its path");
+  assert.equal(toolRows[2].isError, true, "a result Pi flagged as an error stays flagged");
+  assert.deepEqual([toolRows[3].notice, toolRows[3].text, toolRows[3].isError], ["error", "401 invalid api key", true],
+    "a failed turn keeps the provider's reason visible");
+  assert.deepEqual([toolRows[5].notice, toolRows[5].text, toolRows[5].isError], ["aborted", "", false],
+    "a stopped turn says so without reading as a failure");
+  assert.equal(new Set(toolRows.map((row) => row.id)).size, toolRows.length, "every row keeps a distinct key");
+
+  // A result whose call was never seen -- history trimmed above it -- still has
+  // somewhere to go rather than vanishing.
+  const orphanRows = transcript.readTranscriptEntries(JSON.stringify({
+    type: "message", id: "m-orphan", message: { role: "toolResult", toolCallId: "call-x", toolName: "bash", content: [{ type: "text", text: "late output" }] }
+  }), Number.POSITIVE_INFINITY);
+  assert.deepEqual(orphanRows.map((row) => [row.kind, row.toolName, row.text]), [["tool", "bash", "late output"]]);
+
+  // --- live turn projection -------------------------------------------------
+  // The main process assembles what a running turn has produced from Pi's RPC
+  // deltas. Text accumulates per content block, tool execution lands on the
+  // block that announced the call, and the completed message is authoritative.
+  const liveTurn = await import("../../dist/main/main/services/remoteLiveTurn.js");
+  const aggregator = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: null, cwd: "/srv/application", prompt: "run the tests", startedAt: "2026-08-21T00:00:00.000Z" });
+  assert.equal(aggregator.snapshot().state, "running");
+  assert.equal(aggregator.handle({ type: "agent_start" }), false, "a lifecycle marker with nothing to draw is not a change");
+  assert.equal(aggregator.handle({ type: "message_start", message: { role: "assistant", content: [] } }), false);
+  assert.equal(aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } }), true);
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "check the " } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "test runner" } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Running " } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "them now." } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "toolcall_start", contentIndex: 2 } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "toolcall_end", contentIndex: 2, toolCall: { id: "call-9", name: "bash", arguments: { command: "npm test" } } } });
+  let live = aggregator.snapshot();
+  assert.deepEqual(live.entries.map((entry) => [entry.kind, entry.text, entry.toolName, entry.toolArgs, entry.toolState]), [
+    ["thinking", "check the test runner", null, null, null],
+    ["assistant", "Running them now.", null, null, null],
+    ["tool", "", "bash", "npm test", "running"]
+  ], "deltas accumulate per block in the order the model produced them");
+
+  aggregator.handle({ type: "message_end", message: { role: "assistant", stopReason: "toolUse", content: [
+    { type: "thinking", thinking: "check the test runner" },
+    { type: "text", text: "Running them now. Stand by." },
+    { type: "toolCall", id: "call-9", name: "bash", arguments: { command: "npm test" } }
+  ] } });
+  aggregator.handle({ type: "tool_execution_start", toolCallId: "call-9", toolName: "bash", args: { command: "npm test" } });
+  aggregator.handle({ type: "tool_execution_update", toolCallId: "call-9", toolName: "bash", partialResult: { content: [{ type: "text", text: "> jest\n" }] } });
+  live = aggregator.snapshot();
+  assert.equal(live.entries[1].text, "Running them now. Stand by.", "the completed message replaces the accumulated text");
+  assert.equal(live.entries.length, 3, "execution events land on the announced call rather than adding a row");
+  assert.equal(live.entries[2].text, "> jest\n");
+  aggregator.handle({ type: "tool_execution_end", toolCallId: "call-9", toolName: "bash", isError: true, result: { content: [{ type: "text", text: "1 test failed" }] } });
+  aggregator.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+  aggregator.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "One test fails." } });
+  aggregator.handle({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "provider returned 429", content: [{ type: "text", text: "One test fails." }] } });
+  assert.equal(aggregator.handle({ type: "agent_settled" }), true);
+  live = aggregator.snapshot();
+  assert.deepEqual(live.entries.map((entry) => [entry.kind, entry.text, entry.toolState]), [
+    ["thinking", "check the test runner", null],
+    ["assistant", "Running them now. Stand by.", null],
+    ["tool", "1 test failed", "error"],
+    ["assistant", "One test fails.", null]
+  ], "a second message follows the first without disturbing settled rows");
+  assert.equal(live.state, "settled");
+  assert.equal(live.error, "provider returned 429", "a failed turn carries the provider's reason");
+  assert.equal(live.entries.length, new Set(live.entries.map((entry) => entry.id)).size, "every live row keeps a distinct key");
+  assert.ok(live.version > 10, "each change bumps the version the renderer orders snapshots by");
+
+  // Pi retries transient provider errors itself: the retry's message supersedes
+  // the failure notice, and a failure Pi recorded no words for is still marked.
+  const retried = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
+  retried.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  retried.handle({ type: "message_end", message: { role: "assistant", stopReason: "error", content: [] } });
+  assert.equal(retried.snapshot().error, "", "a failure without a provider message is still a failure");
+  retried.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  retried.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "second try" } });
+  retried.handle({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "second try" }] } });
+  assert.equal(retried.snapshot().error, null, "a new attempt clears the earlier failure");
+  assert.deepEqual(retried.snapshot().entries.map((entry) => entry.text), ["second try"]);
+
+  // A block whose kind changes at the same content index leaves no stray row
+  // behind once the completed message replaces what was streamed.
+  const reindexed = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
+  reindexed.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  reindexed.handle({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hmm" } });
+  reindexed.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "answer" } });
+  reindexed.handle({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "answer" }] } });
+  assert.deepEqual(reindexed.snapshot().entries.map((entry) => [entry.kind, entry.text]), [["assistant", "answer"]]);
+
+  // An execution whose call was never announced still gets a row of its own.
+  const orphanTurn = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
+  orphanTurn.handle({ type: "tool_execution_start", toolCallId: "call-lost", toolName: "read", args: { path: "/srv/x" } });
+  assert.deepEqual(orphanTurn.snapshot().entries.map((entry) => [entry.kind, entry.toolName, entry.toolArgs, entry.toolState]), [["tool", "read", "/srv/x", "running"]]);
+
+  assert.equal(liveTurn.summarizeToolArgs("grep", { pattern: "TODO", path: "/srv/app" }), "TODO · /srv/app");
+  assert.equal(liveTurn.summarizeToolArgs("mystery", { a: 1 }), "{\"a\":1}", "an unknown tool still reads as something");
+  assert.equal(liveTurn.summarizeToolArgs("bash", { command: `echo ${"x".repeat(400)}` }).length, 200, "a summary is one bounded line");
+
+  // --- remote model configuration ------------------------------------------
+  // The remote Pi has an isolated profile with no providers of its own. What is
+  // pushed there is the provider Jasmine would run locally, in the two files
+  // pi-remote's host command writes, with the credential kept separate.
+  const modelConfig = await import("../../dist/main/main/services/remoteModelConfig.js");
+  const provider = { providerName: "deepseek", apiKey: "sk-live-secret", baseUrl: "https://api.deepseek.com/v1", modelId: "deepseek-v4-flash" };
+  const piModel = {
+    id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", api: "openai-completions", provider: "deepseek", baseUrl: provider.baseUrl,
+    reasoning: true, thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
+    input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 8192,
+    compat: { supportsStore: false, thinkingFormat: "deepseek" }
+  };
+  const payload = modelConfig.buildRemoteModelPayload(provider, piModel, "high");
+  assert.deepEqual(payload.selection, { providerId: "deepseek", modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+  assert.deepEqual(Object.keys(payload.config.models.providers), ["deepseek"]);
+  const remoteProvider = payload.config.models.providers.deepseek;
+  assert.equal(remoteProvider.baseUrl, provider.baseUrl);
+  assert.equal(remoteProvider.api, "openai-completions");
+  assert.equal("apiKey" in remoteProvider, false, "the credential travels through auth import, not models.json");
+  assert.deepEqual(remoteProvider.models.map((model) => model.id), ["deepseek-v4-flash"]);
+  assert.deepEqual(remoteProvider.models[0].thinkingLevelMap, piModel.thinkingLevelMap, "the model keeps the same thinking mapping as the local agent");
+  assert.equal("provider" in remoteProvider.models[0], false, "provider-level facts are not repeated on the model entry");
+  assert.deepEqual(payload.config.settings, { defaultProvider: "deepseek", defaultModel: "deepseek-v4-flash", defaultThinkingLevel: "high" });
+  assert.deepEqual(payload.credential, { type: "api_key", key: "sk-live-secret" });
+  assert.equal(JSON.stringify(payload.config).includes("sk-live-secret"), false, "the synced configuration never carries the key");
+
+  const withoutThinking = modelConfig.buildRemoteModelPayload(provider, { ...piModel, reasoning: false }, "high");
+  assert.deepEqual(withoutThinking.config.settings, { defaultProvider: "deepseek", defaultModel: "deepseek-v4-flash" },
+    "a thinking level is only pinned for a model that reasons");
+  assert.notEqual(withoutThinking.fingerprint, payload.fingerprint, "a changed model definition is a different payload");
+  assert.notEqual(modelConfig.buildRemoteModelPayload({ ...provider, apiKey: "sk-rotated" }, piModel, "high").fingerprint, payload.fingerprint,
+    "a rotated key must be pushed again even when the model is unchanged");
+  assert.equal(modelConfig.buildRemoteModelPayload(provider, piModel, "high").fingerprint, payload.fingerprint, "the same input is the same payload");
+  assert.equal(modelConfig.literalCredentialValue("$looks-like-env"), "$$looks-like-env", "Pi's environment-variable prefix is escaped");
+  assert.equal(modelConfig.literalCredentialValue("!looks-like-command"), "$!looks-like-command", "Pi's shell-command prefix is escaped");
+  assert.equal(modelConfig.literalCredentialValue("sk-plain"), "sk-plain");
+
   // A workspace is keyed by its directory, and the host reports its own
   // canonical spelling for every session it lists. A default cwd typed with a
   // trailing or doubled slash, or with dot segments, has to reduce to that same
@@ -578,6 +732,74 @@ try {
     ["unsubscribe"],
     ["close", { abort: false }]
   ], "the first prompt creates and settles the new session before normal non-aborting cleanup");
+
+  // With a model selected, the port is pinned to it after the session exists and
+  // before the prompt goes out, and Pi's own events reach the live projection
+  // -- minus anything replayed from before this prompt was armed.
+  const pinnedCalls = [];
+  const liveMessages = [];
+  let pinnedListeners = [];
+  await remoteRun.startManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 7,
+        subscribe(listener) {
+          pinnedListeners.push(listener);
+          // Replayed history from before this prompt, delivered on subscribe
+          // the way the real port does, must not reach the projection.
+          listener({ seq: 3, type: "rpc.message", data: { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale" } } });
+          return () => { pinnedListeners = pinnedListeners.filter((candidate) => candidate !== listener); };
+        },
+        async createSession(cwd) { pinnedCalls.push(["create", cwd]); return "pinned-session"; },
+        async setModel(provider, modelId) { pinnedCalls.push(["setModel", provider, modelId]); },
+        async setThinking(level) { pinnedCalls.push(["setThinking", level]); throw new Error("level unsupported"); },
+        async prompt(text) {
+          pinnedCalls.push(["prompt", text]);
+          queueMicrotask(() => {
+            for (const listener of pinnedListeners) listener({ seq: 8, type: "rpc.message", data: { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "fresh" } } });
+            for (const listener of pinnedListeners) listener({ seq: 9, type: "rpc.message", data: { type: "agent_settled" } });
+          });
+        },
+        async close(options) { pinnedCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "/srv/application", "pinned prompt", {
+    model: { providerId: "deepseek", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    onRpcMessage(message) { liveMessages.push(message.type === "agent_settled" ? "settled" : message.assistantMessageEvent?.delta); }
+  });
+  assert.deepEqual(pinnedCalls, [
+    ["create", "/srv/application"],
+    ["setModel", "deepseek", "deepseek-v4-flash"],
+    ["setThinking", "high"],
+    ["prompt", "pinned prompt"],
+    ["close", { abort: false }]
+  ], "the model is pinned between session creation and the prompt; a refused thinking level does not block the turn");
+  assert.deepEqual(liveMessages, ["fresh", "settled"], "only events after the prompt was armed reach the live projection");
+  assert.equal(pinnedListeners.length, 0, "the live subscription is released with the settlement waiter");
+
+  // A model Pi refuses is a definite rejection: nothing was sent, so the draft
+  // can come back and the port closes without aborting anything.
+  const refusedCalls = [];
+  await assert.rejects(remoteRun.promptManagedRemoteSession({
+    async openSession() {
+      return {
+        eventCursor: 0,
+        subscribe() { return () => {}; },
+        async setModel() {
+          refusedCalls.push(["setModel"]);
+          const error = new Error("Model not found: deepseek/gone");
+          error.code = "pi-rpc-failed";
+          throw error;
+        },
+        async prompt() { refusedCalls.push(["prompt"]); },
+        async detach() { refusedCalls.push(["detach"]); },
+        async close(options) { refusedCalls.push(["close", options]); }
+      };
+    }
+  }, {}, "refused-session", "never sent", {
+    model: { providerId: "deepseek", modelId: "gone", thinkingLevel: null }
+  }), (error) => remoteRun.isDefinitePromptRejection(error));
+  assert.deepEqual(refusedCalls, [["setModel"], ["close", { abort: false }]], "a refused model never reaches the prompt");
 
   const promptCalls = [];
   let runListener;
@@ -792,6 +1014,31 @@ try {
   assert.match(remoteProfileServiceSource, /cancelledStartupRecovery/u,
     "removing a profile must cancel its persistent background recovery");
 
+  // The remote Pi has no model of its own. Both submission paths must give the
+  // host the selected model before opening the port, and pin the port to it.
+  const ensureModelBody = /private async ensureRemoteModel[\s\S]*?(?=\n  \/\*\*)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  assert.ok(ensureModelBody, "the remote model sync must remain visible to the regression guard");
+  assert.match(ensureModelBody, /getRuntimeProvider\(this\.db, selection\.providerId, selection\.modelId\)/u,
+    "the remote model is the one Jasmine would run a local turn with");
+  assert.match(ensureModelBody, /syncModelConfig\(profile, payload\.config\)[\s\S]*authImport\(profile, payload\.selection\.providerId, payload\.credential\)/u,
+    "models.json and the credential are pushed through pi-remote's own host commands");
+  assert.match(ensureModelBody, /syncedModelFingerprints\.get\(profile\.id\) !== payload\.fingerprint/u,
+    "an unchanged model must not be uploaded before every prompt");
+  const startSessionBody = /async startSession\([\s\S]*?(?=\n  \/\*\* Runs one prompt)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  const promptSessionBody = /async promptSession\([\s\S]*?(?=\s+\/\*\*\s+\* Makes sure the host)/u.exec(remoteProfileServiceSource)?.[0] ?? "";
+  for (const [name, body] of [["startSession", startSessionBody], ["promptSession", promptSessionBody]]) {
+    assert.ok(body, `${name} implementation must remain visible to the regression guard`);
+    assert.match(body, /const model = await this\.ensureRemoteModel\(profile, selection, operation\)/u,
+      `${name} must give the host the selected model before opening the port`);
+    assert.match(body, /\{\s+model,\s+onRpcMessage: live\.handle,/u,
+      `${name} must pin the port to the model and feed the live projection`);
+    assert.match(body, /live\.settle\(\)[\s\S]*refreshSessions\(profile\.id\)/u,
+      `${name} must flush the settled live turn before reconciling the session listing`);
+    assert.match(body, /finally \{\s*live\.close\(\)/u, `${name} must close the live turn however it ends`);
+  }
+  assert.match(remoteProfileServiceSource, /webContents\.send\("remotes:live-turn-changed", turn\)/u,
+    "live snapshots reach every renderer window");
+
   const appSource = await readFile(path.join(process.cwd(), "src/renderer/App.tsx"), "utf8");
   const openWorkspaceHandler = /onOpenRemoteWorkspace[\s\S]*?(?=\n    onOpenRemoteSession)/u.exec(appSource)?.[0] ?? "";
   assert.ok(openWorkspaceHandler, "the remote workspace route handler must remain covered");
@@ -812,6 +1059,17 @@ try {
     sessionId: "session-a",
     text: "  inspect the workspace  "
   }), { profileId: PROFILE, sessionId: "session-a", text: "inspect the workspace" });
+  // The model a turn should run with travels with the prompt, in the same shape
+  // the chat composer sends, and an unknown effort is refused rather than passed on.
+  assert.deepEqual(schemas.remoteSessionStartSchema.parse({
+    profileId: PROFILE,
+    cwd: "/srv/application",
+    text: "inspect",
+    providerId: "deepseek",
+    modelId: "deepseek-v4-flash",
+    reasoningEffort: "high"
+  }), { profileId: PROFILE, cwd: "/srv/application", text: "inspect", providerId: "deepseek", modelId: "deepseek-v4-flash", reasoningEffort: "high" });
+  assert.throws(() => schemas.remoteSessionPromptSchema.parse({ profileId: PROFILE, sessionId: "session-a", text: "inspect", reasoningEffort: "ultra" }));
   assert.throws(() => schemas.remoteProfileCreateSchema.parse({ name: "ops-box", sshHost: "ops-box", networkMode: "sideways" }));
   const parsed = schemas.remoteProfileCreateSchema.parse({
     name: "ops-box",

@@ -50,8 +50,20 @@ declare global {
 // unchanged content. The markdown AST + fence scan are the single most expensive
 // per-render cost on the chat path, so they are recomputed only when `content`
 // (or the copy handler identity) actually changes.
-export const MarkdownMessage = memo(function MarkdownMessage(props: { content: string; onCopyCode(code: string): void; streaming?: boolean }) {
-  const { content, onCopyCode, streaming = false } = props;
+/**
+ * Where an absolute path in the Markdown lives. `local` paths become file chips
+ * that open on this machine; `remote` paths belong to another host, so they are
+ * shown verbatim and never looked up or opened here.
+ */
+export type MarkdownFileReferenceMode = "local" | "remote";
+
+export const MarkdownMessage = memo(function MarkdownMessage(props: {
+  content: string;
+  onCopyCode(code: string): void;
+  streaming?: boolean;
+  fileReferences?: MarkdownFileReferenceMode;
+}) {
+  const { content, onCopyCode, streaming = false, fileReferences = "local" } = props;
   const streamCacheRef = useRef<StreamingChunkCache>(emptyStreamingChunkCache());
   const chunks = useMemo(() => {
     if (!streaming) {
@@ -79,7 +91,7 @@ export const MarkdownMessage = memo(function MarkdownMessage(props: { content: s
           // Frozen chunks resolve their file references straight away; only the
           // chunk still being written holds off until its paths are complete.
           <ReferenceResolution key={chunk.start} settled={!active}>
-            <MarkdownRenderSegment content={chunk.content} active={active} onCopyCode={onCopyCode} />
+            <MarkdownRenderSegment content={chunk.content} active={active} onCopyCode={onCopyCode} fileReferences={fileReferences} />
           </ReferenceResolution>
         );
       })}
@@ -91,6 +103,7 @@ const MarkdownRenderSegment = memo(function MarkdownRenderSegment(props: {
   content: string;
   active: boolean;
   onCopyCode(code: string): void;
+  fileReferences: MarkdownFileReferenceMode;
 }) {
   const fenceAnchorRef = useRef<StreamingFenceAnchor | null>(null);
   const secondFenceAnchorRef = useRef<StreamingFenceAnchor | null>(null);
@@ -100,7 +113,11 @@ const MarkdownRenderSegment = memo(function MarkdownRenderSegment(props: {
   if (!streamingFence && props.active) streamingFence = findOpenStreamingFence(props.content);
   fenceAnchorRef.current = streamingFence?.anchor ?? null;
 
-  if (!streamingFence) return <MarkdownChunk content={props.content} onCopyCode={props.onCopyCode} />;
+  const chunk = (key: string, content: string) => (
+    <MarkdownChunk key={key} content={content} onCopyCode={props.onCopyCode} fileReferences={props.fileReferences} />
+  );
+
+  if (!streamingFence) return chunk("whole", props.content);
 
   let suffixFence = secondFenceAnchorRef.current
     ? readAnchoredStreamingFence(streamingFence.suffix, secondFenceAnchorRef.current)
@@ -110,9 +127,7 @@ const MarkdownRenderSegment = memo(function MarkdownRenderSegment(props: {
 
   return (
     <>
-      {streamingFence.prefix && (
-        <MarkdownChunk key="prefix" content={streamingFence.prefix} onCopyCode={props.onCopyCode} />
-      )}
+      {streamingFence.prefix && chunk("prefix", streamingFence.prefix)}
       <ShikiCodeBlock
         key="fence"
         code={streamingFence.code}
@@ -124,7 +139,7 @@ const MarkdownRenderSegment = memo(function MarkdownRenderSegment(props: {
       />
       {suffixFence ? (
         <div key="suffix-fence" className="streaming-fence-suffix">
-          {suffixFence.prefix && <MarkdownChunk content={suffixFence.prefix} onCopyCode={props.onCopyCode} />}
+          {suffixFence.prefix && chunk("suffix-prefix", suffixFence.prefix)}
           <ShikiCodeBlock
             code={suffixFence.code}
             language={suffixFence.language}
@@ -133,20 +148,22 @@ const MarkdownRenderSegment = memo(function MarkdownRenderSegment(props: {
             streaming={props.active && !suffixFence.closed}
             onCopy={props.onCopyCode}
           />
-          {suffixFence.suffix && <MarkdownChunk content={suffixFence.suffix} onCopyCode={props.onCopyCode} />}
+          {suffixFence.suffix && chunk("suffix-suffix", suffixFence.suffix)}
         </div>
-      ) : streamingFence.suffix && (
-        <MarkdownChunk key="suffix" content={streamingFence.suffix} onCopyCode={props.onCopyCode} />
-      )}
+      ) : streamingFence.suffix && chunk("suffix", streamingFence.suffix)}
     </>
   );
 });
 
-const MarkdownChunk = memo(function MarkdownChunk(props: { content: string; onCopyCode(code: string): void }) {
-  const { content, onCopyCode } = props;
+const MarkdownChunk = memo(function MarkdownChunk(props: {
+  content: string;
+  onCopyCode(code: string): void;
+  fileReferences: MarkdownFileReferenceMode;
+}) {
+  const { content, onCopyCode, fileReferences } = props;
   const components = useMemo(
-    () => markdownComponents(onCopyCode, collectCodeBlockInfos(content)),
-    [content, onCopyCode]
+    () => markdownComponents(onCopyCode, collectCodeBlockInfos(content), fileReferences),
+    [content, onCopyCode, fileReferences]
   );
   recordMarkdownRender(content.length);
   return (
@@ -409,8 +426,17 @@ function recordMarkdownRender(length: number): void {
   window.__JASMINE_MARKDOWN_RENDER_LENGTHS__ = lengths;
 }
 
-function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: CodeBlockInfo[]): Components {
+function markdownComponents(
+  onCopyCode: (code: string) => void,
+  codeBlockInfos: CodeBlockInfo[],
+  fileReferences: MarkdownFileReferenceMode
+): Components {
   let preIndex = 0;
+  // A path on another machine is information, not an affordance: opening it
+  // here would look up a file that does not exist on this disk.
+  const remotePath = (path: string, line?: number) => (
+    <code className="markdown-remote-path">{line ? `${path}:${line}` : path}</code>
+  );
   return {
     h1({ children }) {
       return <strong className="markdown-heading">{children}</strong>;
@@ -437,6 +463,7 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
       // as a link, so it stays a link -- the author asked to reference the file,
       // not to display it.
       if (target.kind === "local-file" || target.kind === "local-image") {
+        if (fileReferences === "remote") return remotePath(target.path, target.line);
         return (
           <MessageFileReference
             path={target.path}
@@ -450,6 +477,9 @@ function markdownComponents(onCopyCode: (code: string) => void, codeBlockInfos: 
     },
     img({ src, alt }) {
       const target = classifyMessageLink(typeof src === "string" ? src : "");
+      if (fileReferences === "remote" && (target.kind === "local-image" || target.kind === "local-file")) {
+        return remotePath(target.path);
+      }
       if (target.kind === "local-image") return <MessageImage path={target.path} alt={alt ?? ""} />;
       if (target.kind === "local-file") return <MessageFileReference path={target.path} label={alt || undefined} />;
       // Remote images are not fetched: an answer must not be able to make the
