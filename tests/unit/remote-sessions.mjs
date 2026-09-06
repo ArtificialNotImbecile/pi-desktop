@@ -588,6 +588,27 @@ try {
   assert.equal(live.entries.length, new Set(live.entries.map((entry) => entry.id)).size, "every live row keeps a distinct key");
   assert.ok(live.version > 10, "each change bumps the version the renderer orders snapshots by");
 
+  // Pi retries transient provider errors itself: the retry's message supersedes
+  // the failure notice, and a failure Pi recorded no words for is still marked.
+  const retried = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
+  retried.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  retried.handle({ type: "message_end", message: { role: "assistant", stopReason: "error", content: [] } });
+  assert.equal(retried.snapshot().error, "", "a failure without a provider message is still a failure");
+  retried.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  retried.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "second try" } });
+  retried.handle({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "second try" }] } });
+  assert.equal(retried.snapshot().error, null, "a new attempt clears the earlier failure");
+  assert.deepEqual(retried.snapshot().entries.map((entry) => entry.text), ["second try"]);
+
+  // A block whose kind changes at the same content index leaves no stray row
+  // behind once the completed message replaces what was streamed.
+  const reindexed = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
+  reindexed.handle({ type: "message_start", message: { role: "assistant", content: [] } });
+  reindexed.handle({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hmm" } });
+  reindexed.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "answer" } });
+  reindexed.handle({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "answer" }] } });
+  assert.deepEqual(reindexed.snapshot().entries.map((entry) => [entry.kind, entry.text]), [["assistant", "answer"]]);
+
   // An execution whose call was never announced still gets a row of its own.
   const orphanTurn = new liveTurn.RemoteLiveTurnAggregator({ profileId: PROFILE, sessionId: "s", cwd: "/srv", prompt: "p" });
   orphanTurn.handle({ type: "tool_execution_start", toolCallId: "call-lost", toolName: "read", args: { path: "/srv/x" } });

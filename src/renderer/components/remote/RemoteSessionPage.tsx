@@ -264,7 +264,8 @@ export function RemoteSessionPage(props: RemoteSessionPageProps) {
   const composerVisible = drafting || activeSessionId && transcript?.state !== "gone";
   const canSend = Boolean(draft.trim());
   const liveEntries = showLive && liveTurn ? liveTurn.entries : [];
-  const liveError = showLive && liveTurn?.error ? liveTurn.error : null;
+  // An empty string is still a failure -- Pi recorded no message for it.
+  const liveError = showLive && liveTurn ? liveTurn.error : null;
 
   return (
     <div className="remote-page">
@@ -499,7 +500,8 @@ function PendingPromptEntry(props: { text: string }) {
 /** The running turn's blocks, drawn with the same grammar as settled history. */
 function LiveEntries(props: { entries: RemoteLiveTurn["entries"]; error: string | null; running: boolean; language: AppLanguage }) {
   const { t } = useI18n();
-  if (props.entries.length === 0 && !props.error) return null;
+  const failed = props.error !== null;
+  if (props.entries.length === 0 && !failed && !props.running) return null;
   return (
     <div className="remote-live" data-remote-live="true">
       {props.entries.map((entry) => (
@@ -517,10 +519,10 @@ function LiveEntries(props: { entries: RemoteLiveTurn["entries"]; error: string 
           language={props.language}
         />
       ))}
-      {props.error ? (
-        <RemoteEntryView kind="notice" text={props.error} toolName={null} toolArgs={null} isError notice="error" timestamp={null} appended={false} language={props.language} />
+      {failed ? (
+        <RemoteEntryView kind="notice" text={props.error ?? ""} toolName={null} toolArgs={null} isError notice="error" timestamp={null} appended={false} language={props.language} />
       ) : null}
-      {props.running && props.entries.length === 0 && !props.error ? (
+      {props.running && props.entries.length === 0 && !failed ? (
         <p className="remote-transcript-status"><LoadingDots /> {t("remote.session.waitingForModel")}</p>
       ) : null}
     </div>

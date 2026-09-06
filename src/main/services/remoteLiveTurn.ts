@@ -17,6 +17,8 @@ export class RemoteLiveTurnAggregator {
   private readonly turn: RemoteLiveTurn;
   /** Entries of the assistant message currently streaming, by content index. */
   private currentBlocks = new Map<number, RemoteLiveEntry>();
+  /** Every entry the current message created, so its authoritative end can replace them all. */
+  private currentMessageEntries = new Set<RemoteLiveEntry>();
   private readonly toolEntriesByCallId = new Map<string, RemoteLiveEntry>();
   private messageCount = 0;
   private sequence = 0;
@@ -89,6 +91,14 @@ export class RemoteLiveTurnAggregator {
     if (body?.role !== "assistant") return false;
     this.messageCount += 1;
     this.currentBlocks = new Map();
+    this.currentMessageEntries = new Set();
+    // A new attempt supersedes an earlier failure: Pi retries transient
+    // provider errors itself, and the retry's answer must not sit under a
+    // notice about the attempt it replaced.
+    if (this.turn.error !== null) {
+      this.turn.error = null;
+      return this.bump();
+    }
     return false;
   }
 
@@ -122,7 +132,7 @@ export class RemoteLiveTurnAggregator {
       case "toolcall_end": {
         const call = record(event.toolCall);
         const entry = this.block(index, "tool");
-        if (call) this.describeCall(entry, call);
+        if (call) this.currentBlocks.set(index, this.describeCall(entry, call));
         return this.bump();
       }
       default:
@@ -146,21 +156,20 @@ export class RemoteLiveTurnAggregator {
       } else if (block.type === "thinking" && typeof block.thinking === "string") {
         rebuilt.push(this.reuse(index, "thinking", clip(block.thinking)));
       } else if (block.type === "toolCall") {
-        const entry = this.reuse(index, "tool", null);
-        this.describeCall(entry, block);
-        rebuilt.push(entry);
+        rebuilt.push(this.describeCall(this.reuse(index, "tool", null), block));
       }
     });
-    const previous = new Set(this.currentBlocks.values());
+    const previous = this.currentMessageEntries;
     this.turn.entries = [
       ...this.turn.entries.filter((entry) => !previous.has(entry)),
       ...rebuilt.filter((entry) => entry.kind === "tool" || entry.text.length > 0)
     ];
     this.currentBlocks = new Map();
+    this.currentMessageEntries = new Set();
+    // The provider's own words when Pi recorded any; an empty string still
+    // marks the failure, and the renderer owns the wording of the notice.
     if (body.stopReason === "error") {
-      this.turn.error = typeof body.errorMessage === "string" && body.errorMessage.trim()
-        ? body.errorMessage.trim()
-        : "The model returned an error.";
+      this.turn.error = typeof body.errorMessage === "string" ? body.errorMessage.trim() : "";
     }
     return this.bump();
   }
@@ -215,38 +224,35 @@ export class RemoteLiveTurnAggregator {
     return entry;
   }
 
-  private describeCall(entry: RemoteLiveEntry, call: Raw): void {
+  /**
+   * Names a tool block from its completed call and returns the entry that row
+   * should be: normally the block itself, but when the execution events already
+   * created a row for that call id, the two fold into that one.
+   */
+  private describeCall(entry: RemoteLiveEntry, call: Raw): RemoteLiveEntry {
     if (typeof call.name === "string") entry.toolName = call.name;
     entry.toolArgs = summarizeToolArgs(entry.toolName, call.arguments) ?? entry.toolArgs;
-    if (typeof call.id === "string") {
-      const known = this.toolEntriesByCallId.get(call.id);
-      if (known && known !== entry) {
-        // The execution started before the streamed call finished describing
-        // itself; fold the two rows into the one the execution events target.
-        known.toolName = entry.toolName;
-        known.toolArgs = entry.toolArgs ?? known.toolArgs;
-        this.turn.entries = this.turn.entries.filter((candidate) => candidate !== entry);
-        for (const [index, block] of this.currentBlocks) {
-          if (block === entry) this.currentBlocks.set(index, known);
-        }
-        return;
+    if (typeof call.id !== "string") return entry;
+    const known = this.toolEntriesByCallId.get(call.id);
+    if (known && known !== entry) {
+      known.toolName = entry.toolName;
+      known.toolArgs = entry.toolArgs ?? known.toolArgs;
+      this.turn.entries = this.turn.entries.filter((candidate) => candidate !== entry);
+      this.currentMessageEntries.delete(entry);
+      for (const [index, block] of this.currentBlocks) {
+        if (block === entry) this.currentBlocks.set(index, known);
       }
-      this.toolEntriesByCallId.set(call.id, entry);
-      entry.id = `tool:${call.id}`;
+      return known;
     }
+    this.toolEntriesByCallId.set(call.id, entry);
+    entry.id = `tool:${call.id}`;
+    return entry;
   }
 
   private block(index: number, kind: RemoteLiveEntry["kind"]): RemoteLiveEntry {
     const existing = this.currentBlocks.get(index);
     if (existing && existing.kind === kind) return existing;
-    const entry: RemoteLiveEntry = {
-      id: `m${this.messageCount}:${index}:${++this.sequence}`,
-      kind,
-      text: "",
-      toolName: null,
-      toolArgs: null,
-      toolState: kind === "tool" ? "running" : null
-    };
+    const entry = this.newEntry(index, kind, "");
     this.currentBlocks.set(index, entry);
     this.turn.entries.push(entry);
     return entry;
@@ -258,14 +264,20 @@ export class RemoteLiveTurnAggregator {
       if (text !== null) existing.text = text;
       return existing;
     }
-    return {
+    return this.newEntry(index, kind, text ?? "");
+  }
+
+  private newEntry(index: number, kind: RemoteLiveEntry["kind"], text: string): RemoteLiveEntry {
+    const entry: RemoteLiveEntry = {
       id: `m${this.messageCount}:${index}:${++this.sequence}`,
       kind,
-      text: text ?? "",
+      text,
       toolName: null,
       toolArgs: null,
       toolState: kind === "tool" ? "running" : null
     };
+    this.currentMessageEntries.add(entry);
+    return entry;
   }
 
   private bump(): boolean {
