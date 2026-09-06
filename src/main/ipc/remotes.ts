@@ -107,13 +107,13 @@ export function registerRemoteIpc(context: IpcContext): void {
   });
 
   ipcMain.handle("remotes:startSession", (_event, request: RemoteSessionStartRequest): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending> => {
-    const parsed = remoteSessionStartSchema.parse(request);
-    return service().startSession(parsed.profileId, parsed.cwd, parsed.text);
+    const { profileId, cwd, text, ...selection } = remoteSessionStartSchema.parse(request);
+    return service().startSession(profileId, cwd, text, selection);
   });
 
   ipcMain.handle("remotes:promptSession", (_event, request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending> => {
-    const parsed = remoteSessionPromptSchema.parse(request);
-    return service().promptSession(parsed.profileId, parsed.sessionId, parsed.text);
+    const { profileId, sessionId, text, ...selection } = remoteSessionPromptSchema.parse(request);
+    return service().promptSession(profileId, sessionId, text, selection);
   });
 
   ipcMain.handle("remotes:abortSession", (_event, request: RemoteSessionAbortRequest): Promise<boolean> => {

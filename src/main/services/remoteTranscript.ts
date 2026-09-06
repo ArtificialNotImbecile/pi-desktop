@@ -1,6 +1,7 @@
 import { appendFile, copyFile, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { RemoteTranscriptEntry, RemoteTranscriptEntryKind } from "../../shared/ipc.js";
+import { summarizeToolArgs } from "./remoteLiveTurn.js";
 
 /**
  * Deciding what a session open has to download. Kept apart from the service so
@@ -220,14 +221,45 @@ export async function alignToRecordBoundary(filePath: string): Promise<number> {
 export function readTranscriptEntries(raw: string, appendedFromByte: number): RemoteTranscriptEntry[] {
   if (!raw) return [];
   const entries: RemoteTranscriptEntry[] = [];
+  // A tool call and its result are two records, but one thing happened. The
+  // result folds into the call that made it, so the reader shows one row per
+  // tool use rather than a bare name followed later by an unattributed dump.
+  const openCalls = new Map<string, RemoteTranscriptEntry>();
   let byteCursor = 0;
   for (const line of raw.split("\n")) {
     const lineStart = byteCursor;
     byteCursor += Buffer.byteLength(line, "utf8") + 1;
     if (!line.trim()) continue;
-    entries.push(...parseTranscriptLine(line, lineStart >= appendedFromByte));
+    for (const parsed of parseTranscriptRecord(line, lineStart >= appendedFromByte)) {
+      if (parsed.result) {
+        const call = openCalls.get(parsed.result.toolCallId);
+        if (call) {
+          call.text = parsed.entry.text;
+          call.isError = parsed.entry.isError;
+          call.appended = call.appended || parsed.entry.appended;
+          openCalls.delete(parsed.result.toolCallId);
+          continue;
+        }
+      }
+      if (parsed.callId) openCalls.set(parsed.callId, parsed.entry);
+      entries.push(parsed.entry);
+    }
   }
   return entries;
+}
+
+/** One rendered entry plus the tool-call linkage the reader uses to fold results into calls. */
+export type ParsedTranscriptEntry = {
+  entry: RemoteTranscriptEntry;
+  /** Set on a tool call entry: the id a later result will refer to. */
+  callId: string | null;
+  /** Set on a tool result entry: the call it answers. */
+  result: { toolCallId: string } | null;
+};
+
+/** The entries one JSONL record renders as, without the tool-call linkage. */
+export function parseTranscriptLine(line: string, appended: boolean): RemoteTranscriptEntry[] {
+  return parseTranscriptRecord(line, appended).map((parsed) => parsed.entry);
 }
 
 /**
@@ -237,9 +269,10 @@ export function readTranscriptEntries(raw: string, appendedFromByte: number): Re
  * One assistant message can carry several kinds of content at once. A reasoning
  * model's turn is typically a thinking block followed by text or a tool call, so
  * the record becomes both entries: choosing one kind per message renders remote
- * history as if the model never reasoned.
+ * history as if the model never reasoned. A turn the provider failed gets a
+ * notice carrying Pi's error, since an empty assistant record says nothing.
  */
-export function parseTranscriptLine(line: string, appended: boolean): RemoteTranscriptEntry[] {
+export function parseTranscriptRecord(line: string, appended: boolean): ParsedTranscriptEntry[] {
   let value: Record<string, unknown>;
   try {
     const parsed = JSON.parse(line) as unknown;
@@ -251,16 +284,20 @@ export function parseTranscriptLine(line: string, appended: boolean): RemoteTran
   const id = typeof value.id === "string" ? value.id : null;
   const timestamp = typeof value.timestamp === "string" ? value.timestamp : null;
   if (value.type === "compaction") {
-    return present(entry(id, "compaction", timestamp, typeof value.summary === "string" ? value.summary : "", null, appended));
+    return plain(entry(id, "compaction", timestamp, typeof value.summary === "string" ? value.summary : "", null, appended));
   }
   if (value.type !== "message") return [];
   const message = value.message && typeof value.message === "object" ? value.message as Record<string, unknown> : null;
   if (!message) return [];
   const role = typeof message.role === "string" ? message.role : "";
   const parts = contentParts(message.content);
-  if (role === "user") return present(entry(id, "user", timestamp, parts.text, null, appended));
+  if (role === "user") return plain(entry(id, "user", timestamp, parts.text, null, appended));
   if (role === "toolResult" || role === "tool") {
-    return present(entry(id, "tool", timestamp, parts.text, typeof message.toolName === "string" ? message.toolName : null, appended));
+    const result = entry(id, "tool", timestamp, parts.text, typeof message.toolName === "string" ? message.toolName : null, appended);
+    if (!result) return [];
+    result.isError = message.isError === true;
+    const toolCallId = typeof message.toolCallId === "string" ? message.toolCallId : null;
+    return [{ entry: result, callId: null, result: toolCallId ? { toolCallId } : null }];
   }
   if (role !== "assistant") return [];
   // Every block in the order the model produced it: the thinking that led to the
@@ -268,18 +305,44 @@ export function parseTranscriptLine(line: string, appended: boolean): RemoteTran
   // blocks in one record, so collapsing to a single tool name would render a
   // parallel batch as one call.
   const blocks = assistantBlocks(message.content);
-  return present(...blocks.map((block, index) => entry(
-    id && blocks.length > 1 ? `${id}:${index}` : id,
-    block.kind,
-    timestamp,
-    block.text,
-    block.toolName,
-    appended
-  )));
+  const parsed: ParsedTranscriptEntry[] = [];
+  blocks.forEach((block, index) => {
+    const made = entry(
+      id && blocks.length > 1 ? `${id}:${index}` : id,
+      block.kind,
+      timestamp,
+      block.text,
+      block.toolName,
+      appended,
+      block.toolArgs
+    );
+    if (made) parsed.push({ entry: made, callId: block.toolCallId, result: null });
+  });
+  // A turn that ended early says so in its own row. The provider's message
+  // rides along for a failure; the renderer owns the wording of the notice.
+  if (message.stopReason === "error" || message.stopReason === "aborted") {
+    const detail = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+    parsed.push({
+      entry: {
+        id: id ? `${id}:${message.stopReason}` : `notice-${timestamp ?? "0"}-${parsed.length}`,
+        kind: "notice",
+        timestamp,
+        text: detail,
+        toolName: null,
+        toolArgs: null,
+        isError: message.stopReason === "error",
+        notice: message.stopReason,
+        appended
+      },
+      callId: null,
+      result: null
+    });
+  }
+  return parsed;
 }
 
-function present(...entries: Array<RemoteTranscriptEntry | null>): RemoteTranscriptEntry[] {
-  return entries.filter((value): value is RemoteTranscriptEntry => value !== null);
+function plain(made: RemoteTranscriptEntry | null): ParsedTranscriptEntry[] {
+  return made ? [{ entry: made, callId: null, result: null }] : [];
 }
 
 function entry(
@@ -288,11 +351,22 @@ function entry(
   timestamp: string | null,
   text: string,
   toolName: string | null,
-  appended: boolean
+  appended: boolean,
+  toolArgs: string | null = null
 ): RemoteTranscriptEntry | null {
   const trimmed = text.trim();
   if (!trimmed && !toolName) return null;
-  return { id: id ?? `${kind}-${timestamp ?? "0"}-${trimmed.slice(0, 16)}`, kind, timestamp, text: trimmed, toolName, appended };
+  return {
+    id: id ?? `${kind}-${timestamp ?? "0"}-${trimmed.slice(0, 16)}`,
+    kind,
+    timestamp,
+    text: trimmed,
+    toolName,
+    toolArgs,
+    isError: false,
+    notice: null,
+    appended
+  };
 }
 
 function contentParts(content: unknown): { text: string } {
@@ -307,7 +381,13 @@ function contentParts(content: unknown): { text: string } {
   return { text: text.join("\n").trim() };
 }
 
-type AssistantBlock = { kind: RemoteTranscriptEntryKind; text: string; toolName: string | null };
+type AssistantBlock = {
+  kind: RemoteTranscriptEntryKind;
+  text: string;
+  toolName: string | null;
+  toolArgs: string | null;
+  toolCallId: string | null;
+};
 
 /**
  * The blocks of one assistant message, in order. Runs of the same kind are
@@ -315,13 +395,13 @@ type AssistantBlock = { kind: RemoteTranscriptEntryKind; text: string; toolName:
  * different kind -- thinking, or a tool call -- always starts a new one.
  */
 function assistantBlocks(content: unknown): AssistantBlock[] {
-  if (typeof content === "string") return [{ kind: "assistant", text: content, toolName: null }];
+  if (typeof content === "string") return [{ kind: "assistant", text: content, toolName: null, toolArgs: null, toolCallId: null }];
   if (!Array.isArray(content)) return [];
   const blocks: AssistantBlock[] = [];
   const append = (kind: RemoteTranscriptEntryKind, text: string) => {
     const last = blocks[blocks.length - 1];
     if (last && last.kind === kind && !last.toolName) last.text = `${last.text}\n${text}`;
-    else blocks.push({ kind, text, toolName: null });
+    else blocks.push({ kind, text, toolName: null, toolArgs: null, toolCallId: null });
   };
   for (const part of content) {
     if (!part || typeof part !== "object") continue;
@@ -329,7 +409,13 @@ function assistantBlocks(content: unknown): AssistantBlock[] {
     if (candidate.type === "text" && typeof candidate.text === "string") append("assistant", candidate.text);
     else if (candidate.type === "thinking" && typeof candidate.thinking === "string") append("thinking", candidate.thinking);
     else if (candidate.type === "toolCall" && typeof candidate.name === "string") {
-      blocks.push({ kind: "tool", text: "", toolName: candidate.name });
+      blocks.push({
+        kind: "tool",
+        text: "",
+        toolName: candidate.name,
+        toolArgs: summarizeToolArgs(candidate.name, candidate.arguments),
+        toolCallId: typeof candidate.id === "string" ? candidate.id : null
+      });
     }
   }
   return blocks;

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RemoteDoctorReport,
+  RemoteLiveTurn,
+  RemoteModelSelectionRequest,
   RemoteProfileCreateRequest,
   RemoteProfileStatus,
   RemoteProfileSummary,
@@ -38,6 +40,11 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   const [sessions, setSessions] = useState<SessionsByProfile>({});
   const [statuses, setStatuses] = useState<Record<string, RemoteProfileStatus>>({});
   const [recoveredCompletions, setRecoveredCompletions] = useState<Record<string, RecoveredRemoteCompletion>>({});
+  const [liveTurns, setLiveTurns] = useState<Record<string, RemoteLiveTurn>>({});
+  // A prompt that failed before the host accepted it. Kept per profile until
+  // the next attempt so the page can show it in place; a toast alone is gone
+  // before the user has read why the draft came back.
+  const [submissionErrors, setSubmissionErrors] = useState<Record<string, string>>({});
   const [refreshingProfileIds, setRefreshingProfileIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   // Refresh is time-boxed per profile so expanding the same tree repeatedly does
@@ -252,14 +259,25 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     }
   }, [loadSessions]);
 
+  const clearSubmissionError = useCallback((profileId: string) => {
+    setSubmissionErrors((current) => {
+      if (!(profileId in current)) return current;
+      const next = { ...current };
+      delete next[profileId];
+      return next;
+    });
+  }, []);
+
   const startSession = useCallback(async (
     profileId: string,
     cwd: string,
-    text: string
+    text: string,
+    selection: RemoteModelSelectionRequest = {}
   ): Promise<RemoteSessionStartResult | RemoteSessionSubmissionPending | null> => {
     const tracksCompletion = beginSubmissionTracking(profileId);
+    clearSubmissionError(profileId);
     try {
-      const result = await getBridge().startRemoteSession({ profileId, cwd, text });
+      const result = await getBridge().startRemoteSession({ profileId, cwd, text, ...selection });
       if ("pending" in result) {
         recordSubmissionResult(profileId, true, tracksCompletion);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
@@ -282,10 +300,24 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       return result;
     } catch (caught) {
       if (tracksCompletion) submissionStateRef.current.set(profileId, "failed");
-      onErrorRef.current(errorMessage(caught, "Failed to create the remote session."));
+      const message = errorMessage(caught, "Failed to create the remote session.");
+      setSubmissionErrors((current) => ({ ...current, [profileId]: message }));
+      onErrorRef.current(message);
       return null;
     }
-  }, [refreshSessions]);
+  }, [refreshSessions, clearSubmissionError]);
+
+  useEffect(() => {
+    return getBridge().onRemoteLiveTurnChanged((turn) => {
+      setLiveTurns((current) => {
+        const previous = current[turn.profileId];
+        // Snapshots of one turn are versioned; a later turn replaces any earlier
+        // one outright, since a profile runs at most one operation at a time.
+        if (previous && previous.startedAt === turn.startedAt && previous.version >= turn.version) return current;
+        return { ...current, [turn.profileId]: turn };
+      });
+    });
+  }, []);
 
   useEffect(() => {
     void loadProfiles();
@@ -354,11 +386,13 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
   const promptSession = useCallback(async (
     profileId: string,
     sessionId: string,
-    text: string
+    text: string,
+    selection: RemoteModelSelectionRequest = {}
   ): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending | null> => {
     const tracksCompletion = beginSubmissionTracking(profileId);
+    clearSubmissionError(profileId);
     try {
-      const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text });
+      const transcript = await getBridge().promptRemoteSession({ profileId, sessionId, text, ...selection });
       if ("pending" in transcript) {
         recordSubmissionResult(profileId, true, tracksCompletion);
         onToastRef.current("Remote prompt accepted; waiting to synchronize the session");
@@ -379,10 +413,12 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
       return transcript;
     } catch (caught) {
       if (tracksCompletion) submissionStateRef.current.set(profileId, "failed");
-      onErrorRef.current(errorMessage(caught, "The remote prompt failed."));
+      const message = errorMessage(caught, "The remote prompt failed.");
+      setSubmissionErrors((current) => ({ ...current, [profileId]: message }));
+      onErrorRef.current(message);
       return null;
     }
-  }, [loadSessions, refreshSessions]);
+  }, [loadSessions, refreshSessions, clearSubmissionError]);
 
   const abortSession = useCallback(async (profileId: string, sessionId?: string): Promise<boolean> => {
     try {
@@ -404,6 +440,9 @@ export function useRemotes(options: { onError(message: string): void; onToast(me
     sessions,
     statuses,
     recoveredCompletions,
+    liveTurns,
+    submissionErrors,
+    clearSubmissionError,
     refreshingProfileIds,
     loadingRemotes: loading,
     refreshRemotes: loadProfiles,

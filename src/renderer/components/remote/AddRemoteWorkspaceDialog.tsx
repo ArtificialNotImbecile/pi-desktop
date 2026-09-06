@@ -60,8 +60,13 @@ export function AddRemoteWorkspaceDialog(props: {
     }
   }
 
+  // Add commits the directory the listing shows, which the host has confirmed
+  // exists. A path typed but never opened would otherwise become a workspace
+  // whose first prompt fails with "directory does not exist".
+  const verified = Boolean(listing) && !loading && !browseError && path === listing?.path;
+
   async function submit() {
-    if (!profileId) return;
+    if (!profileId || !verified) return;
     setSubmitting(true);
     try {
       // A rejected add resolves with nothing rather than throwing, so closing
@@ -88,7 +93,13 @@ export function AddRemoteWorkspaceDialog(props: {
       actions={
         <>
           <Button variant="ghost" onClick={props.onClose}>{t("app.cancel")}</Button>
-          <Button variant="primary" loading={submitting} disabled={submitting || !profileId} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={submitting}
+            disabled={submitting || !profileId || !verified}
+            title={!verified && !loading ? t("remote.workspace.openFirst") : undefined}
+            onClick={() => void submit()}
+          >
             {t("remote.workspace.add")}
           </Button>
         </>
@@ -108,6 +119,9 @@ export function AddRemoteWorkspaceDialog(props: {
             }}
           />
         </label>
+        {!verified && !loading && !browseError ? (
+          <p className="remote-browser-status">{t("remote.workspace.openFirst")}</p>
+        ) : null}
 
         <div className="remote-browser-list">
           {listing?.parentPath !== null && listing?.parentPath !== undefined ? (

@@ -5,33 +5,44 @@ import type {
   RemoteSessionEvent,
   RemoteSessionPort
 } from "../agent/extensions/piRemote/types.js";
+import type { RemoteModelSelection } from "./remoteModelConfig.js";
 
 export const REMOTE_PROMPT_TIMEOUT_MS = 30 * 60_000;
 
 type SessionRuntime = Pick<RemoteRuntimeManager, "openSession">;
+
+type PromptCallbacks = {
+  onPort?(port: RemoteSessionPort): void | Promise<void>;
+  onPromptDispatched?(): void | Promise<void>;
+  onPromptAccepted?(): void | Promise<void>;
+  /** Receives every Pi RPC payload the port publishes after the prompt is armed. */
+  onRpcMessage?(message: unknown): void;
+  /** Pins the session to this model before the prompt is sent. */
+  model?: RemoteModelSelection;
+  timeoutMs?: number;
+};
 
 export async function startManagedRemoteSession(
   runtime: SessionRuntime,
   profile: RemoteProfile,
   cwd: string,
   text: string,
-  callbacks: {
-    onPort?(port: RemoteSessionPort): void | Promise<void>;
+  callbacks: PromptCallbacks & {
     onSessionId?(sessionId: string, port: RemoteSessionPort): void | Promise<void>;
-    onPromptDispatched?(): void | Promise<void>;
-    onPromptAccepted?(): void | Promise<void>;
-    timeoutMs?: number;
   } = {}
 ): Promise<string> {
   let port: RemoteSessionPort | undefined;
   let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
+  let unsubscribeLive = () => {};
   let failure: unknown;
   try {
     port = await runtime.openSession(profile, { cwd });
     await callbacks.onPort?.(port);
     const sessionId = await port.createSession(cwd);
     await callbacks.onSessionId?.(sessionId, port);
+    if (callbacks.model) await applyModelSelection(port, callbacks.model);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs);
+    unsubscribeLive = subscribeRpcMessages(port, callbacks.onRpcMessage);
     await port.prompt(text, [], callbacks.onPromptAccepted, callbacks.onPromptDispatched);
     await settled.promise;
     return sessionId;
@@ -39,6 +50,7 @@ export async function startManagedRemoteSession(
     failure = error;
     throw error;
   } finally {
+    unsubscribeLive();
     settled?.cancel();
     await settled?.promise.catch(() => {});
     if (shouldDetach(failure)) await port?.detach().catch(() => {});
@@ -51,31 +63,60 @@ export async function promptManagedRemoteSession(
   profile: RemoteProfile,
   sessionId: string,
   text: string,
-  callbacks: {
-    onPort?(port: RemoteSessionPort): void | Promise<void>;
-    onPromptDispatched?(): void | Promise<void>;
-    onPromptAccepted?(): void | Promise<void>;
-    timeoutMs?: number;
-  } = {}
+  callbacks: PromptCallbacks = {}
 ): Promise<void> {
   let port: RemoteSessionPort | undefined;
   let settled: ReturnType<typeof waitForRemotePromptSettled> | undefined;
+  let unsubscribeLive = () => {};
   let failure: unknown;
   try {
     port = await runtime.openSession(profile, { sessionId });
     await callbacks.onPort?.(port);
+    if (callbacks.model) await applyModelSelection(port, callbacks.model);
     settled = waitForRemotePromptSettled(port, callbacks.timeoutMs ?? REMOTE_PROMPT_TIMEOUT_MS);
+    unsubscribeLive = subscribeRpcMessages(port, callbacks.onRpcMessage);
     await port.prompt(text, [], callbacks.onPromptAccepted, callbacks.onPromptDispatched);
     await settled.promise;
   } catch (error) {
     failure = error;
     throw error;
   } finally {
+    unsubscribeLive();
     settled?.cancel();
     await settled?.promise.catch(() => {});
     if (shouldDetach(failure)) await port?.detach().catch(() => {});
     else await port?.close({ abort: false }).catch(() => {});
   }
+}
+
+/**
+ * A resumed session keeps whatever model its last turn used and a new one
+ * starts on the host's default, so the selection is applied explicitly. The
+ * model must be selectable: a failure here is Pi rejecting the switch, which
+ * surfaces as a definite rejection and leaves the draft for the user. The
+ * thinking level is a preference on top of that and is not allowed to block
+ * the turn when the model does not accept it.
+ */
+async function applyModelSelection(port: RemoteSessionPort, model: RemoteModelSelection): Promise<void> {
+  await port.setModel(model.providerId, model.modelId);
+  if (model.thinkingLevel) await port.setThinking(model.thinkingLevel).catch(() => {});
+}
+
+/**
+ * Forwards Pi's own RPC payloads, skipping anything the port replays from before
+ * this prompt: a reconnected client is handed the daemon's buffered history,
+ * which belongs to earlier turns.
+ */
+function subscribeRpcMessages(
+  port: Pick<RemoteSessionPort, "eventCursor" | "subscribe">,
+  onRpcMessage: ((message: unknown) => void) | undefined
+): () => void {
+  if (!onRpcMessage) return () => {};
+  const cutoff = port.eventCursor;
+  return port.subscribe((event: RemoteSessionEvent) => {
+    if (event.seq <= cutoff || event.type !== "rpc.message") return;
+    try { onRpcMessage(event.data); } catch { /* a projection error must not disturb the protocol */ }
+  });
 }
 
 export function isDetachedPromptFailure(error: unknown): boolean {

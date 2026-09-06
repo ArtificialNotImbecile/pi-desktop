@@ -44,6 +44,7 @@ import type {
   MemoryListRequest,
   MemoryUpdateRequest,
   RemoteDirectoryListRequest,
+  RemoteLiveTurn,
   RemoteProfileCreateRequest,
   RemoteProfileIdRequest,
   RemoteProfileStatus,
@@ -187,6 +188,11 @@ const api: JasmineApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: RemoteProfileStatus) => callback(payload);
     ipcRenderer.on("remotes:status-changed", listener);
     return () => ipcRenderer.removeListener("remotes:status-changed", listener);
+  },
+  onRemoteLiveTurnChanged(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, payload: RemoteLiveTurn) => callback(payload);
+    ipcRenderer.on("remotes:live-turn-changed", listener);
+    return () => ipcRenderer.removeListener("remotes:live-turn-changed", listener);
   },
   getWorkingSnapshot() {
     return ipcRenderer.invoke("working:snapshot");

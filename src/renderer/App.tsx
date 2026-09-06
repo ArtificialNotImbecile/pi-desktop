@@ -717,13 +717,22 @@ function App(props: { initialAppSettings: AppSettings }) {
           sessions={(remotes.sessions[remoteRoute.profileId] ?? []).filter((session) => session.cwd === remoteRoute.cwd)}
           activeSessionId={remoteRoute.sessionId}
           recoveredCompletion={remotes.recoveredCompletions[remoteRoute.profileId]}
+          liveTurn={remotes.liveTurns[remoteRoute.profileId] ?? null}
+          submissionError={remotes.submissionErrors[remoteRoute.profileId] ?? null}
+          onDismissSubmissionError={() => remotes.clearSubmissionError(remoteRoute.profileId)}
           refreshing={remotes.refreshingProfileIds.includes(remoteRoute.profileId)}
+          providers={providers.providers}
+          activeProvider={providers.activeProvider}
+          reasoningEffort={reasoningEffort}
+          onSelectModel={chatPageHandlers.onSelectModel}
+          onSelectReasoningEffort={selectReasoningEffort}
+          onOpenProviderSettings={() => openSettingsSection("providers", providers.selectedProviderId)}
           onRefresh={() => void remotes.refreshSessions(remoteRoute.profileId, { force: true })}
           onSelectSession={(sessionId) => navigateToRoute({ name: "remoteSession", profileId: remoteRoute.profileId, sessionId })}
           onOpenSession={(sessionId, options) => remotes.openSession(remoteRoute.profileId, sessionId, options)}
           onBeginSession={() => navigateToRoute({ name: "remoteWorkspace", profileId: remoteRoute.profileId, cwd: remoteRoute.cwd })}
-          onStartSession={(text) => remotes.startSession(remoteRoute.profileId, remoteRoute.cwd, text)}
-          onPromptSession={(sessionId, text) => remotes.promptSession(remoteRoute.profileId, sessionId, text)}
+          onStartSession={(text, selection) => remotes.startSession(remoteRoute.profileId, remoteRoute.cwd, text, selection)}
+          onPromptSession={(sessionId, text, selection) => remotes.promptSession(remoteRoute.profileId, sessionId, text, selection)}
           onAbortSession={(sessionId) => remotes.abortSession(remoteRoute.profileId, sessionId)}
         />
       ) : navigation.route.name === "working" ? (

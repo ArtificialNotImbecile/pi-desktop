@@ -1405,10 +1405,53 @@ export type RemoteTranscriptEntry = {
   id: string;
   kind: RemoteTranscriptEntryKind;
   timestamp: string | null;
+  /** Message text; for a tool entry, the tool's result. */
   text: string;
   toolName: string | null;
+  /** One-line summary of what the tool was asked to do: the command, the path, the pattern. */
+  toolArgs: string | null;
+  /** True for a tool result Pi reported as an error, or a notice about a failed turn. */
+  isError: boolean;
+  /** For a notice entry: why the turn ended early. `text` carries the provider's own message, when there is one. */
+  notice: "error" | "aborted" | null;
   /** True when this entry arrived in the most recent incremental sync. */
   appended: boolean;
+};
+
+/**
+ * What a running remote turn has produced so far, assembled in the main process
+ * from Pi's RPC event stream and pushed to the renderer as whole snapshots. The
+ * session file on the host stays authoritative: once the turn settles the
+ * reconciled transcript replaces this view.
+ */
+export type RemoteLiveEntry = {
+  id: string;
+  kind: "assistant" | "thinking" | "tool";
+  text: string;
+  toolName: string | null;
+  toolArgs: string | null;
+  toolState: "running" | "done" | "error" | null;
+};
+
+export type RemoteLiveTurn = {
+  profileId: string;
+  sessionId: string | null;
+  cwd: string;
+  prompt: string;
+  startedAt: string;
+  state: "running" | "settled" | "failed";
+  /** The model's own failure for this turn, when Pi reported one. */
+  error: string | null;
+  entries: RemoteLiveEntry[];
+  /** Monotonic per turn, so a stale snapshot can never replace a newer one. */
+  version: number;
+};
+
+/** The model a remote turn should run with; omitted fields fall back to Jasmine's defaults. */
+export type RemoteModelSelectionRequest = {
+  providerId?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type RemoteSessionTranscript = {
@@ -1501,7 +1544,7 @@ export type RemoteSessionOpenRequest = {
   refetch?: boolean;
 };
 
-export type RemoteSessionStartRequest = {
+export type RemoteSessionStartRequest = RemoteModelSelectionRequest & {
   profileId: string;
   cwd: string;
   text: string;
@@ -1522,7 +1565,7 @@ export type RemoteSessionSubmissionPending = {
   sessionId: string | null;
 };
 
-export type RemoteSessionPromptRequest = {
+export type RemoteSessionPromptRequest = RemoteModelSelectionRequest & {
   profileId: string;
   sessionId: string;
   text: string;
@@ -1576,6 +1619,7 @@ export type JasmineApi = {
   promptRemoteSession(request: RemoteSessionPromptRequest): Promise<RemoteSessionTranscript | RemoteSessionSubmissionPending>;
   abortRemoteSession(request: RemoteSessionAbortRequest): Promise<boolean>;
   onRemoteStatusChanged(callback: (status: RemoteProfileStatus) => void): () => void;
+  onRemoteLiveTurnChanged(callback: (turn: RemoteLiveTurn) => void): () => void;
   getWorkingSnapshot(): Promise<WorkingSnapshot>;
   markWorkingRead(requestId: string): Promise<WorkingSnapshot>;
   clearCompletedWorking(): Promise<WorkingSnapshot>;

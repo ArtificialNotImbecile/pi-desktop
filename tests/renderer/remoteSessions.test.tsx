@@ -2,14 +2,18 @@ import { useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
+  AiProvider,
   RemoteDoctorReport,
+  RemoteLiveTurn,
   RemoteProfileStatus,
   RemoteProfileSummary,
   RemoteSessionSummary,
   RemoteSessionStartResult,
   RemoteSessionTranscript,
+  RemoteTranscriptEntry,
   RemoteWorkspace
 } from "../../src/shared/ipc";
+import { AddRemoteWorkspaceDialog } from "../../src/renderer/components/remote/AddRemoteWorkspaceDialog";
 import { RemoteSessionPage } from "../../src/renderer/components/remote/RemoteSessionPage";
 import { RemoteTree } from "../../src/renderer/components/remote/RemoteTree";
 import { RemoteSettingsPage } from "../../src/renderer/components/settings/RemoteSettingsPage";
@@ -76,6 +80,10 @@ function session(overrides: Partial<RemoteSessionSummary> & { sessionId: string 
   };
 }
 
+function entry(overrides: Partial<RemoteTranscriptEntry> & { id: string; kind: RemoteTranscriptEntry["kind"]; text: string }): RemoteTranscriptEntry {
+  return { timestamp: null, toolName: null, toolArgs: null, isError: false, notice: null, appended: false, ...overrides };
+}
+
 function transcript(overrides: Partial<RemoteSessionTranscript> & { sessionId: string }): RemoteSessionTranscript {
   return {
     profileId: DIRECT.id,
@@ -83,7 +91,7 @@ function transcript(overrides: Partial<RemoteSessionTranscript> & { sessionId: s
     cwd: "/srv/application",
     state: "cached",
     entries: [
-      { id: "e1", kind: "user", timestamp: "2026-08-18T09:00:00.000Z", text: "refactor the auth middleware", toolName: null, appended: false }
+      entry({ id: "e1", kind: "user", timestamp: "2026-08-18T09:00:00.000Z", text: "refactor the auth middleware" })
     ],
     omittedEntryCount: 0,
     cachedBytes: 4096,
@@ -317,10 +325,37 @@ function doctorReport(profileId: string, message: string): RemoteDoctorReport {
   };
 }
 
+const DEEPSEEK: AiProvider = {
+  id: "deepseek",
+  name: "DeepSeek",
+  type: "openai-compatible",
+  baseUrl: "https://api.deepseek.com/v1",
+  apiKeyRef: "env:DEEPSEEK_API_KEY",
+  enabled: true,
+  defaultModel: "deepseek-v4-flash",
+  models: ["deepseek-v4-flash", "deepseek-v4-pro"].map((id) => ({
+    id,
+    enabled: true,
+    capabilities: { vision: false, imageOutput: false, toolCalling: true, reasoning: true, embedding: false },
+    contextWindow: 128_000,
+    maxOutputTokens: 8192,
+    providerOptionsJson: "{}"
+  })),
+  status: "connected",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z"
+};
+
 /** Mounts the reader with a selection the test drives, as the route does. */
-function PageHarness(props: { initialSessionId: string | null; sessions: RemoteSessionSummary[] }) {
+function PageHarness(props: {
+  initialSessionId: string | null;
+  sessions: RemoteSessionSummary[];
+  provider?: AiProvider | null;
+  onSelectModel?(providerId: string, modelId: string): void;
+}) {
   const remotes = useRemotes({ onError: () => {}, onToast: () => {} });
   const [selected, setSelected] = useState<string | null>(props.initialSessionId);
+  const provider = props.provider === undefined ? DEEPSEEK : props.provider;
   return (
     <RemoteSessionPage
       profile={DIRECT}
@@ -330,13 +365,20 @@ function PageHarness(props: { initialSessionId: string | null; sessions: RemoteS
       sessions={remotes.sessions[DIRECT.id] ?? props.sessions}
       activeSessionId={selected}
       recoveredCompletion={remotes.recoveredCompletions[DIRECT.id]}
+      liveTurn={remotes.liveTurns[DIRECT.id] ?? null}
+      submissionError={remotes.submissionErrors[DIRECT.id] ?? null}
+      onDismissSubmissionError={() => remotes.clearSubmissionError(DIRECT.id)}
       refreshing={false}
+      providers={provider ? [provider] : []}
+      activeProvider={provider}
+      reasoningEffort="high"
+      onSelectModel={props.onSelectModel}
       onRefresh={() => void remotes.refreshSessions(DIRECT.id, { force: true })}
       onSelectSession={setSelected}
       onOpenSession={(sessionId, options) => remotes.openSession(DIRECT.id, sessionId, options)}
       onBeginSession={() => setSelected(null)}
-      onStartSession={(text) => remotes.startSession(DIRECT.id, WORKSPACE.cwd, text)}
-      onPromptSession={(sessionId, text) => remotes.promptSession(DIRECT.id, sessionId, text)}
+      onStartSession={(text, selection) => remotes.startSession(DIRECT.id, WORKSPACE.cwd, text, selection)}
+      onPromptSession={(sessionId, text, selection) => remotes.promptSession(DIRECT.id, sessionId, text, selection)}
       onAbortSession={(sessionId) => remotes.abortSession(DIRECT.id, sessionId)}
     />
   );
@@ -722,7 +764,7 @@ describe("remote session reader", () => {
         [row.sessionId]: transcript({
           sessionId: row.sessionId,
           title: row.title,
-          entries: [{ id: "recovered", kind: "assistant", timestamp: null, text: "recovered transcript complete", toolName: null, appended: true }]
+          entries: [entry({ id: "recovered", kind: "assistant", text: "recovered transcript complete", appended: true })]
         })
       }
     });
@@ -803,8 +845,8 @@ describe("remote session reader", () => {
           sessionId: row.sessionId,
           title: row.title,
           entries: [
-            { id: "e1", kind: "user", timestamp: null, text: "finish this turn", toolName: null, appended: true },
-            { id: "e2", kind: "assistant", timestamp: null, text: "completed after reconnect", toolName: null, appended: true }
+            entry({ id: "e1", kind: "user", text: "finish this turn", appended: true }),
+            entry({ id: "e2", kind: "assistant", text: "completed after reconnect", appended: true })
           ]
         })
       }
@@ -840,7 +882,10 @@ describe("remote session reader", () => {
     await waitFor(() => expect(fake.calls.startRemoteSession).toEqual([{
       profileId: DIRECT.id,
       cwd: WORKSPACE.cwd,
-      text: "inspect the remote workspace"
+      text: "inspect the remote workspace",
+      providerId: "deepseek",
+      modelId: "deepseek-v4-flash",
+      reasoningEffort: "high"
     }]));
     expect(await screen.findByText("Remote response complete.")).toBeDefined();
   });
@@ -958,8 +1003,8 @@ describe("remote session reader", () => {
           fetchedBytes: 62_464,
           cachedBytes: 2_473_472,
           entries: [
-            { id: "old", kind: "user", timestamp: null, text: "earlier turn", toolName: null, appended: false },
-            { id: "new", kind: "assistant", timestamp: null, text: "the newly fetched tail", toolName: null, appended: true }
+            entry({ id: "old", kind: "user", text: "earlier turn" }),
+            entry({ id: "new", kind: "assistant", text: "the newly fetched tail", appended: true })
           ]
         })
       }
@@ -1088,5 +1133,229 @@ describe("remote session reader", () => {
 
     expect(screen.getByText("Remote work keeps running. Reconnect to follow it again.")).toBeDefined();
     expect(screen.getByText("Not connected")).toBeDefined();
+  });
+
+  test("a prompt travels with the model the composer shows, and the pill switches it", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-model", title: "remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { [row.sessionId]: transcript({ sessionId: row.sessionId, title: row.title }) }
+    });
+    const onSelectModel = vi.fn();
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} onSelectModel={onSelectModel} />));
+    await screen.findByText("refactor the auth middleware");
+
+    // The pill reads the same way as the chat composer's: model, then effort.
+    const pill = screen.getByRole("button", { name: "Model for remote prompts" });
+    expect(pill.textContent).toContain("deepseek-v4-flash");
+    expect(pill.textContent).toContain("high");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "run with this model" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fake.calls.promptRemoteSession).toEqual([{
+      profileId: DIRECT.id,
+      sessionId: row.sessionId,
+      text: "run with this model",
+      providerId: "deepseek",
+      modelId: "deepseek-v4-flash",
+      reasoningEffort: "high"
+    }]));
+
+    // Picking another model goes through the same selection the chat uses, so
+    // both surfaces stay on one model.
+    fireEvent.click(pill);
+    fireEvent.click(await screen.findByRole("button", { name: /deepseek-v4-pro/ }));
+    expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-v4-pro");
+  });
+
+  test("a new session's first prompt also names its model", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [status("ready")], sessions: { [DIRECT.id]: [] } });
+    const view = render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    fireEvent.click(within(view.container.querySelector(".remote-page-header") as HTMLElement).getByRole("button", { name: "New session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "first turn" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fake.calls.startRemoteSession).toEqual([{
+      profileId: DIRECT.id,
+      cwd: WORKSPACE.cwd,
+      text: "first turn",
+      providerId: "deepseek",
+      modelId: "deepseek-v4-flash",
+      reasoningEffort: "high"
+    }]));
+  });
+
+  test("a prompt the host refuses stays explained on the page until dismissed", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({ profiles: [DIRECT], workspaces: [WORKSPACE], statuses: [status("ready")], sessions: { [DIRECT.id]: [] } });
+    // Electron wraps a main-process rejection with the channel it crossed; the
+    // page shows the reason, not the plumbing.
+    fake.bridge.startRemoteSession = async () => {
+      throw new Error("Error invoking remote method 'remotes:startSession': PiRemoteError: Remote working directory /srv/application does not exist.");
+    };
+    const view = render(withI18n(<PageHarness initialSessionId={null} sessions={[]} />));
+    fireEvent.click(within(view.container.querySelector(".remote-page-header") as HTMLElement).getByRole("button", { name: "New session" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Remote working directory /srv/application does not exist.");
+    expect(alert.textContent).not.toContain("Error invoking remote method");
+    // The draft is back, so the fix-and-retry loop is one edit away.
+    expect(screen.getByDisplayValue("hello")).toBeDefined();
+
+    fireEvent.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  test("the running turn's output is shown as it streams and yields to the reconciled transcript", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-live", title: "remote work" });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: { [row.sessionId]: transcript({ sessionId: row.sessionId, title: row.title }) }
+    });
+    let finish!: (value: RemoteSessionTranscript) => void;
+    fake.bridge.promptRemoteSession = async (request) => {
+      fake.calls.promptRemoteSession.push(request);
+      return new Promise<RemoteSessionTranscript>((resolve) => { finish = resolve; });
+    };
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} />));
+    await screen.findByText("refactor the auth middleware");
+    fireEvent.change(screen.getByRole("textbox", { name: "Remote prompt" }), { target: { value: "list the files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fake.calls.promptRemoteSession).toHaveLength(1));
+
+    const live = (version: number, entries: RemoteLiveTurn["entries"], state: RemoteLiveTurn["state"] = "running"): RemoteLiveTurn => ({
+      profileId: DIRECT.id,
+      sessionId: row.sessionId,
+      cwd: WORKSPACE.cwd,
+      prompt: "list the files",
+      startedAt: "2026-08-21T00:00:00.000Z",
+      state,
+      error: null,
+      entries,
+      version
+    });
+    await fake.emitRemoteLiveTurn(live(1, [
+      { id: "t1", kind: "tool", text: "", toolName: "bash", toolArgs: "ls -la /srv/application", toolState: "running" }
+    ]));
+    // The call is on screen with what it was asked, before any output exists.
+    const toolRow = screen.getByText("ls -la /srv/application").closest("article") as HTMLElement;
+    expect(toolRow.className).toContain("kind-tool");
+    expect(within(toolRow).getByText("bash")).toBeDefined();
+
+    await fake.emitRemoteLiveTurn(live(2, [
+      { id: "t1", kind: "tool", text: "total 0", toolName: "bash", toolArgs: "ls -la /srv/application", toolState: "done" },
+      { id: "a1", kind: "assistant", text: "The directory is **empty**.", toolName: null, toolArgs: null, toolState: null }
+    ]));
+    // A stale snapshot must not roll the view back.
+    await fake.emitRemoteLiveTurn(live(1, []));
+    expect(screen.getByText("empty").tagName).toBe("STRONG");
+    expect(screen.getByText("total 0")).toBeDefined();
+
+    // Settlement hands over to the transcript the host wrote; the live rows go.
+    await act(async () => {
+      finish(transcript({
+        sessionId: row.sessionId,
+        title: row.title,
+        entries: [
+          entry({ id: "e1", kind: "user", text: "refactor the auth middleware" }),
+          entry({ id: "e2", kind: "user", text: "list the files", appended: true }),
+          entry({ id: "e3", kind: "tool", text: "total 0", toolName: "bash", toolArgs: "ls -la /srv/application", appended: true }),
+          entry({ id: "e4", kind: "assistant", text: "The directory is *empty*.", appended: true })
+        ]
+      }));
+    });
+    await waitFor(() => expect(screen.queryByText("Pi is working remotely")).toBeNull());
+    expect(document.querySelector("[data-remote-live]")).toBeNull();
+    expect(screen.getByText("empty").tagName).toBe("EM");
+    expect(screen.getAllByText("total 0")).toHaveLength(1);
+  });
+
+  test("history rows read as what happened: Markdown answers, tool calls with their output, stopped and failed turns", async () => {
+    fake = installFakeBridge();
+    const row = session({ sessionId: "session-rich", title: "remote work", state: "cached", cachedBytes: 4096 });
+    fake.setRemoteState({
+      profiles: [DIRECT],
+      workspaces: [WORKSPACE],
+      statuses: [status("ready")],
+      sessions: { [DIRECT.id]: [row] },
+      transcripts: {
+        [row.sessionId]: transcript({
+          sessionId: row.sessionId,
+          title: row.title,
+          entries: [
+            entry({ id: "u1", kind: "user", text: "fix the build" }),
+            entry({ id: "th1", kind: "thinking", text: "the failing step is the linker" }),
+            entry({ id: "t1", kind: "tool", text: "linker: undefined reference", toolName: "bash", toolArgs: "make -j4", isError: true }),
+            entry({ id: "a1", kind: "assistant", text: "See `/srv/application/Makefile` and run:\n\n```sh\nmake clean\n```" }),
+            entry({ id: "n1", kind: "notice", text: "", notice: "aborted" }),
+            entry({ id: "n2", kind: "notice", text: "429 rate limited", isError: true, notice: "error" })
+          ]
+        })
+      }
+    });
+    render(withI18n(<PageHarness initialSessionId={row.sessionId} sessions={[row]} />));
+    await screen.findByText("fix the build");
+
+    // The tool row names the tool, what it ran, that it failed, and keeps the
+    // output behind a disclosure that opens itself for a failure.
+    const toolRow = screen.getByText("make -j4").closest("article") as HTMLElement;
+    expect(within(toolRow).getByText("bash")).toBeDefined();
+    expect(within(toolRow).getByText("Failed")).toBeDefined();
+    expect(within(toolRow).getByText("linker: undefined reference")).toBeDefined();
+    expect((toolRow.querySelector("details") as HTMLDetailsElement).open).toBe(true);
+
+    // Thinking stays folded until asked for.
+    const thinking = screen.getByText("the failing step is the linker").closest("details") as HTMLDetailsElement;
+    expect(thinking.open).toBe(false);
+
+    // The answer is Markdown, and a path on the host is shown, not made into a
+    // local file chip that would look it up on this disk.
+    const answer = screen.getByText(/See/).closest("article") as HTMLElement;
+    expect(answer.querySelector(".markdown-message")).not.toBeNull();
+    expect(within(answer).getByText("/srv/application/Makefile").tagName).toBe("CODE");
+    expect(answer.querySelector(".file-reference")).toBeNull();
+    expect(fake.calls.describeLocalFiles).toEqual([]);
+
+    expect(screen.getByText("Stopped before the answer finished")).toBeDefined();
+    const failed = screen.getByText("The model returned an error").closest("article") as HTMLElement;
+    expect(within(failed).getByText("429 rate limited")).toBeDefined();
+  });
+});
+
+describe("remote workspace picker", () => {
+  test("only a directory the host listed can be added", async () => {
+    fake = installFakeBridge();
+    fake.setRemoteState({ profiles: [DIRECT] });
+    const onAdd = vi.fn(async () => null);
+    render(withI18n(
+      <AddRemoteWorkspaceDialog open profile={DIRECT} onClose={() => {}} onAdd={onAdd} />
+    ));
+    // The picker opens on the profile's default directory, which the fake host
+    // answers for, so that directory is addable as shown.
+    const add = await screen.findByRole("button", { name: "Add" });
+    await waitFor(() => expect(add).toHaveProperty("disabled", false));
+
+    // Typing a path the host has not confirmed withdraws Add until it is opened.
+    const path = screen.getByRole("textbox", { name: "Path" });
+    fireEvent.change(path, { target: { value: "/srv/nowhere" } });
+    expect(add).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Press Enter to open the typed path/)).toBeDefined();
+    fireEvent.click(add);
+    expect(onAdd).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(path, { key: "Enter" });
+    await waitFor(() => expect(add).toHaveProperty("disabled", false));
+    fireEvent.click(add);
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ profileId: DIRECT.id, cwd: "/srv/nowhere" })));
   });
 });
