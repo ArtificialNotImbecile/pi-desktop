@@ -439,10 +439,6 @@ class PluginPackageService {
     return entries;
   }
 
-  private findPackageEntry(source: string): PackageEntry | undefined {
-    return this.listPackageEntries().find((entry) => this.sourcesMatch(entry.source, source, entry.scope));
-  }
-
   private packagesForScope(scope: PluginPackageScope): PackageSource[] {
     return [
       ...((scope === "project"

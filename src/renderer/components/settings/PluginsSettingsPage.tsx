@@ -1,11 +1,11 @@
 import { useState } from "react";
 import type { PluginPackageRecord } from "../../../shared/ipc";
 import { FolderIcon, PlugIcon, PlusIcon, RefreshIcon, TrashIcon } from "../icons/Icons";
-import { Button, EmptyState, IconButton, Switch, TextInput } from "../ui";
+import { Button, EmptyState, IconButton, StatusPill, Switch, TextInput } from "../ui";
 import { getBridge } from "../../desktopApi";
 import { useI18n } from "../../i18n";
 import { SettingsHeader } from "./SettingsHeader";
-import { SettingsList, SettingsListRow, SettingsPage, SettingsToolbar, StatePill } from "./SettingsLayout";
+import { SettingsList, SettingsListRow, SettingsPage, SettingsToolbar } from "./SettingsLayout";
 
 export function PluginsSettingsPage(props: {
   packages: PluginPackageRecord[];
@@ -81,8 +81,8 @@ export function PluginsSettingsPage(props: {
           </IconButton>
         </SettingsToolbar>
         <div className="plugins-install-state" aria-live="polite">
-          {installState === "saved" ? <StatePill tone="success">{t("settings.plugins.installed")}</StatePill> : null}
-          {installState === "failed" ? <StatePill tone="danger">{localError || t("app.saveFailed")}</StatePill> : null}
+          {installState === "saved" ? <StatusPill tone="success">{t("settings.plugins.installed")}</StatusPill> : null}
+          {installState === "failed" ? <StatusPill tone="danger">{localError || t("app.saveFailed")}</StatusPill> : null}
         </div>
         <SettingsList className="plugins-list" ariaLabel={t("settings.plugins.list")}>
           {props.packages.length === 0 ? (
@@ -125,9 +125,9 @@ function PluginPackageRow(props: {
         props.plugin.installedPath ? t("settings.plugins.path", { path: props.plugin.installedPath }) : ""
       ].filter(Boolean).join(" | ")}
       status={
-        <StatePill tone={statusTone}>
+        <StatusPill tone={statusTone}>
           {props.saving ? t("app.saving") : props.plugin.enabled ? t("app.enabled") : t("app.disabled")}
-        </StatePill>
+        </StatusPill>
       }
       actions={
         <div className="plugin-row-actions">

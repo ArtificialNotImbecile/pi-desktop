@@ -35,26 +35,26 @@ export type JasmineRoute =
 export function routeToPath(route: JasmineRoute): string {
   switch (route.name) {
     case "newChat":
-      return route.projectId ? `/projects/${encodeRouteSegment(route.projectId)}/chat/new` : "/chats/new";
+      return route.projectId ? `/projects/${encodeURIComponent(route.projectId)}/chat/new` : "/chats/new";
     case "thread":
       return route.projectId
-        ? `/projects/${encodeRouteSegment(route.projectId)}/chat/${encodeRouteSegment(route.threadId)}`
-        : `/chats/${encodeRouteSegment(route.threadId)}`;
+        ? `/projects/${encodeURIComponent(route.projectId)}/chat/${encodeURIComponent(route.threadId)}`
+        : `/chats/${encodeURIComponent(route.threadId)}`;
     case "rightPanel":
       return route.projectId
-        ? `/projects/${encodeRouteSegment(route.projectId)}/chat/${encodeRouteSegment(route.threadId)}/right-panel/${route.panel}`
-        : `/chats/${encodeRouteSegment(route.threadId)}/right-panel/${route.panel}`;
+        ? `/projects/${encodeURIComponent(route.projectId)}/chat/${encodeURIComponent(route.threadId)}/right-panel/${route.panel}`
+        : `/chats/${encodeURIComponent(route.threadId)}/right-panel/${route.panel}`;
     case "working":
       return "/working";
     case "remoteWorkspace":
-      return `/remotes/${encodeRouteSegment(route.profileId)}/workspace/${encodeRouteSegment(route.cwd)}`;
+      return `/remotes/${encodeURIComponent(route.profileId)}/workspace/${encodeURIComponent(route.cwd)}`;
     case "remoteSession":
-      return `/remotes/${encodeRouteSegment(route.profileId)}/session/${encodeRouteSegment(route.sessionId)}`;
+      return `/remotes/${encodeURIComponent(route.profileId)}/session/${encodeURIComponent(route.sessionId)}`;
     case "settings":
       if (route.section === "providers" && route.providerId) {
-        return `/settings/providers/${encodeRouteSegment(route.providerId)}`;
+        return `/settings/providers/${encodeURIComponent(route.providerId)}`;
       }
-      return `/settings/${settingsSectionToPath(route.section)}`;
+      return `/settings/${route.section}`;
   }
 }
 
@@ -64,14 +64,14 @@ export function parseJasminePath(path: string): JasmineRoute | null {
   if (cleanPath === "/chats/new" || cleanPath === "/chat/new") return { name: "newChat", projectId: null };
 
   const projectNewMatch = cleanPath.match(/^\/projects\/([^/]+)\/chat\/new$/);
-  if (projectNewMatch) return { name: "newChat", projectId: decodeRouteSegment(projectNewMatch[1]) };
+  if (projectNewMatch) return { name: "newChat", projectId: decodeURIComponent(projectNewMatch[1]) };
 
   const projectThreadMatch = cleanPath.match(/^\/projects\/([^/]+)\/chat\/([^/]+)$/);
   if (projectThreadMatch) {
     return {
       name: "thread",
-      projectId: decodeRouteSegment(projectThreadMatch[1]),
-      threadId: decodeRouteSegment(projectThreadMatch[2])
+      projectId: decodeURIComponent(projectThreadMatch[1]),
+      threadId: decodeURIComponent(projectThreadMatch[2])
     };
   }
 
@@ -81,8 +81,8 @@ export function parseJasminePath(path: string): JasmineRoute | null {
     if (isRightPanelMode(panel)) {
       return {
         name: "rightPanel",
-        projectId: decodeRouteSegment(projectRightPanelMatch[1]),
-        threadId: decodeRouteSegment(projectRightPanelMatch[2]),
+        projectId: decodeURIComponent(projectRightPanelMatch[1]),
+        threadId: decodeURIComponent(projectRightPanelMatch[2]),
         panel
       };
     }
@@ -90,7 +90,7 @@ export function parseJasminePath(path: string): JasmineRoute | null {
   }
 
   const threadMatch = cleanPath.match(/^\/(?:chats|chat)\/([^/]+)$/);
-  if (threadMatch) return { name: "thread", projectId: null, threadId: decodeRouteSegment(threadMatch[1]) };
+  if (threadMatch) return { name: "thread", projectId: null, threadId: decodeURIComponent(threadMatch[1]) };
 
   const rightPanelMatch = cleanPath.match(/^\/(?:chats|chat)\/([^/]+)\/right-panel\/([^/]+)$/);
   if (rightPanelMatch) {
@@ -99,7 +99,7 @@ export function parseJasminePath(path: string): JasmineRoute | null {
       return {
         name: "rightPanel",
         projectId: null,
-        threadId: decodeRouteSegment(rightPanelMatch[1]),
+        threadId: decodeURIComponent(rightPanelMatch[1]),
         panel
       };
     }
@@ -110,8 +110,8 @@ export function parseJasminePath(path: string): JasmineRoute | null {
   if (remoteWorkspaceMatch) {
     return {
       name: "remoteWorkspace",
-      profileId: decodeRouteSegment(remoteWorkspaceMatch[1]),
-      cwd: decodeRouteSegment(remoteWorkspaceMatch[2])
+      profileId: decodeURIComponent(remoteWorkspaceMatch[1]),
+      cwd: decodeURIComponent(remoteWorkspaceMatch[2])
     };
   }
 
@@ -119,33 +119,23 @@ export function parseJasminePath(path: string): JasmineRoute | null {
   if (remoteSessionMatch) {
     return {
       name: "remoteSession",
-      profileId: decodeRouteSegment(remoteSessionMatch[1]),
-      sessionId: decodeRouteSegment(remoteSessionMatch[2])
+      profileId: decodeURIComponent(remoteSessionMatch[1]),
+      sessionId: decodeURIComponent(remoteSessionMatch[2])
     };
   }
 
   const settingsMatch = cleanPath.match(/^\/settings\/([^/]+)(?:\/([^/]+))?$/);
   if (settingsMatch) {
-    const section = pathToSettingsSection(settingsMatch[1]);
-    if (!section) return null;
+    const section = settingsMatch[1];
+    if (!isSettingsSection(section)) return null;
     return {
       name: "settings",
       section,
-      providerId: section === "providers" && settingsMatch[2] ? decodeRouteSegment(settingsMatch[2]) : undefined
+      providerId: section === "providers" && settingsMatch[2] ? decodeURIComponent(settingsMatch[2]) : undefined
     };
   }
 
   return null;
-}
-
-export function routeLabel(route: JasmineRoute): string {
-  if (route.name === "newChat") return route.projectId ? `Project ${route.projectId} new chat` : "New chat";
-  if (route.name === "thread") return route.projectId ? `Project ${route.projectId} thread ${route.threadId}` : `Thread ${route.threadId}`;
-  if (route.name === "working") return "Working";
-  if (route.name === "remoteWorkspace") return `Remote workspace ${route.cwd}`;
-  if (route.name === "remoteSession") return `Remote session ${route.sessionId}`;
-  if (route.name === "rightPanel") return `${route.panel} panel`;
-  return route.providerId ? `Settings ${route.section}/${route.providerId}` : `Settings ${route.section}`;
 }
 
 export function isSettingsSection(value: string): value is SettingsSection {
@@ -160,20 +150,4 @@ export function rightPanelModeLabel(mode: RightPanelMode): string {
   if (mode === "terminal") return "Terminal";
   if (mode === "artifacts") return "Artifacts";
   return "Context taxonomy";
-}
-
-function settingsSectionToPath(section: SettingsSection): string {
-  return section;
-}
-
-function pathToSettingsSection(value: string): SettingsSection | null {
-  return isSettingsSection(value) ? value : null;
-}
-
-function encodeRouteSegment(value: string): string {
-  return encodeURIComponent(value);
-}
-
-function decodeRouteSegment(value: string): string {
-  return decodeURIComponent(value);
 }

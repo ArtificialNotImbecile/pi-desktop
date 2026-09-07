@@ -6,7 +6,6 @@ import type {
 } from "../../shared/permissions.js";
 import { permissionApprovalResponseSchema } from "../../shared/permissionSchemas.js";
 import { abortError } from "../utils/abort.js";
-import type { IpcContext } from "./context.js";
 
 type PendingPermission = {
   sender: WebContents;
@@ -16,7 +15,7 @@ type PendingPermission = {
 
 const pendingPermissions = new Map<string, PendingPermission>();
 
-export function registerPermissionApprovalIpc(_context: IpcContext): void {
+export function registerPermissionApprovalIpc(): void {
   ipcMain.handle("permissionApproval:answer", (event, input: PermissionApprovalResponse): void => {
     const response = permissionApprovalResponseSchema.parse(input);
     const pending = pendingPermissions.get(response.id);

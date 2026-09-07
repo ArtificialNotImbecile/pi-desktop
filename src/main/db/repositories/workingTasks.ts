@@ -166,10 +166,6 @@ export function markWorkingNotificationSent(
   `).run(JSON.stringify(notified), requestId).changes === 1;
 }
 
-export function isTerminalWorkingStatus(status: WorkingTaskStatus): boolean {
-  return TERMINAL_STATUSES.includes(status);
-}
-
 function mapWorkingTask(row: WorkingTaskRow): WorkingTask {
   return {
     requestId: row.request_id,

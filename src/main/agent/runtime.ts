@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import type { AskUserQuestionPrompt, AskUserQuestionResponse, ChatQueueMode, ChatQueueState, ChatSendRequest, ChatTimelineItem, ContextTaxonomy, ContextTaxonomyKind, FileChangeCaptureInput, FileChangeInput, FileChangeRevision, FileChangeTrackingMode, ModelCapabilities, PickedPath, WebSearchResult } from "../../shared/ipc.js";
 import type { RuntimeSkillManifest } from "../services/skillManifests.js";
 import { chatSendRequestSchema } from "../../shared/schemas.js";

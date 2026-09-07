@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatMessage, ChatQueueMode, ChatQueueState, ChatStreamEvent, ChatStreamMessage, ChatStreamSettlement, ChatThread, ChatTimelineItem, MessageListRequest, PickedPath, PluginReference, ReasoningEffort, SkillReference } from "../../shared/ipc";
+import type { ChatMessage, ChatQueueMode, ChatQueueResponse, ChatQueueState, ChatStreamEvent, ChatStreamMessage, ChatStreamSettlement, ChatThread, ChatTimelineItem, MessageListRequest, PickedPath, PluginReference, ReasoningEffort, SkillReference } from "../../shared/ipc";
 import { applyStreamDelta } from "../../shared/streamDelta";
 import { applyChatStreamSettlement, chatStreamPrefixRenderId, chatStreamRenderId } from "../../shared/streamSettlement";
 import type { RunState } from "../types";
@@ -471,71 +471,31 @@ export function useChatMessages(options: {
     });
     messagesRef.current = optimisticMessages;
     setMessages(optimisticMessages);
-    setThreadRunState(threadId, "running");
-    setThreadRequestId(threadId, requestId);
-    const settlementPromise = waitForSettlement(requestId);
-    setThreadRunModel(threadId, modelId);
-    setThreadError(threadId, null);
-    unlockAutoFollow(threadId);
-    scrollSoon();
-
-    try {
-      await getBridge().sendChatMessage({
-        requestId,
-        threadId,
-        providerId,
-        modelId,
-        reasoningEffort,
-        memoryEnabled,
-        toolsEnabled,
-        captureContextTaxonomy,
-        skillIds,
-        inlineSkillIds,
-        inlinePluginIds,
-        content: requestContent,
-        attachments,
-        // The main process rebuilds the full model history from the database
-        // (see chat:send handler), so shipping the renderer's copy here only
-        // duplicated the payload without affecting model context. Send an empty
-        // array to keep the IPC message small on long threads.
-        messages: []
-      });
-
-      await awaitSettlementOrTimeout(requestId, settlementPromise);
-      settlementWaitersRef.current.delete(requestId);
-      setThreadRunState(threadId, "idle");
-      clearThreadQueue(threadId);
-      clearThreadRequestId(threadId);
-      clearThreadRunModel(threadId);
-      await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null);
-      if (!settledRequestIdsRef.current.has(requestId)) await refreshVisibleMessages(threadId);
-      clearSettledRequest(requestId);
-      return true;
-    } catch (caught) {
-      await awaitSettlementOrTimeout(requestId, settlementPromise);
-      settlementWaitersRef.current.delete(requestId);
-      if (settledRequestStatusesRef.current.get(requestId) === "aborted") {
-        await finishAbortedRequest(threadId, requestId);
-        return true;
-      }
-      const failureReconcile = beginProviderFailureReconcile(threadId, requestId);
-      clearSettledRequest(requestId);
-      const message = errorMessage(caught, "Provider request failed.");
-      const errorMessageItem = createErrorMessage(threadId, message);
-      setThreadError(threadId, message);
-      setThreadRunState(threadId, "error");
-      clearThreadQueue(threadId);
-      clearThreadRequestId(threadId);
-      clearThreadRunModel(threadId);
-      await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
-      await reconcileProviderFailure(threadId, requestId, failureReconcile, existingMessageIds, errorMessageItem);
-      return false;
-    }
+    return runChatRequest(threadId, requestId, modelId, existingMessageIds, () => getBridge().sendChatMessage({
+      requestId,
+      threadId,
+      providerId,
+      modelId,
+      reasoningEffort,
+      memoryEnabled,
+      toolsEnabled,
+      captureContextTaxonomy,
+      skillIds,
+      inlineSkillIds,
+      inlinePluginIds,
+      content: requestContent,
+      attachments,
+      // The main process rebuilds the full model history from the database
+      // (see chat:send handler), so shipping the renderer's copy here only
+      // duplicated the payload without affecting model context. Send an empty
+      // array to keep the IPC message small on long threads.
+      messages: []
+    }));
   }
 
-  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, captureContextTaxonomy = false) {
+  async function retryLastMessage(providerId?: string, messageId?: string, modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, captureContextTaxonomy = false): Promise<boolean> {
     const threadId = options.activeThread?.id;
-    if (!threadId || isBusy(threadRunStates[threadId])) return;
+    if (!threadId || isBusy(threadRunStates[threadId])) return false;
     const requestId = crypto.randomUUID();
     const existingMessageIds = new Set(messagesRef.current.map((message) => message.id));
 
@@ -544,63 +504,19 @@ export function useChatMessages(options: {
       replaceAfterMessageId: lastStableMessageId(retryBaseline),
       prefix: []
     });
-    setMessages(() => {
-      return retryBaseline;
-    });
-    setThreadRunState(threadId, "running");
-    setThreadRequestId(threadId, requestId);
-    const settlementPromise = waitForSettlement(requestId);
-    setThreadRunModel(threadId, modelId);
-    setThreadError(threadId, null);
-    unlockAutoFollow(threadId);
-    scrollSoon();
-
-    try {
-      await getBridge().retryChatMessage({
-        requestId,
-        threadId,
-        providerId,
-        modelId,
-        reasoningEffort,
-        memoryEnabled,
-        toolsEnabled,
-        captureContextTaxonomy,
-        skillIds,
-        messageId
-      });
-      await awaitSettlementOrTimeout(requestId, settlementPromise);
-      settlementWaitersRef.current.delete(requestId);
-      setThreadRunState(threadId, "idle");
-      clearThreadQueue(threadId);
-      clearThreadRequestId(threadId);
-      clearThreadRunModel(threadId);
-      await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null);
-      if (!settledRequestIdsRef.current.has(requestId)) await refreshVisibleMessages(threadId);
-      clearSettledRequest(requestId);
-    } catch (caught) {
-      await awaitSettlementOrTimeout(requestId, settlementPromise);
-      settlementWaitersRef.current.delete(requestId);
-      if (settledRequestStatusesRef.current.get(requestId) === "aborted") {
-        await finishAbortedRequest(threadId, requestId);
-        return;
-      }
-      const failureReconcile = beginProviderFailureReconcile(threadId, requestId);
-      clearSettledRequest(requestId);
-      const message = errorMessage(caught, "Provider request failed.");
-      setThreadError(threadId, message);
-      setThreadRunState(threadId, "error");
-      clearThreadQueue(threadId);
-      clearThreadRequestId(threadId);
-      clearThreadRunModel(threadId);
-      await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
-      await reconcileProviderFailure(
-        threadId,
-        requestId,
-        failureReconcile,
-        existingMessageIds,
-        createErrorMessage(threadId, message)
-      );
-    }
+    setMessages(retryBaseline);
+    return runChatRequest(threadId, requestId, modelId, existingMessageIds, () => getBridge().retryChatMessage({
+      requestId,
+      threadId,
+      providerId,
+      modelId,
+      reasoningEffort,
+      memoryEnabled,
+      toolsEnabled,
+      captureContextTaxonomy,
+      skillIds,
+      messageId
+    }));
   }
 
   async function editMessage(messageId: string, content: string, providerId?: string, attachments: PickedPath[] = [], modelId?: string, memoryEnabled?: boolean, toolsEnabled = true, skillIds: string[] = [], reasoningEffort?: ReasoningEffort, inlineSkillIds?: string[], inlinePluginIds?: string[], optimisticSkillsUsed: SkillReference[] = [], optimisticPluginsUsed: PluginReference[] = [], captureContextTaxonomy = false): Promise<boolean> {
@@ -622,7 +538,36 @@ export function useChatMessages(options: {
       replaceAfterMessageId: lastStableMessageId(editBaseline.slice(0, -1)),
       prefix: editedMessage ? [editedMessage] : []
     });
-    setMessages(() => editBaseline);
+    setMessages(editBaseline);
+    return runChatRequest(threadId, requestId, modelId, existingMessageIds, () => getBridge().editChatMessage({
+      requestId,
+      threadId,
+      messageId,
+      providerId,
+      modelId,
+      reasoningEffort,
+      memoryEnabled,
+      toolsEnabled,
+      captureContextTaxonomy,
+      skillIds,
+      inlineSkillIds,
+      inlinePluginIds,
+      content,
+      attachments
+    }));
+  }
+
+  // Shared lifecycle of send, retry, and edit once their optimistic baseline is
+  // on screen: mark the run, invoke main, then converge on the settlement. An
+  // aborted run counts as completed; a provider failure reconciles the tail
+  // against the database and surfaces a transient error row.
+  async function runChatRequest(
+    threadId: string,
+    requestId: string,
+    modelId: string | undefined,
+    existingMessageIds: ReadonlySet<string>,
+    invoke: () => Promise<unknown>
+  ): Promise<boolean> {
     setThreadRunState(threadId, "running");
     setThreadRequestId(threadId, requestId);
     const settlementPromise = waitForSettlement(requestId);
@@ -632,22 +577,7 @@ export function useChatMessages(options: {
     scrollSoon();
 
     try {
-      await getBridge().editChatMessage({
-        requestId,
-        threadId,
-        messageId,
-        providerId,
-        modelId,
-        reasoningEffort,
-        memoryEnabled,
-        toolsEnabled,
-        captureContextTaxonomy,
-        skillIds,
-        inlineSkillIds,
-        inlinePluginIds,
-        content,
-        attachments
-      });
+      await invoke();
       await awaitSettlementOrTimeout(requestId, settlementPromise);
       settlementWaitersRef.current.delete(requestId);
       setThreadRunState(threadId, "idle");
@@ -674,13 +604,7 @@ export function useChatMessages(options: {
       clearThreadRequestId(threadId);
       clearThreadRunModel(threadId);
       await options.refreshThreads(activeThreadIdRef.current === threadId ? threadId : null).catch(() => undefined);
-      await reconcileProviderFailure(
-        threadId,
-        requestId,
-        failureReconcile,
-        existingMessageIds,
-        createErrorMessage(threadId, message)
-      );
+      await reconcileProviderFailure(threadId, requestId, failureReconcile, existingMessageIds, createErrorMessage(threadId, message));
       return false;
     }
   }
@@ -748,87 +672,49 @@ export function useChatMessages(options: {
     }
   }
 
-  async function queueMessage(content: string, attachments: PickedPath[] = [], mode: ChatQueueMode = "followUp"): Promise<boolean> {
-    const threadId = activeThreadIdRef.current;
-    if ((!content.trim() && attachments.length === 0) || !threadId || threadRunStates[threadId] !== "running") return false;
-    const requestId = threadRequestIdsRef.current[threadId];
-    if (!requestId) return false;
-    try {
-      const response = await getBridge().queueChatMessage({
-        requestId,
-        threadId,
-        mode,
-        content: content.trim(),
-        attachments
-      });
-      setThreadQueue(threadId, response.queue);
-      setThreadError(threadId, null);
-      return true;
-    } catch (caught) {
-      const message = errorMessage(caught, "Failed to queue message.");
-      setThreadError(threadId, message);
-      return false;
-    }
+  function queueMessage(content: string, attachments: PickedPath[] = [], mode: ChatQueueMode = "followUp"): Promise<boolean> {
+    if (!content.trim() && attachments.length === 0) return Promise.resolve(false);
+    return runQueueOperation("Failed to queue message.", (requestId, threadId) =>
+      getBridge().queueChatMessage({ requestId, threadId, mode, content: content.trim(), attachments })
+    );
   }
 
-  async function updateQueuedMessage(messageId: string, content: string, attachments: PickedPath[] = []): Promise<boolean> {
-    const threadId = activeThreadIdRef.current;
-    if ((!content.trim() && attachments.length === 0) || !threadId || threadRunStates[threadId] !== "running") return false;
-    const requestId = threadRequestIdsRef.current[threadId];
-    if (!requestId) return false;
-    try {
-      const response = await getBridge().updateQueuedChatMessage({
-        requestId,
-        threadId,
-        messageId,
-        content: content.trim(),
-        attachments
-      });
-      setThreadQueue(threadId, response.queue);
-      setThreadError(threadId, null);
-      return true;
-    } catch (caught) {
-      setThreadError(threadId, errorMessage(caught, "Failed to update queued message."));
-      return false;
-    }
+  function updateQueuedMessage(messageId: string, content: string, attachments: PickedPath[] = []): Promise<boolean> {
+    if (!content.trim() && attachments.length === 0) return Promise.resolve(false);
+    return runQueueOperation("Failed to update queued message.", (requestId, threadId) =>
+      getBridge().updateQueuedChatMessage({ requestId, threadId, messageId, content: content.trim(), attachments })
+    );
   }
 
-  async function deleteQueuedMessage(messageId: string): Promise<boolean> {
+  function deleteQueuedMessage(messageId: string): Promise<boolean> {
+    return runQueueOperation("Failed to delete queued message.", (requestId, threadId) =>
+      getBridge().deleteQueuedChatMessage({ requestId, threadId, messageId })
+    );
+  }
+
+  function steerQueuedMessage(messageId: string): Promise<boolean> {
+    return runQueueOperation("Failed to steer queued message.", (requestId, threadId) =>
+      getBridge().steerQueuedChatMessage({ requestId, threadId, messageId })
+    );
+  }
+
+  // Queue edits only apply to the active thread's running request; the reply
+  // carries the authoritative queue state for that thread.
+  async function runQueueOperation(
+    failureMessage: string,
+    invoke: (requestId: string, threadId: string) => Promise<ChatQueueResponse>
+  ): Promise<boolean> {
     const threadId = activeThreadIdRef.current;
     if (!threadId || threadRunStates[threadId] !== "running") return false;
     const requestId = threadRequestIdsRef.current[threadId];
     if (!requestId) return false;
     try {
-      const response = await getBridge().deleteQueuedChatMessage({
-        requestId,
-        threadId,
-        messageId
-      });
+      const response = await invoke(requestId, threadId);
       setThreadQueue(threadId, response.queue);
       setThreadError(threadId, null);
       return true;
     } catch (caught) {
-      setThreadError(threadId, errorMessage(caught, "Failed to delete queued message."));
-      return false;
-    }
-  }
-
-  async function steerQueuedMessage(messageId: string): Promise<boolean> {
-    const threadId = activeThreadIdRef.current;
-    if (!threadId || threadRunStates[threadId] !== "running") return false;
-    const requestId = threadRequestIdsRef.current[threadId];
-    if (!requestId) return false;
-    try {
-      const response = await getBridge().steerQueuedChatMessage({
-        requestId,
-        threadId,
-        messageId
-      });
-      setThreadQueue(threadId, response.queue);
-      setThreadError(threadId, null);
-      return true;
-    } catch (caught) {
-      setThreadError(threadId, errorMessage(caught, "Failed to steer queued message."));
+      setThreadError(threadId, errorMessage(caught, failureMessage));
       return false;
     }
   }
@@ -1600,7 +1486,6 @@ export function useChatMessages(options: {
 
   return {
     messages,
-    setMessages,
     hasOlderMessages,
     loadingOlderMessages,
     loadOlderMessages,

@@ -1,6 +1,15 @@
-const { contextBridge, ipcRenderer } = require("electron");
+import { contextBridge, ipcRenderer } from "electron";
+import type { JasmineApi } from "../shared/ipc.js";
 
-contextBridge.exposeInMainWorld("jasmine", {
+// Every method is contextually typed by JasmineApi, so a bridge member that
+// drifts from the shared contract fails `tsc -p tsconfig.main.json`.
+function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
+const api: JasmineApi = {
   platform: process.platform,
   listThreads() {
     return ipcRenderer.invoke("threads:list");
@@ -48,9 +57,7 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("projects:openInExplorer", request);
   },
   onProjectOpened(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("projects:opened", listener);
-    return () => ipcRenderer.removeListener("projects:opened", listener);
+    return subscribe("projects:opened", callback);
   },
   listRemoteProfiles() {
     return ipcRenderer.invoke("remotes:listProfiles");
@@ -110,14 +117,10 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("remotes:abortSession", request);
   },
   onRemoteStatusChanged(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("remotes:status-changed", listener);
-    return () => ipcRenderer.removeListener("remotes:status-changed", listener);
+    return subscribe("remotes:status-changed", callback);
   },
   onRemoteLiveTurnChanged(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("remotes:live-turn-changed", listener);
-    return () => ipcRenderer.removeListener("remotes:live-turn-changed", listener);
+    return subscribe("remotes:live-turn-changed", callback);
   },
   getWorkingSnapshot() {
     return ipcRenderer.invoke("working:snapshot");
@@ -138,14 +141,10 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("working:navigation:consume");
   },
   onWorkingChanged(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("working:changed", listener);
-    return () => ipcRenderer.removeListener("working:changed", listener);
+    return subscribe("working:changed", callback);
   },
   onWorkingNavigate(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("working:navigate", listener);
-    return () => ipcRenderer.removeListener("working:navigate", listener);
+    return subscribe("working:navigate", callback);
   },
   listMessages(request) {
     return ipcRenderer.invoke("messages:list", request);
@@ -184,19 +183,13 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("permissionApproval:answer", request);
   },
   onChatStream(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("chat:stream", listener);
-    return () => ipcRenderer.removeListener("chat:stream", listener);
+    return subscribe("chat:stream", callback);
   },
   onAskUserQuestion(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("askUserQuestion:prompt", listener);
-    return () => ipcRenderer.removeListener("askUserQuestion:prompt", listener);
+    return subscribe("askUserQuestion:prompt", callback);
   },
   onAskUserQuestionCancelled(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("askUserQuestion:cancelled", listener);
-    return () => ipcRenderer.removeListener("askUserQuestion:cancelled", listener);
+    return subscribe("askUserQuestion:cancelled", callback);
   },
   listTracesForThread(threadId) {
     return ipcRenderer.invoke("traces:listForThread", threadId);
@@ -298,14 +291,10 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("appSettings:update", request);
   },
   onPermissionApproval(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("permissionApproval:prompt", listener);
-    return () => ipcRenderer.removeListener("permissionApproval:prompt", listener);
+    return subscribe("permissionApproval:prompt", callback);
   },
   onPermissionApprovalCancelled(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("permissionApproval:cancelled", listener);
-    return () => ipcRenderer.removeListener("permissionApproval:cancelled", listener);
+    return subscribe("permissionApproval:cancelled", callback);
   },
   getAppUpdateState() {
     return ipcRenderer.invoke("updater:getState");
@@ -323,9 +312,7 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("updater:openDownloadPage");
   },
   onAppUpdateStateChanged(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("updater:changed", listener);
-    return () => ipcRenderer.removeListener("updater:changed", listener);
+    return subscribe("updater:changed", callback);
   },
   resolveTerminalShell() {
     return ipcRenderer.invoke("terminal:shell:resolve");
@@ -343,9 +330,7 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("terminal:stop", request);
   },
   onTerminalEvent(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("terminal:event", listener);
-    return () => ipcRenderer.removeListener("terminal:event", listener);
+    return subscribe("terminal:event", callback);
   },
   readClipboardText() {
     return ipcRenderer.invoke("clipboard:readText");
@@ -432,9 +417,7 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("window:state");
   },
   onWindowStateChanged(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("window:state-changed", listener);
-    return () => ipcRenderer.removeListener("window:state-changed", listener);
+    return subscribe("window:state-changed", callback);
   },
   spotlightSearch(request) {
     return ipcRenderer.invoke("spotlight:search", request);
@@ -452,15 +435,12 @@ contextBridge.exposeInMainWorld("jasmine", {
     return ipcRenderer.invoke("spotlight:getShortcutStatus");
   },
   onSpotlightReset(callback) {
-    const listener = () => callback();
-    ipcRenderer.on("spotlight:reset", listener);
-    return () => ipcRenderer.removeListener("spotlight:reset", listener);
+    return subscribe("spotlight:reset", callback);
   },
   onSpotlightCommand(callback) {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("spotlight:command", listener);
-    return () => ipcRenderer.removeListener("spotlight:command", listener);
+    return subscribe("spotlight:command", callback);
   }
-});
+};
 
+contextBridge.exposeInMainWorld("jasmine", api);
 contextBridge.exposeInMainWorld("__JASMINE_HARNESS_ENABLED__", process.env.JASMINE_E2E_HARNESS === "1");

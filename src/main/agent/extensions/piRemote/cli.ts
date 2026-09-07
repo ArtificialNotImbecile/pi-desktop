@@ -10,7 +10,7 @@ import { loadLocalPiModelConfig } from "./config.js";
 import { ProfileStore } from "./profiles.js";
 import { ManagedRemoteRuntime } from "./runtime.js";
 import { shellQuote } from "./ssh.js";
-import type { DoctorReport, RemoteProfile, RemoteSessionEvent } from "./types.js";
+import type { DoctorReport, RemoteSessionEvent } from "./types.js";
 
 export interface CliIo {
   stdout(text: string): void;

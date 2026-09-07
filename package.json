@@ -34,21 +34,15 @@
     "harness:visual": "node scripts/capture-ui-matrix.mjs",
     "harness:full": "npm run build && npm run test:unit && npm run test:renderer && npm run harness:inspect && npm run harness:visual && npm run harness:check && npm run test:e2e",
     "test:e2e": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts",
-    "test:e2e:bg": "npm run test:e2e",
     "test:e2e:smoke": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --grep @smoke",
-    "test:e2e:full": "npm run test:e2e",
     "test:e2e:main": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --project=main",
     "test:e2e:serial": "cross-env JASMINE_E2E_OFFSCREEN=1 playwright test -c tests/playwright.config.ts --project=focus-sensitive --project=startup-timing --no-deps",
     "test:e2e:headed": "cross-env JASMINE_E2E_OFFSCREEN= playwright test -c tests/playwright.config.ts --headed",
     "test:context-capture": "npm run build:context-capture && node --no-warnings scripts/smoke-context-capture-package.mjs",
-    "test:file-changes": "npm --prefix src/main/agent/extensions/fileChanges test",
-    "test:startup-bootstrap": "node --no-warnings tests/unit/startup-bootstrap-smoke.mjs",
-    "test:icon-assets": "node --no-warnings tests/unit/icon-assets-smoke.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:renderer": "vitest run",
     "test:renderer:watch": "vitest",
     "lint:ui": "node scripts/check-ui-primitives.mjs && node scripts/check-theme-colors.mjs",
-    "verify": "npm run build && npm run test:unit && npm run test:renderer && npm run harness:inspect && npm run harness:check && npm run test:e2e",
     "readme:capture": "npm run build && node scripts/capture-readme-gallery.mjs && node scripts/record-context-taxonomy-gif.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "dist:win:dir": "npm run build && electron-builder --win dir --x64 --publish never",
@@ -127,8 +121,7 @@
     },
     "files": [
       "dist/**/*",
-      "main.cjs",
-      "src/main/preload.cjs"
+      "main.cjs"
     ],
     "extraResources": [
       {

@@ -797,29 +797,6 @@ select:focus-visible {
   fill: var(--surface-raised);
 }
 
-.ui-panel-header {
-  gap: var(--space-3);
-  justify-content: space-between;
-}
-
-.ui-panel-header-icon {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--accent);
-}
-
-.ui-panel-header-main {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-
 .ui-panel-header-main p,
 .ui-settings-page-header p {
   margin: 0;
@@ -828,18 +805,9 @@ select:focus-visible {
   line-height: 1.4;
 }
 
-.ui-panel-header-eyebrow {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
 .ui-panel-header-actions,
 .ui-toolbar {
   gap: var(--space-3);
-}
-
-.ui-toolbar-spacer {
-  flex: 1 1 auto;
 }
 
 .ui-toolbar {
@@ -1122,23 +1090,6 @@ select:focus-visible {
 
 .ui-executable-picker output.has-value {
   color: var(--text-secondary);
-}
-
-.ui-form-grid {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.ui-form-grid label {
-  display: grid;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.ui-form-grid label > span {
-  color: var(--text-primary);
-  font-weight: 600;
 }
 
 .ui-catalog-backdrop {
@@ -2375,34 +2326,6 @@ body.resizing-right-panel {
   display: grid;
   align-content: start;
   gap: 8px;
-}
-
-.right-panel-row {
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-  border-radius: 8px;
-  background: var(--soft);
-}
-
-.right-panel-row strong {
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.right-panel-row span {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.right-panel-row code {
-  overflow: hidden;
-  color: var(--faint);
-  font-family: var(--font-code);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .panel-empty {
@@ -4341,89 +4264,6 @@ body:has(.settings-panel) .message-jump-rail {
   gap: 10px;
 }
 
-.running-live-thinking {
-  display: grid;
-  gap: 8px;
-  max-width: 720px;
-  padding-left: 13px;
-  border-left: 1px solid var(--accent-line);
-}
-
-.running-live-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
-  color: color-mix(in srgb, var(--accent) 76%, var(--muted));
-  font-family: var(--font-ui);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.running-live-label .icon {
-  width: 15px;
-  height: 15px;
-  color: var(--accent);
-}
-
-.running-live-thinking .markdown-message p,
-.running-live-thinking .markdown-message ul,
-.running-live-thinking .markdown-message ol {
-  color: color-mix(in srgb, var(--ink) 78%, var(--muted));
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.running-live-output {
-  max-width: 720px;
-}
-
-.run-details {
-  display: grid;
-  gap: 8px;
-  max-width: 520px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
-  background: var(--soft);
-  font-size: 12px;
-}
-
-.run-details dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.run-details dl > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.run-details dt {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.run-details dd {
-  margin: 0;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.run-details p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.tool-line { color: var(--muted); }
-
 /* ── Run header ───────────────────────────────────────────────────────────
    One element per turn. Live it reads "Working 0:12"; settled it becomes
    "Worked for 12s" and, on success, the control that folds the turn's activity
@@ -4926,40 +4766,11 @@ button.timeline-row:focus-visible {
   max-width: 100%;
 }
 
-.trace-link {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--muted);
-  background: var(--surface);
-  font-family: var(--font-ui);
-  font-size: 11px;
-}
-
-.trace-link:hover {
-  color: var(--ink);
-  background: var(--soft);
-}
-
-.success-dot {
-  margin-left: auto;
-  color: var(--success);
-  font-family: var(--font-ui);
-  font-weight: 700;
-}
-
 .error-dot {
   margin-left: auto;
   color: var(--danger);
   font-family: var(--font-ui);
   font-weight: 800;
-}
-
-.tool-line small {
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-size: 11px;
 }
 
 .message-actions {
@@ -5171,19 +4982,6 @@ button.timeline-row:focus-visible {
 
 .rich-composer-paragraph {
   margin: 0;
-}
-
-.composer-token {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: 0.92em;
-  vertical-align: baseline;
 }
 
 .edit-banner {
@@ -5716,17 +5514,6 @@ button.attachment-chip-main:hover span {
 .chat-page.empty-thread .mention-menu {
   top: calc(100% + 8px);
   bottom: auto;
-}
-
-.mention-group {
-  display: grid;
-  gap: 1px;
-}
-
-.mention-group-title {
-  padding: 3px 7px 4px;
-  color: var(--faint);
-  font-size: 12px;
 }
 
 .mention-row {
@@ -6760,219 +6547,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   overflow: auto;
 }
 
-.trace-panel-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.trace-panel-header > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.trace-panel-header strong {
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.trace-panel-header span,
-.trace-empty {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.trace-panel-header button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 30px;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--muted);
-  background: var(--surface);
-}
-
-.trace-panel-header button:hover {
-  color: var(--ink);
-  background: var(--soft);
-}
-
-.trace-list {
-  display: grid;
-  gap: 8px;
-}
-
-.trace-row {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--soft);
-}
-
-.trace-row.selected {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-}
-
-.trace-row-title {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-}
-
-.trace-row-title strong {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trace-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.trace-status::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.trace-status.success {
-  color: var(--success);
-}
-
-.trace-status.error,
-.trace-error {
-  color: var(--danger);
-}
-
-.trace-row dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin: 0;
-}
-
-.trace-row dt {
-  color: var(--faint);
-  font-size: 10px;
-}
-
-.trace-row dd {
-  margin: 0;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.trace-row p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.trace-row > button {
-  justify-self: start;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--muted);
-  background: var(--surface);
-  font-size: 12px;
-}
-
-.trace-row > button:hover {
-  color: var(--ink);
-  background: var(--soft);
-}
-
-.trace-detail {
-  display: grid;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.trace-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.trace-detail-header strong {
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.trace-detail-header button {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--muted);
-  background: var(--surface);
-  font-size: 12px;
-}
-
-.trace-detail dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  margin: 0;
-}
-
-.trace-detail dt,
-.trace-detail-block span {
-  color: var(--faint);
-  font-size: 10px;
-}
-
-.trace-detail dd {
-  margin: 0;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.trace-detail-block {
-  display: grid;
-  gap: 4px;
-}
-
-.trace-detail-block p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.trace-detail-block.error p {
-  color: var(--danger);
-}
-
 .search-backdrop {
   position: absolute;
   inset: 0;
@@ -7210,16 +6784,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   transform: translateX(-50%);
 }
 
-.confirm-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 44;
-  display: grid;
-  place-items: center;
-  background: rgba(var(--surface-rgb), 0.62);
-  backdrop-filter: blur(6px);
-}
-
 .confirm-dialog {
   width: min(360px, calc(100vw - 40px));
   padding: 18px;
@@ -7241,36 +6805,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
-}
-
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.confirm-actions button {
-  min-width: 72px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--ink);
-  background: var(--surface);
-}
-
-.confirm-actions button:hover {
-  background: var(--soft);
-}
-
-.confirm-actions button.danger {
-  border-color: var(--danger);
-  color: var(--on-danger);
-  background: var(--danger);
-}
-
-.confirm-actions button.danger:hover {
-  background: var(--danger-hover);
 }
 
 .settings-backdrop {
@@ -7711,10 +7245,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   line-height: 1.35;
 }
 
-.field-row {
-  grid-template-columns: minmax(180px, 1fr) minmax(260px, 470px);
-}
-
 .settings-row input,
 .settings-row select {
   height: 34px;
@@ -7736,45 +7266,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
 .settings-row select:focus {
   border-color: var(--blue-line);
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
-}
-
-.path-picker-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.path-picker-control output {
-  display: block;
-  min-width: 0;
-  height: 34px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  overflow: hidden;
-  color: var(--muted);
-  background: var(--soft);
-  font-size: 12px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.path-picker-control output.has-value {
-  color: var(--ink);
-}
-
-.path-picker-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.path-picker-actions .settings-row-button {
-  min-height: 34px;
-  white-space: nowrap;
 }
 
 .api-key-control {
@@ -7807,38 +7298,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   color: var(--accent);
   background: var(--surface);
   box-shadow: 0 1px 4px rgba(var(--ink-rgb), 0.08);
-}
-
-.secret-input {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  align-items: center;
-}
-
-.secret-input input {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.secret-input button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-left: 0;
-  border-radius: 0 7px 7px 0;
-  color: var(--muted);
-  background: var(--surface);
-}
-
-.secret-input button:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--soft);
-}
-
-.secret-input button:disabled {
-  opacity: 0.45;
 }
 
 .field-hint {
@@ -8843,33 +8302,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
 .skill-editor textarea:focus {
   border-color: rgba(var(--accent-rgb), 0.32);
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
-}
-
-.skill-editor-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.skill-editor-actions .primary {
-  border-color: var(--accent);
-  color: var(--on-accent);
-  background: var(--accent);
-}
-
-.icon-row-button,
-.icon-text-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
-.icon-row-button {
-  width: 34px;
-  padding: 0;
 }
 
 .models-section {
@@ -10128,10 +9560,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   font-size: 11px;
 }
 
-.working-notification-controls .ui-switch-root {
-  margin-bottom: 6px;
-}
-
 @media (max-width: 900px) {
   .working-header {
     align-items: stretch;
@@ -10202,7 +9630,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   .settings-panel.has-subnav {
     grid-template-columns: 150px 160px minmax(0, 1fr);
   }
-  .field-row { grid-template-columns: 1fr; }
   .ui-executable-picker-controls { grid-template-columns: 1fr; }
   .general-language-row.ui-settings-row,
   .general-settings-list-section .ui-settings-list-row,
@@ -10226,8 +9653,6 @@ button.memory-used-line > .ui-button-icon:last-child svg {
   .working-notification-detail-copy {
     grid-column: 1 / -1;
   }
-  .path-picker-control { grid-template-columns: 1fr; }
-  .path-picker-actions { justify-content: flex-start; }
 }
 
 /* Remote profiles, workspaces and sessions.

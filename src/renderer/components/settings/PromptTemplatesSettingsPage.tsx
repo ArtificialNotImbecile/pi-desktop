@@ -3,8 +3,8 @@ import type { PromptTemplateRecord, PromptTemplateSource } from "../../../shared
 import { FolderIcon, PlusIcon, RefreshIcon, SearchIcon, TerminalIcon, TrashIcon } from "../icons/Icons";
 import { SettingsHeader } from "./SettingsHeader";
 import { useI18n } from "../../i18n";
-import { Button, EmptyState, IconButton, TextInput } from "../ui";
-import { SettingsList, SettingsListRow, SettingsPage, SettingsToolbar, StatePill } from "./SettingsLayout";
+import { Button, EmptyState, IconButton, StatusPill, TextInput } from "../ui";
+import { SettingsList, SettingsListRow, SettingsPage, SettingsToolbar } from "./SettingsLayout";
 
 export function PromptTemplatesSettingsPage(props: {
   templates: PromptTemplateRecord[];
@@ -53,7 +53,7 @@ export function PromptTemplatesSettingsPage(props: {
             icon={<span className="prompt-source-icon"><FolderIcon /></span>}
             title={t("settings.prompts.localSource")}
             description="~/.jasmine/prompts"
-            status={<StatePill>{t("app.localOnly")}</StatePill>}
+            status={<StatusPill>{t("app.localOnly")}</StatusPill>}
           />
           {props.sources.map((source) => (
             <SettingsListRow
@@ -83,7 +83,7 @@ export function PromptTemplatesSettingsPage(props: {
                 title={`/${template.name}`}
                 description={template.description || template.filePath}
                 meta={template.filePath}
-                status={template.argumentHint ? <StatePill>{template.argumentHint}</StatePill> : undefined}
+                status={template.argumentHint ? <StatusPill>{template.argumentHint}</StatusPill> : undefined}
               />
             ))
           )}

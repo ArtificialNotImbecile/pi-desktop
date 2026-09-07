@@ -8,10 +8,6 @@ function Svg(props: { children: ReactNode }) {
   );
 }
 
-export function PanelIcon() {
-  return <Svg><path d="M4 5h16M9 5v14M4 19h16" /></Svg>;
-}
-
 export function MinimizeIcon() {
   return <Svg><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M15 5v14" /></Svg>;
 }

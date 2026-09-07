@@ -7,9 +7,9 @@ import type {
 } from "../../../shared/ipc";
 import { useI18n, type I18nKey } from "../../i18n";
 import { PlusIcon, RefreshIcon, ServerIcon, TrashIcon } from "../icons/Icons";
-import { Button, ConfirmDialog, EmptyState } from "../ui";
+import { Button, ConfirmDialog, EmptyState, StatusPill } from "../ui";
 import { SettingsHeader } from "./SettingsHeader";
-import { SettingsList, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, SettingsToolbar, StatePill } from "./SettingsLayout";
+import { SettingsList, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, SettingsToolbar } from "./SettingsLayout";
 
 export function RemoteSettingsPage(props: {
   profiles: RemoteProfileSummary[];
@@ -101,9 +101,9 @@ export function RemoteSettingsPage(props: {
                   <SettingsRow label={t("remote.egress.label")} description={
                     selected.networkMode === "client-proxy" ? t("remote.egress.proxyDescription") : t("remote.egress.directDescription")
                   }>
-                    <StatePill tone={selected.networkMode === "client-proxy" ? "accent" : "neutral"}>
+                    <StatusPill tone={selected.networkMode === "client-proxy" ? "accent" : "neutral"}>
                       {selected.networkMode === "client-proxy" ? t("remote.egress.proxy") : t("remote.egress.direct")}
-                    </StatePill>
+                    </StatusPill>
                   </SettingsRow>
                 </SettingsSection>
 
@@ -124,7 +124,7 @@ export function RemoteSettingsPage(props: {
                     <ul className="remote-doctor-list">
                       {visibleReport.checks.map((check) => (
                         <li key={check.id}>
-                          <StatePill tone={checkTone(check.status)}>{t(checkStatusKey(check.status))}</StatePill>
+                          <StatusPill tone={checkTone(check.status)}>{t(checkStatusKey(check.status))}</StatusPill>
                           <span>{check.message}</span>
                         </li>
                       ))}
@@ -142,7 +142,7 @@ export function RemoteSettingsPage(props: {
                       key={workspace.id}
                       title={workspace.name}
                       description={workspace.cwd}
-                      status={workspace.isDefaultCwd ? <StatePill tone="accent">{t("remote.workspace.default")}</StatePill> : null}
+                      status={workspace.isDefaultCwd ? <StatusPill tone="accent">{t("remote.workspace.default")}</StatusPill> : null}
                       meta={t("remote.session.count", { count: workspace.sessionCount })}
                     />
                   ))}

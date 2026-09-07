@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { access, link, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
@@ -10,7 +10,6 @@ import { EgressBroker, type EgressSession } from "./egress.js";
 import { ProxyAuditLog } from "./audit.js";
 import { PiRemoteError } from "./errors.js";
 import { DaemonClient, PiRpcSessionPort, resolveSessionMetadata, type ControlTransport } from "./rpc.js";
-import { ProfileStore } from "./profiles.js";
 import { SshRunner, redactDiagnostic, remoteRootShellExpression, shellQuote } from "./ssh.js";
 import {
   CONTROL_PROTOCOL_VERSION,

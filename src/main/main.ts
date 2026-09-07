@@ -15,6 +15,9 @@ import { SpotlightShortcutManager } from "./services/spotlightShortcut.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// preload.cts compiles to CommonJS beside this file; a sandboxed renderer
+// preload cannot load the ESM output the rest of dist/main uses.
+const preloadPath = path.join(__dirname, "preload.cjs");
 let database: JasmineDatabase | null = null;
 let createDatabase: (() => JasmineDatabase) | null = null;
 let workingRegistry: WorkingRegistry | null = null;
@@ -125,7 +128,7 @@ function createWindow() {
       ? { ...offscreenWindowPosition(), opacity: 0, skipTaskbar: true, focusable: false }
       : {}),
     webPreferences: {
-      preload: resolvePreloadPath(),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       // Off-screen windows count as occluded; keep timers and rAF at full
@@ -351,9 +354,10 @@ function setupApplicationMenu(): void {
 
 async function openProjectFolderFromMenu(): Promise<void> {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getFocusedWindow();
-  const pickedPath = process.env.JASMINE_E2E_PICK_PROJECT_FOLDER
-    ? process.env.JASMINE_E2E_PICK_PROJECT_FOLDER
-    : await pickProjectFolderFromMenu(win);
+  // The IPC modules are loaded lazily during startup; by the time the menu is
+  // clickable they are cached, so this import resolves immediately.
+  const { pickProjectFolder } = await import("./ipc/projects.js");
+  const pickedPath = await pickProjectFolder(win);
   if (!pickedPath) return;
   try {
     const project = getDatabase().createProjectFromPath(pickedPath);
@@ -371,14 +375,15 @@ async function openProjectFolderFromMenu(): Promise<void> {
   }
 }
 
-async function pickProjectFolderFromMenu(owner?: BrowserWindow | null): Promise<string | null> {
-  const options = {
-    title: "Open folder",
-    properties: ["openDirectory" as const]
-  };
-  const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-  if (result.canceled || !result.filePaths[0]) return null;
-  return result.filePaths[0];
+// Off-screen harness windows are shown without ever taking focus, so a local
+// E2E run cannot steal the keyboard from the developer's session.
+function showWindow(win: BrowserWindow, focus: boolean): void {
+  if (isE2eOffscreen) {
+    win.showInactive();
+    return;
+  }
+  win.show();
+  if (focus) win.focus();
 }
 
 function focusMainWindow(): void {
@@ -388,12 +393,7 @@ function focusMainWindow(): void {
     return;
   }
   if (win.isMinimized()) win.restore();
-  if (isE2eOffscreen) {
-    win.showInactive();
-  } else {
-    win.show();
-    win.focus();
-  }
+  showWindow(win, true);
   focusOnWindowCreate = false;
 }
 
@@ -403,19 +403,8 @@ function focusMainWindow(): void {
 function showMainWindow(): BrowserWindow | null {
   hideSpotlight();
   refreshTrayMenu();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    if (isE2eOffscreen) {
-      mainWindow.showInactive();
-    } else {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-    focusOnWindowCreate = false;
-    return mainWindow;
-  }
-  focusOnWindowCreate = true;
-  void startApplication();
+  focusMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) void startApplication();
   return mainWindow;
 }
 
@@ -529,7 +518,7 @@ function createSpotlightWindow(): BrowserWindow {
       ? { ...offscreenWindowPosition(), opacity: 0, focusable: false, alwaysOnTop: false }
       : { alwaysOnTop: true }),
     webPreferences: {
-      preload: resolvePreloadPath(),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       ...(isE2eOffscreen ? { backgroundThrottling: false } : {})
@@ -563,8 +552,7 @@ function showSpotlight(): void {
   const winX = Math.round(x + (width - SPOTLIGHT_WIDTH) / 2);
   const winY = Math.round(y + height * 0.22);
   win.setBounds({ x: winX, y: winY, width: SPOTLIGHT_WIDTH, height: SPOTLIGHT_HEIGHT });
-  if (isE2eOffscreen) win.showInactive();
-  else win.show();
+  showWindow(win, false);
   focusSpotlightWindow(win);
   if (win.webContents.isLoadingMainFrame()) {
     win.webContents.once("did-finish-load", () => {
@@ -602,15 +590,6 @@ function toggleSpotlight(): void {
 function registerSpotlightShortcut(accelerator: string): void {
   if (spotlightShortcutManager.initialize(accelerator)) return;
   console.warn(`Spotlight shortcut ${accelerator} could not be registered (likely in use).`);
-}
-
-function resolvePreloadPath(): string {
-  const candidates = [
-    path.join(process.cwd(), "src/main/preload.cjs"),
-    path.join(__dirname, "../../../src/main/preload.cjs"),
-    path.join(__dirname, "preload.js")
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
 }
 
 // Menu-bar/status-area icons are sized in points, and neither macOS nor most
@@ -662,8 +641,7 @@ function getAppIconCandidates() {
 async function showStartupScreen(win: BrowserWindow): Promise<void> {
   await win.loadURL(startupPageUrl("loading"));
   if (win.isDestroyed()) return;
-  if (isE2eOffscreen) win.showInactive();
-  else win.show();
+  showWindow(win, false);
   if (focusOnWindowCreate) focusMainWindow();
 }
 
@@ -687,8 +665,7 @@ async function showStartupError(win: BrowserWindow, error: unknown): Promise<voi
   const message = error instanceof Error ? error.message : "Unknown startup error.";
   await win.loadURL(startupPageUrl("error", message)).catch(() => undefined);
   if (win.isDestroyed()) return;
-  if (isE2eOffscreen) win.showInactive();
-  else win.show();
+  showWindow(win, false);
 }
 
 function startupPageUrl(state: "loading" | "error", detail = ""): string {

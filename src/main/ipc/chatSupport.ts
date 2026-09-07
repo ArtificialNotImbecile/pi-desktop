@@ -1,5 +1,4 @@
 import type { ChatMessage, ChatSendRequest, SkillReference } from "../../shared/ipc.js";
-import { fallbackTitle } from "../services/threadTitles.js";
 
 export function buildRetryPlan(messages: ChatMessage[], messageId?: string) {
   if (messageId) {
@@ -80,10 +79,6 @@ function withExplicitSkillInstructions(content: string, skills: SkillReference[]
 
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-export function titleFromMessage(_content: string): string {
-  return fallbackTitle(_content);
 }
 
 export function titleFromAttachments(attachments: ChatSendRequest["attachments"]): string {
