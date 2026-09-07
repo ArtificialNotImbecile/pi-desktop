@@ -39,9 +39,9 @@ import { useI18n } from "../../i18n";
 import { APPEARANCE_THEMES } from "../../../shared/theme";
 import { getBridge } from "../../desktopApi";
 import DEFAULT_BRAND_LOGO_URL from "../../assets/jasmine-logo.png";
-import { Button, Select, Switch, TextArea, TextInput } from "../ui";
+import { Button, Select, StatusPill, Switch, TextArea, TextInput } from "../ui";
 import { BrainIcon, EditIcon, ImageIcon, KeyboardIcon, RefreshIcon, TerminalIcon, WorkingIcon } from "../icons/Icons";
-import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, StatePill } from "./SettingsLayout";
+import { ExecutablePickerField, SettingsActions, SettingsListRow, SettingsPage, SettingsRow, SettingsSection } from "./SettingsLayout";
 import { ShortcutRecorder } from "./ShortcutRecorder";
 
 export function LocalSettingsPage(props: {
@@ -636,7 +636,7 @@ function GeneralSettingsPage(props: {
             title={t("settings.general.spotlightShortcut")}
             description={t("settings.general.spotlightShortcutDescription")}
             status={
-              <StatePill tone={
+              <StatusPill tone={
                 spotlightShortcutDraft !== props.settings.spotlightShortcut
                   ? "neutral"
                   : spotlightShortcutStatus === null
@@ -652,7 +652,7 @@ function GeneralSettingsPage(props: {
                     : spotlightShortcutStatus.registered && spotlightShortcutStatus.accelerator === props.settings.spotlightShortcut
                       ? t("settings.general.spotlightShortcutActive")
                       : t("settings.general.spotlightShortcutUnavailable")}
-              </StatePill>
+              </StatusPill>
             }
             actions={
               <ShortcutRecorder
@@ -935,31 +935,4 @@ function resolveExecutablePath(discovery: ExecutableDiscovery | null, currentVal
 function displayNameForExecutable(value: string): string {
   const parts = value.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || value;
-}
-
-function PathPickerControl(props: {
-  label: string;
-  value: string;
-  placeholder: string;
-  disabled: boolean;
-  chooseLabel: string;
-  clearLabel: string;
-  onChoose(): void;
-  onClear(): void;
-}) {
-  return (
-    <div className="path-picker-control">
-      <output className={props.value ? "has-value" : ""} aria-label={props.label} title={props.value || props.placeholder}>
-        {props.value || props.placeholder}
-      </output>
-      <div className="path-picker-actions">
-        <button className="settings-row-button" type="button" disabled={props.disabled} onClick={props.onChoose}>
-          {props.chooseLabel}
-        </button>
-        <button className="settings-row-button" type="button" disabled={props.disabled || !props.value} onClick={props.onClear}>
-          {props.clearLabel}
-        </button>
-      </div>
-    </div>
-  );
 }

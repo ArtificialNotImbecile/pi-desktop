@@ -305,13 +305,6 @@ export type PluginReference = {
   enabled: boolean;
 };
 
-export type PluginProgressEvent = {
-  type: "start" | "progress" | "complete" | "error";
-  action: "install" | "remove" | "update" | "clone" | "pull";
-  source: string;
-  message?: string;
-};
-
 export type PluginPackageInstallRequest = {
   source: string;
 };
@@ -1185,12 +1178,6 @@ export type ActivityObservationListRequest = {
 
 export type ActivityObservationCreateRequest = {
   note: string;
-};
-
-export type ActivitySnapshot = {
-  settings: ActivitySettings;
-  observations: ActivityObservation[];
-  status: ActivityStatus;
 };
 
 export type WebSearchResult = {

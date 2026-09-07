@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -29,16 +29,8 @@ export function registerDialogIpc(context: IpcContext): void {
     if (process.env.JASMINE_E2E_PICK_FILE) {
       return pickedFileFromPath(process.env.JASMINE_E2E_PICK_FILE);
     }
-
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const options: OpenDialogOptions = {
-      title: "Attach file",
-      properties: ["openFile"]
-    };
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    if (result.canceled || !result.filePaths[0]) return null;
-    const picked = result.filePaths[0];
-    return pickedFileFromPath(picked);
+    const picked = (await showOpenDialogFor(event, { title: "Attach file", properties: ["openFile"] }))[0];
+    return picked ? pickedFileFromPath(picked) : null;
   });
 
   ipcMain.handle("dialog:pickClipboardImage", async (): Promise<PickedPath | null> => {
@@ -76,34 +68,18 @@ export function registerDialogIpc(context: IpcContext): void {
   });
 
   ipcMain.handle("dialog:pickFolder", async (event, title?: string): Promise<PickedPath | null> => {
-    if (process.env.JASMINE_E2E_PICK_FOLDER) {
-      const picked = process.env.JASMINE_E2E_PICK_FOLDER;
-      return { name: path.basename(picked), path: picked, kind: "folder" };
-    }
-
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const options: OpenDialogOptions = {
+    const picked = process.env.JASMINE_E2E_PICK_FOLDER || (await showOpenDialogFor(event, {
       title: typeof title === "string" && title.trim() ? title.trim().slice(0, 120) : "Attach folder",
       properties: ["openDirectory"]
-    };
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    if (result.canceled || !result.filePaths[0]) return null;
-    const picked = result.filePaths[0];
-    return { name: path.basename(picked), path: picked, kind: "folder" };
+    }))[0];
+    return picked ? { name: path.basename(picked), path: picked, kind: "folder" } : null;
   });
 
   ipcMain.handle("dialog:pickSkillFolders", async (event): Promise<string[]> => {
     if (process.env.JASMINE_E2E_PICK_SKILL_FOLDERS) {
       return process.env.JASMINE_E2E_PICK_SKILL_FOLDERS.split(path.delimiter).filter(Boolean);
     }
-
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const options: OpenDialogOptions = {
-      title: "Add skill folders",
-      properties: ["openDirectory", "multiSelections"]
-    };
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    return result.canceled ? [] : result.filePaths;
+    return showOpenDialogFor(event, { title: "Add skill folders", properties: ["openDirectory", "multiSelections"] });
   });
 
   ipcMain.handle("dialog:listExecutableDiscovery", async (_event, kind: unknown) => {
@@ -116,33 +92,34 @@ export function registerDialogIpc(context: IpcContext): void {
     const normalizedKind = kind === "terminal" ? "terminal" : "editor";
     const e2eValue = normalizedKind === "terminal" ? process.env.JASMINE_E2E_PICK_TERMINAL_SHELL : process.env.JASMINE_E2E_PICK_EDITOR;
     if (e2eValue) return e2eValue;
-
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const options: OpenDialogOptions = {
+    const picked = await showOpenDialogFor(event, {
       title: normalizedKind === "terminal" ? "Choose terminal shell" : "Choose text editor",
       filters: process.platform === "win32"
         ? [{ name: "Applications and scripts", extensions: ["exe", "cmd", "bat", "ps1"] }]
         : undefined,
       properties: ["openFile"]
-    };
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    return result.canceled ? null : result.filePaths[0] ?? null;
+    });
+    return picked[0] ?? null;
   });
 
   ipcMain.handle("dialog:pickPromptTemplatePaths", async (event): Promise<string[]> => {
     if (process.env.JASMINE_E2E_PICK_PROMPT_TEMPLATE_PATHS) {
       return process.env.JASMINE_E2E_PICK_PROMPT_TEMPLATE_PATHS.split(path.delimiter).filter(Boolean);
     }
-
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const options: OpenDialogOptions = {
+    return showOpenDialogFor(event, {
       title: "Add prompt template files or folders",
       filters: [{ name: "Markdown prompt templates", extensions: ["md"] }],
       properties: ["openFile", "openDirectory", "multiSelections"]
-    };
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    return result.canceled ? [] : result.filePaths;
+    });
   });
+}
+
+// Parents the dialog to the requesting window when it still exists; a cancelled
+// dialog reads as no selection.
+async function showOpenDialogFor(event: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string[]> {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? [] : result.filePaths;
 }
 
 async function saveClipboardImageBuffer(buffer: Buffer, mimeType = "image/png", sourceName?: string): Promise<PickedPath> {

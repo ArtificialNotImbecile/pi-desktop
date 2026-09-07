@@ -132,7 +132,7 @@ test.describe("Jasmine permission approvals", () => {
         }
       });
       void win.loadURL("data:text/html,<title>permission sender fixture</title>");
-    }, path.join(rootDir, "src", "main", "preload.cjs"));
+    }, path.join(rootDir, "dist", "main", "main", "preload.cjs"));
     const attacker = await attackerWindow;
     await attacker.waitForLoadState("domcontentloaded");
 

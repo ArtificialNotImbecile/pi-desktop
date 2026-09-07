@@ -3,7 +3,7 @@ import type { ChatThread } from "../../shared/ipc";
 import { getBridge } from "../desktopApi";
 import { errorMessage } from "../utils/errors";
 
-export function useThreads(options: { onError(message: string): void; onResetChatState(): void; onToast(message: string): void; onThreadsDeleted?(threadIds: string[]): void }) {
+export function useThreads(options: { onError(message: string): void; onToast(message: string): void; onThreadsDeleted?(threadIds: string[]): void }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
@@ -92,14 +92,12 @@ export function useThreads(options: { onError(message: string): void; onResetCha
       if (existingEmptyThread) {
         setThreads(latestThreads);
         setActiveThreadId(existingEmptyThread.id);
-        options.onResetChatState();
         return existingEmptyThread;
       }
 
       const thread = await getBridge().createThread({ title: "New chat", projectId });
       setThreads([thread, ...latestThreads]);
       setActiveThreadId(thread.id);
-      options.onResetChatState();
       return thread;
     } catch (caught) {
       options.onError(errorMessage(caught, "Failed to create a new chat."));
@@ -132,7 +130,6 @@ export function useThreads(options: { onError(message: string): void; onResetCha
         setThreads(nextThreads);
         if (activeThreadIdRef.current === threadId) {
           setActiveThreadId(nextThreads[0]?.id ?? null);
-          options.onResetChatState();
         }
       }
       options.onToast("Thread deleted");

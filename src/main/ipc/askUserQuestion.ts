@@ -1,7 +1,6 @@
 import { ipcMain, type WebContents } from "electron";
 import type { AskUserQuestionPrompt, AskUserQuestionResponse } from "../../shared/ipc.js";
 import { askUserQuestionResponseSchema } from "../../shared/schemas.js";
-import type { IpcContext } from "./context.js";
 import { abortError } from "../utils/abort.js";
 
 type PendingQuestion = {
@@ -12,7 +11,7 @@ type PendingQuestion = {
 
 const pendingQuestions = new Map<string, PendingQuestion>();
 
-export function registerAskUserQuestionIpc(_context: IpcContext): void {
+export function registerAskUserQuestionIpc(): void {
   ipcMain.handle("askUserQuestion:answer", (_event, response: AskUserQuestionResponse): void => {
     response = askUserQuestionResponseSchema.parse(response);
     const pending = pendingQuestions.get(response.id);

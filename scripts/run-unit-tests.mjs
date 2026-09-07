@@ -8,12 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const extensionsDir = path.join("src", "main", "agent", "extensions");
 const requiredBuildArtifacts = [
   path.join("dist", "main", "main"),
-  path.join("src", "main", "agent", "extensions", "contextCapture", "dist", "index.js"),
-  path.join("src", "main", "agent", "extensions", "permissionGate", "dist", "index.js"),
-  path.join("src", "main", "agent", "extensions", "fileChanges", "dist", "index.js"),
-  path.join("src", "main", "agent", "extensions", "piRemote", "dist", "index.js")
+  ...["contextCapture", "permissionGate", "fileChanges", "piRemote"].map((name) => path.join(extensionsDir, name, "dist", "index.js"))
 ];
 const missingBuildArtifacts = requiredBuildArtifacts.filter((artifact) => !existsSync(path.join(rootDir, artifact)));
 
@@ -26,104 +24,59 @@ if (missingBuildArtifacts.length > 0) {
   process.exit(1);
 }
 
-function packageTestFiles(packagePath) {
-  const testDir = path.join(rootDir, packagePath, "tests");
-  return readdirSync(testDir)
-    .filter((name) => name.endsWith(".test.mjs"))
-    .sort()
-    .map((name) => path.join(packagePath, "tests", name));
+function unitTest(name, file = `tests/unit/${name}.mjs`) {
+  return { name, args: ["--no-warnings", file], cwd: rootDir };
 }
 
-function packageTestStep(packagePath, testFiles) {
-  return {
-    command: "node",
-    args: ["--test", ...testFiles],
-    cwd: path.join(rootDir, packagePath)
-  };
+// Runs the package's node:test files from the package directory, the same
+// working directory its standalone `npm test` uses.
+function packageTests(name, directory) {
+  const packageDir = path.join(rootDir, extensionsDir, directory);
+  const testFiles = readdirSync(path.join(packageDir, "tests"))
+    .filter((entry) => entry.endsWith(".test.mjs"))
+    .sort()
+    .map((entry) => path.join("tests", entry));
+  return { name, args: ["--test", ...testFiles], cwd: packageDir };
 }
 
 const tasks = [
-  { name: "database-smoke", steps: [["node", "--no-warnings", "tests/unit/database-smoke.mjs"]] },
-  { name: "working-registry", steps: [["node", "--no-warnings", "tests/unit/working-registry.mjs"]] },
-  { name: "i18n-parity", steps: [["node", "--no-warnings", "tests/unit/i18n-parity.mjs"]] },
-  { name: "app-updater", steps: [["node", "--no-warnings", "tests/unit/app-updater.mjs"]] },
-  { name: "stream-delta", steps: [["node", "--no-warnings", "tests/unit/stream-delta.mjs"]] },
-  { name: "pi-runtime-equivalence", steps: [["node", "--no-warnings", "tests/unit/pi-runtime-equivalence.mjs"]] },
-  { name: "pi-context-usage", steps: [["node", "--no-warnings", "tests/unit/pi-context-usage.mjs"]] },
-  { name: "pi-session-import", steps: [["node", "--no-warnings", "tests/unit/pi-session-import.mjs"]] },
-  { name: "plugin-packages", steps: [["node", "--no-warnings", "tests/unit/plugin-packages.mjs"]] },
-  { name: "icon-assets", steps: [["node", "--no-warnings", "tests/unit/icon-assets-smoke.mjs"]] },
-  { name: "spotlight-shortcut", steps: [["node", "--no-warnings", "tests/unit/spotlight-shortcut.mjs"]] },
-  { name: "startup-bootstrap", steps: [["node", "--no-warnings", "tests/unit/startup-bootstrap-smoke.mjs"]] },
-  { name: "release-workflow", steps: [["node", "--no-warnings", "tests/unit/release-workflow.mjs"]] },
-  { name: "unit-runner", steps: [["node", "--no-warnings", "tests/unit/unit-runner.mjs"]] },
-  { name: "test-infrastructure", steps: [["node", "--no-warnings", "tests/unit/test-infrastructure.mjs"]] },
-  { name: "renderer-font-assets", steps: [["node", "--no-warnings", "tests/unit/renderer-font-assets.mjs"]] },
-  { name: "preload-bridge-parity", steps: [["node", "--no-warnings", "tests/unit/preload-bridge-parity.mjs"]] },
-  { name: "local-files", steps: [["node", "--no-warnings", "tests/unit/local-files.mjs"]] },
-  { name: "remote-sessions", steps: [["node", "--no-warnings", "tests/unit/remote-sessions.mjs"]] },
-  {
-    name: "context-capture",
-    steps: [
-      ["node", "--no-warnings", "scripts/smoke-context-capture-package.mjs"]
-    ]
-  },
-  {
-    name: "permission-gate",
-    steps: [
-      packageTestStep(path.join("src", "main", "agent", "extensions", "permissionGate"), ["tests/permission-gate.test.mjs"])
-    ]
-  },
-  {
-    name: "file-changes",
-    steps: [
-      packageTestStep(
-        path.join("src", "main", "agent", "extensions", "fileChanges"),
-        packageTestFiles(path.join("src", "main", "agent", "extensions", "fileChanges"))
-          .map((testFile) => path.relative(path.join("src", "main", "agent", "extensions", "fileChanges"), testFile))
-      )
-    ]
-  },
-  {
-    name: "pi-remote",
-    steps: [
-      packageTestStep(
-        path.join("src", "main", "agent", "extensions", "piRemote"),
-        packageTestFiles(path.join("src", "main", "agent", "extensions", "piRemote"))
-          .map((testFile) => path.relative(path.join("src", "main", "agent", "extensions", "piRemote"), testFile))
-      )
-    ]
-  }
+  unitTest("database-smoke"),
+  unitTest("working-registry"),
+  unitTest("i18n-parity"),
+  unitTest("app-updater"),
+  unitTest("stream-delta"),
+  unitTest("pi-runtime-equivalence"),
+  unitTest("pi-context-usage"),
+  unitTest("pi-session-import"),
+  unitTest("plugin-packages"),
+  unitTest("icon-assets", "tests/unit/icon-assets-smoke.mjs"),
+  unitTest("spotlight-shortcut"),
+  unitTest("startup-bootstrap", "tests/unit/startup-bootstrap-smoke.mjs"),
+  unitTest("release-workflow"),
+  unitTest("test-infrastructure"),
+  unitTest("renderer-font-assets"),
+  unitTest("local-files"),
+  unitTest("remote-sessions"),
+  unitTest("context-capture", "scripts/smoke-context-capture-package.mjs"),
+  packageTests("permission-gate", "permissionGate"),
+  packageTests("file-changes", "fileChanges"),
+  packageTests("pi-remote", "piRemote")
 ];
 
-function runStep(step) {
+function runTask(task) {
+  const startedAt = Date.now();
   return new Promise((resolve) => {
-    const { command, args, cwd } = Array.isArray(step)
-      ? { command: step[0], args: step.slice(1), cwd: rootDir }
-      : step;
-    // Node on Windows refuses to spawn .cmd shims without a shell (CVE-2024-27980).
-    const child = command.endsWith(".cmd")
-      ? spawn([command, ...args].join(" "), { cwd, shell: true, windowsHide: true })
-      : spawn(command, args, { cwd, windowsHide: true });
+    const child = spawn("node", task.args, { cwd: task.cwd, windowsHide: true });
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { output += chunk; });
-    child.on("error", (error) => resolve({ code: 1, output: `${output}\n${error.message}` }));
-    child.on("exit", (code) => resolve({ code: code ?? 1, output }));
+    const finish = (ok) => resolve({ ...task, ok, seconds: (Date.now() - startedAt) / 1000, output });
+    child.on("error", (error) => {
+      output += `\n${error.message}`;
+      finish(false);
+    });
+    child.on("exit", (code) => finish(code === 0));
   });
-}
-
-async function runTask(task) {
-  const startedAt = Date.now();
-  let output = "";
-  for (const step of task.steps) {
-    const result = await runStep(step);
-    output += result.output;
-    if (result.code !== 0) {
-      return { ...task, ok: false, seconds: (Date.now() - startedAt) / 1000, output };
-    }
-  }
-  return { ...task, ok: true, seconds: (Date.now() - startedAt) / 1000, output };
 }
 
 const startedAt = Date.now();

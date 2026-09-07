@@ -22,8 +22,8 @@ import { registerWindowIpc } from "./window.js";
 import { registerWorkingIpc } from "./working.js";
 
 export function registerIpc(context: IpcContext): void {
-  registerAskUserQuestionIpc(context);
-  registerPermissionApprovalIpc(context);
+  registerAskUserQuestionIpc();
+  registerPermissionApprovalIpc();
   registerThreadIpc(context);
   registerProjectIpc(context);
   registerRemoteIpc(context);

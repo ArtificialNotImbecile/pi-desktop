@@ -1,4 +1,3 @@
-import { once } from "node:events";
 import { randomInt } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { ClientGateway, type ClientGatewayAddress } from "./gateway.js";

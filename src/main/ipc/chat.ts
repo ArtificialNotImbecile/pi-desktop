@@ -50,7 +50,7 @@ import {
 import { getPromptTemplatePaths } from "../services/promptTemplates.js";
 import { prepareEnabledSkillManifests, prepareSkillManifests } from "../services/skillManifests.js";
 import { mergeRuntimeSkills, pluginReferenceIds, skillReferenceIds } from "../services/skillRuntimeContext.js";
-import { generateTitleWithProviderResult } from "../services/threadTitles.js";
+import { fallbackTitle, generateTitleWithProviderResult } from "../services/threadTitles.js";
 import {
   buildRetryPlan,
   modelContentForMessage,
@@ -58,11 +58,11 @@ import {
   summarizeInput,
   summarizeOutput,
   titleFromAttachments,
-  titleFromMessage,
   toModelHistoryMessage
 } from "./chatSupport.js";
 import type { IpcContext } from "./context.js";
 import type { WorkingRegistry } from "../services/workingRegistry.js";
+import { abortError } from "../utils/abort.js";
 
 type ActiveRun = {
   threadId: string;
@@ -243,7 +243,7 @@ export function registerChatIpc(context: IpcContext): void {
           currentMessageId: userMessage.id,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
+          ...runtimeContextOptions(turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -396,7 +396,7 @@ export function registerChatIpc(context: IpcContext): void {
           branchBeforePromptEntryId,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
+          ...runtimeContextOptions(turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -589,7 +589,7 @@ export function registerChatIpc(context: IpcContext): void {
           branchBeforePromptEntryId,
           onSessionEntriesLinked: sessionEntryLinker(db, request.threadId),
           packageExtensionPaths: inlinePluginSources,
-          ...runtimeContextOptions(db, turn, request.threadId, _event.sender, working, requestId)
+          ...runtimeContextOptions(turn, request.threadId, _event.sender, working, requestId)
         },
         runtimeProvider: turn.runtimeProvider,
         traceId: trace.id,
@@ -1128,7 +1128,6 @@ async function buildChatTurnContext(
 
 // Runtime request fields shared by all three generation paths.
 function runtimeContextOptions(
-  db: JasmineDatabase,
   turn: ChatTurnContext,
   threadId: string,
   sender: WebContents,
@@ -1235,9 +1234,7 @@ async function delayChatGenerationForRegression(signal: AbortSignal): Promise<vo
     const abort = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      const error = new Error("Response stopped before generation.");
-      error.name = "AbortError";
-      reject(error);
+      reject(abortError("Response stopped before generation."));
     };
     const timer = setTimeout(finish, Math.min(delayMs, 5_000));
     if (signal.aborted) abort();
@@ -1307,9 +1304,9 @@ function queueFirstMessageTitle(
   content: string,
   attachments: PickedPath[]
 ): void {
-  const fallbackTitle = titleFromMessage(content || titleFromAttachments(attachments));
-  db.updateThreadTitle(threadId, fallbackTitle);
-  queueTitleGeneration(db, threadId, content, fallbackTitle, (title) => {
+  const initialTitle = fallbackTitle(content || titleFromAttachments(attachments));
+  db.updateThreadTitle(threadId, initialTitle);
+  queueTitleGeneration(db, threadId, content, initialTitle, (title) => {
     const run = activeRuns.get(requestId);
     sendChatStream(sender, {
       requestId,

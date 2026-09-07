@@ -1205,10 +1205,6 @@ export function getRemoteProfileService(db: JasmineDatabase): RemoteProfileServi
   return service;
 }
 
-export function resetRemoteProfileService(): void {
-  service = null;
-}
-
 /**
  * The Linux runtime archive is fetched into the pi-remote package folder during
  * install and copied into a packaged build as an app resource. It is resolved

@@ -19,7 +19,6 @@ import type {
   PermissionGateOptions,
   PermissionMode,
   PermissionScope,
-  PermissionToolName,
   ResolvedPermissionScope
 } from "./types.js";
 

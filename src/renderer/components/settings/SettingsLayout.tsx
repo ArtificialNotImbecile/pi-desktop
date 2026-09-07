@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
-import { Button, type ButtonVariant, SaveState, type SaveStateValue, Select, StatusPill, TextInput, Toolbar, classNames } from "../ui";
+import { Button, SaveState, type SaveStateValue, Select, TextInput, Toolbar, classNames } from "../ui";
 import { EyeIcon, EyeOffIcon, FolderIcon } from "../icons/Icons";
 import { useI18n } from "../../i18n";
 
@@ -179,24 +179,5 @@ export function SecretField(props: {
         </Button>
       }
     />
-  );
-}
-
-export function StatePill(props: { children: ReactNode; className?: string; tone?: "neutral" | "success" | "danger" | "accent" | "warning" }) {
-  return <StatusPill className={props.className} tone={props.tone}>{props.children}</StatusPill>;
-}
-
-export function RowButton(props: {
-  children: ReactNode;
-  disabled?: boolean;
-  leftIcon?: ReactNode;
-  onClick?: () => void;
-  title?: string;
-  variant?: ButtonVariant;
-}) {
-  return (
-    <Button size="sm" variant={props.variant || "default"} disabled={props.disabled} onClick={props.onClick} title={props.title} leftIcon={props.leftIcon}>
-      {props.children}
-    </Button>
   );
 }

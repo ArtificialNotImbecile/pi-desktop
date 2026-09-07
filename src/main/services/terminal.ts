@@ -60,14 +60,6 @@ export function startTerminalProcess(input: { shell: TerminalShellInfo; cwd?: st
   };
 }
 
-export function stopTerminalProcess(terminal: TerminalProcess): void {
-  terminal.pty.kill();
-}
-
-export function resizeTerminalProcess(terminal: TerminalProcess, cols: number, rows: number): void {
-  terminal.pty.resize(cols, rows);
-}
-
 function resolveCwd(candidate?: string): string {
   const value = candidate?.trim();
   if (value && existsSync(value)) return value;

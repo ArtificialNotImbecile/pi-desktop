@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { AnsiBlock, DiffBlock, JsonBlock, ShikiCodeBlock } from "../code";
 import { CheckIcon, FolderIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from "../icons/Icons";
-import { SettingsActions, SettingsList, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, SettingsToolbar, StatePill } from "../settings/SettingsLayout";
+import { SettingsActions, SettingsList, SettingsListRow, SettingsPage, SettingsRow, SettingsSection, SettingsToolbar } from "../settings/SettingsLayout";
 import { Button } from "./Button";
 import { Dialog } from "./Dialog";
 import { EmptyState } from "./EmptyState";
@@ -9,6 +9,7 @@ import { IconButton } from "./IconButton";
 import { MenuItem, MenuSection, MenuSurface } from "./Menu";
 import { SaveState } from "./SaveState";
 import { Select } from "./Select";
+import { StatusPill } from "./StatusPill";
 import { Switch } from "./Switch";
 import { Tabs } from "./Tabs";
 import { TextArea } from "./TextArea";
@@ -85,17 +86,17 @@ export function UiCatalog(props: { onClose(): void }) {
                 <Button size="sm" leftIcon={<PlusIcon />}>Add</Button>
               </SettingsToolbar>
               <SettingsList ariaLabel="Catalog list">
-                <SettingsListRow icon={<FolderIcon />} title="External source" description="C:\\workspace\\jasmine-skills" status={<StatePill tone="accent">Enabled</StatePill>} actions={<Button size="sm">Refresh</Button>} />
+                <SettingsListRow icon={<FolderIcon />} title="External source" description="C:\\workspace\\jasmine-skills" status={<StatusPill tone="accent">Enabled</StatusPill>} actions={<Button size="sm">Refresh</Button>} />
               </SettingsList>
             </SettingsPage>
           </CatalogSection>
 
           <CatalogSection title="States">
             <div className="ui-catalog-row">
-              <StatePill>Neutral</StatePill>
-              <StatePill tone="success">Connected</StatePill>
-              <StatePill tone="danger">Failed</StatePill>
-              <StatePill tone="accent">Selected</StatePill>
+              <StatusPill>Neutral</StatusPill>
+              <StatusPill tone="success">Connected</StatusPill>
+              <StatusPill tone="danger">Failed</StatusPill>
+              <StatusPill tone="accent">Selected</StatusPill>
               <SaveState state="saving" />
               <SaveState state="saved" />
               <SaveState state="failed" />

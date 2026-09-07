@@ -22,7 +22,7 @@ import type {
   SkillSource,
   SkillUpdateRequest,
 } from "../../../shared/ipc";
-import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, SearchIcon, ServerIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
+import { ActivityIcon, BrainIcon, EyeIcon, InfoIcon, PlugIcon, ServerIcon, SettingsIcon, SkillIcon, TerminalIcon } from "../icons/Icons";
 import { LocalSettingsPage } from "./LocalSettingsPage";
 import { ProviderDetailPage } from "./ProviderDetailPage";
 import { useI18n } from "../../i18n";

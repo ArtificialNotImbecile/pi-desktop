@@ -84,7 +84,6 @@ function App(props: { initialAppSettings: AppSettings }) {
 
   const threads = useThreads({
     onError: setAppError,
-    onResetChatState: () => undefined,
     onToast: showToast,
     // `chat` is declared below; deletion callbacks only fire from async flows
     // after render, so the binding is initialized by the time this runs.
@@ -193,10 +192,7 @@ function App(props: { initialAppSettings: AppSettings }) {
       }
       return sent;
     },
-    onQueueSubmit: async (content, attachments, mode) => {
-      const queued = await chat.queueMessage(content, attachments, mode);
-      return queued;
-    },
+    onQueueSubmit: (content, attachments, mode) => chat.queueMessage(content, attachments, mode),
     onEditSubmit: async (messageId, content, attachments) => {
       const { skillsUsed, pluginsUsed } = optimisticChatReferences({
         inlineSkillIds,
@@ -413,18 +409,11 @@ function App(props: { initialAppSettings: AppSettings }) {
     }
   }
 
-  async function copyMessage(message: ChatMessage) {
-    await getBridge().writeClipboardText(message.content).catch(async () => {
-      await navigator.clipboard?.writeText(message.content).catch(() => undefined);
+  async function copyToClipboard(text: string, toastKey: "toast.copied" | "toast.codeCopied") {
+    await getBridge().writeClipboardText(text).catch(async () => {
+      await navigator.clipboard?.writeText(text).catch(() => undefined);
     });
-    showToast(t("toast.copied"));
-  }
-
-  async function copyCode(code: string) {
-    await getBridge().writeClipboardText(code).catch(async () => {
-      await navigator.clipboard?.writeText(code).catch(() => undefined);
-    });
-    showToast(t("toast.codeCopied"));
+    showToast(t(toastKey));
   }
 
   function retryMessage(message?: ChatMessage) {
@@ -481,12 +470,14 @@ function App(props: { initialAppSettings: AppSettings }) {
     ]
   );
 
+  // One derivation for both remote routes: the workspace view and the reader are
+  // the same page, and the session route carries the workspace it belongs to
+  // through the session's own cwd.
+  const remoteRoute = resolveRemoteRoute(navigation.route, remotes.sessions);
+  const remoteRouteProfileId = remoteRoute?.profileId ?? null;
   // Landing on a remote route directly -- a restored navigation, a reload --
   // has to load that profile's stored sessions the same way expanding it in the
   // sidebar does, or the page renders an empty list it never fills.
-  const remoteRouteProfileId = navigation.route.name === "remoteWorkspace" || navigation.route.name === "remoteSession"
-    ? navigation.route.profileId
-    : null;
   useEffect(() => {
     if (!remoteRouteProfileId) return;
     void remotes.openProfile(remoteRouteProfileId);
@@ -569,9 +560,9 @@ function App(props: { initialAppSettings: AppSettings }) {
   });
 
   const chatPageHandlers = useStableCallbacks({
-    onCopy: (message: ChatMessage) => void copyMessage(message),
+    onCopy: (message: ChatMessage) => void copyToClipboard(message.content, "toast.copied"),
     onLoadOlderMessages: () => void chat.loadOlderMessages(),
-    onCopyCode: (code: string) => void copyCode(code),
+    onCopyCode: (code: string) => void copyToClipboard(code, "toast.codeCopied"),
     onRetry: (message?: ChatMessage) => retryMessage(message),
     onEditMessage: (message: ChatMessage) => {
       setInlineSkillIds(message.skillsUsed?.map((skill) => skill.id) ?? []);
@@ -664,17 +655,13 @@ function App(props: { initialAppSettings: AppSettings }) {
     onToggleMemory: () => setMemoryEnabled((enabled) => !enabled),
     onSelectPermissionMode: (mode: PermissionMode) => void appSettings.updateSettings({ permissionMode: mode }),
     onToggleTools: () => setToolsEnabled((enabled) => !enabled),
-    onSelectRightPanel: (mode: RightPanelMode) => selectRightPanel(mode),
-    onAddRightPanel: (mode: RightPanelMode) => addRightPanel(mode),
+    onSelectRightPanel: (mode: RightPanelMode) => openRightPanelTab(mode, { forceNew: false, pushRoute: true }),
+    onAddRightPanel: (mode: RightPanelMode) => openRightPanelTab(mode, { forceNew: mode === "terminal", pushRoute: true }),
     onSelectRightPanelTab: (tabId: string) => selectRightPanelTab(tabId),
     onCloseRightPanel: (tabId: string) => closeRightPanel(tabId),
     onCollapseRightPanel: () => collapseRightPanel()
   });
 
-  // One derivation for both remote routes: the workspace view and the reader are
-  // the same page, and the session route carries the workspace it belongs to
-  // through the session's own cwd.
-  const remoteRoute = resolveRemoteRoute(navigation.route, remotes.sessions);
   const remoteProfile = remoteRoute ? remotes.profiles.find((profile) => profile.id === remoteRoute.profileId) ?? null : null;
   const remoteWorkspace = remoteRoute
     ? remotes.workspaces.find((workspace) => workspace.profileId === remoteRoute.profileId && workspace.cwd === remoteRoute.cwd) ?? null
@@ -1038,14 +1025,6 @@ function App(props: { initialAppSettings: AppSettings }) {
     if (section === "providers" && providerId) providers.setSelectedProviderId(providerId);
     surfaces.setSettingsInitialSection(section);
     surfaces.setSettingsOpen(true);
-  }
-
-  function selectRightPanel(mode: RightPanelMode) {
-    openRightPanelTab(mode, { forceNew: false, pushRoute: true });
-  }
-
-  function addRightPanel(mode: RightPanelMode) {
-    openRightPanelTab(mode, { forceNew: mode === "terminal", pushRoute: true });
   }
 
   function selectRightPanelTab(tabId: string) {

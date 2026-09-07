@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { AiProvider, ModelCapabilities, ProviderModelConfig, ProviderUpdateRequest } from "../../../shared/ipc";
-import { Button, Select, Switch, TextInput } from "../ui";
+import { Button, Select, StatusPill, Switch, TextInput } from "../ui";
 import { ModelOptionsDialog } from "./ModelOptionsDialog";
-import { SecretField, SettingsActions, SettingsRow, SettingsSection, StatePill } from "./SettingsLayout";
+import { SecretField, SettingsActions, SettingsRow, SettingsSection } from "./SettingsLayout";
 import { localeTag, useI18n, type I18nKey } from "../../i18n";
 
 export function ProviderDetailPage(props: {
@@ -103,9 +103,9 @@ export function ProviderDetailPage(props: {
             <h3>{props.provider.name}</h3>
             <p>{props.provider.type} - {props.provider.id}</p>
           </div>
-          <StatePill className={`provider-status ${props.provider.status}`} tone={props.provider.status === "connected" ? "success" : props.provider.status === "failed" || props.provider.status === "missing_key" ? "danger" : "neutral"}>
+          <StatusPill className={`provider-status ${props.provider.status}`} tone={props.provider.status === "connected" ? "success" : props.provider.status === "failed" || props.provider.status === "missing_key" ? "danger" : "neutral"}>
             {statusText(props.provider, t)}
-          </StatePill>
+          </StatusPill>
         </div>
 
         <SettingsSection aria-label={t("settings.provider.connection")}>
